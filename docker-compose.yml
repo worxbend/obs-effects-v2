@@ -1,0 +1,230 @@
+# Development stack for obs-effects-v2.
+#
+# Everything runs inside containers. You are not expected to have Node, pnpm,
+# Mill, Scala or MongoDB installed on your own machine — Docker provides them.
+#
+# Start everything with:   make up      (or: docker compose up -d --build)
+# Watch what it is doing:  make logs
+#
+# There is deliberately no `version:` key at the top of this file. Modern
+# Docker Compose (v2) ignores it and prints a warning if it is present.
+
+services:
+  # ---------------------------------------------------------------------------
+  # mongo — the database.
+  #
+  # It stores two collections: `effects` (the catalogue of available visual
+  # effects) and `routes` (the slug -> effect + parameters mappings that OBS
+  # points at). Data lives in a *named volume*, which is a piece of storage
+  # managed by Docker that survives `docker compose down` and container
+  # rebuilds. Deleting that volume is how you reset the database.
+  # ---------------------------------------------------------------------------
+  mongo:
+    image: mongo:8
+    container_name: obs-effects-mongo
+    restart: unless-stopped
+    ports:
+      # Exposed on the host so you can point MongoDB Compass or `mongosh` at
+      # localhost:27017 and look at the data. Nothing else needs this: the
+      # backend talks to Mongo over the private Compose network instead.
+      - "${MONGO_HOST_PORT:-27017}:27017"
+    volumes:
+      - mongo-data:/data/db
+    healthcheck:
+      # `depends_on: condition: service_healthy` (used by the backend below)
+      # waits until this command succeeds. Without it the backend can start
+      # before Mongo is ready to accept connections and crash on boot.
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+
+  # ---------------------------------------------------------------------------
+  # backend — Scala 3 API server (tapir + netty, built with Mill).
+  #
+  # Serves everything under /api: the effect catalogue, the route CRUD
+  # endpoints, and /api/health.
+  # ---------------------------------------------------------------------------
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: obs-effects-backend
+    restart: unless-stopped
+    depends_on:
+      mongo:
+        condition: service_healthy
+    # Everything in `.env` is also handed to the container directly. The
+    # `environment:` block below only forwards the variables it names; this line
+    # means a new variable added to `.env` reaches the backend without anyone
+    # having to remember to list it here as well. `required: false` keeps
+    # `docker compose up` working when no `.env` exists at all (every variable
+    # has a built-in default).
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      # `mongo` here is the *service name* above. Docker Compose runs a small
+      # DNS server so containers can reach each other by service name.
+      MONGO_URI: ${MONGO_URI:-mongodb://mongo:27017}
+      MONGO_DB: ${MONGO_DB:-obs_effects}
+      HTTP_PORT: ${HTTP_PORT:-8080}
+      # The bcrypt hash of the admin password. There is deliberately no default:
+      # the backend REFUSES TO START without it and exits with status 1, because
+      # an admin panel that anyone who can reach the port may rewrite is worse
+      # than a container that will not come up. Generate a value and put it in
+      # `.env` before the first `make up` — `.env.example` shows both commands.
+      #
+      # `${VAR:-}` (empty default) rather than a bare `${VAR}` so that Compose
+      # does not print a warning when the variable is genuinely absent, for
+      # example when you are deliberately running with ADMIN_AUTH_DISABLED.
+      ADMIN_PASSWORD_HASH: ${ADMIN_PASSWORD_HASH:-}
+      # The explicit escape hatch: `true` runs the API with no authentication at
+      # all, and the backend prints a capitalised banner saying so. Only for a
+      # throwaway experiment on a machine nobody else can reach.
+      ADMIN_AUTH_DISABLED: ${ADMIN_AUTH_DISABLED:-false}
+      # How long a signed-in session lasts, in whole hours; also the session
+      # cookie's Max-Age. 168 is seven days. The lifetime is absolute — using the
+      # admin does not extend it — so this is how often you sign in again.
+      SESSION_TTL_HOURS: ${SESSION_TTL_HOURS:-168}
+      # `true` adds the `Secure` attribute to the session cookie, which makes the
+      # browser send it over HTTPS only. Left false because the normal setup is
+      # http://localhost, where browsers disagree about whether a Secure cookie
+      # is allowed at all. Turn it on the moment this is served over HTTPS.
+      SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-false}
+      # Comma-separated list of exact origins allowed to make *credentialed*
+      # cross-origin calls (the browser sending the session cookie to another
+      # origin). Unset is correct for the default setup, where the browser talks
+      # only to http://localhost:3000 and the Vite dev server proxies /api.
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-}
+    # Makes the name `host.docker.internal` resolve, from inside this container, to the machine
+    # running Docker. That is where OBS is: the backend keeps a WebSocket connection open to OBS's
+    # own `obs-websocket` server to read audio levels, and inside a container `localhost` means the
+    # container itself, so the default URL in the admin settings has to be a name that means "the
+    # desktop out there".
+    #
+    # Docker Desktop on macOS and Windows provides this name automatically. Linux does not, which is
+    # why the line is here — `host-gateway` is a value Docker resolves to the host's address on the
+    # bridge network. Without it, a Linux operator's first connection attempt fails with an
+    # unresolvable host, and the error message in the admin panel says exactly that.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "${BACKEND_HOST_PORT:-8080}:8080"
+    volumes:
+      # Bind mount: the host directory ./backend is mapped live into the
+      # container, so editing a .scala file on your machine is immediately
+      # visible inside the container and a restart picks it up.
+      - ./backend:/app
+      # Mill's compiled output. The backend image sets MILL_OUTPUT_DIR=/mill-out
+      # so that Mill never writes root-owned build files into the bind-mounted
+      # host checkout above; this named volume keeps that output between
+      # container restarts, so a restart recompiles only what changed.
+      #
+      # The download caches (Mill itself, Coursier, Ivy) are deliberately NOT
+      # mounted as volumes: the Dockerfile already downloads them into the image
+      # at build time, and mounting an empty volume on top of those directories
+      # would hide the pre-warmed copies and force a fresh multi-hundred-megabyte
+      # download on the first start.
+      - backend-out:/mill-out
+      # A *second* Mill output directory, used only by the one-off build tasks
+      # (`make backend-test`, `make backend-lint`, `make ci-backend`).
+      #
+      # Why a second one is needed: Mill allows only one build at a time per
+      # output directory, and the long-running server started by this service
+      # holds that lock for as long as it is up. A test or lint run pointed at
+      # /mill-out would therefore print "Another Mill process ... is running
+      # 'run', waiting for it to be done" and wait forever. Pointing those runs
+      # at /mill-tasks instead (they set MILL_OUTPUT_DIR themselves) lets them
+      # work whether the stack is up or down, while still keeping their compiled
+      # output between runs so only what changed is recompiled.
+      - backend-tasks:/mill-tasks
+
+  # ---------------------------------------------------------------------------
+  # frontend — SolidJS + Vite dev server.
+  #
+  # Hosts both the admin UI (/admin) and the effect renderer page (/e/<slug>)
+  # that you point an OBS browser source at. Vite provides Hot Module
+  # Replacement, so saving a file updates the page without a manual reload.
+  # ---------------------------------------------------------------------------
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: obs-effects-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    # Same idea as the backend: hand the whole `.env` to the container, so a new
+    # variable does not also have to be listed under `environment:`. Note that
+    # only variables prefixed `VITE_` ever reach browser code — Vite filters the
+    # rest out — so this does not leak backend secrets into the page.
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      # Base URL the *browser* uses for API calls.
+      #
+      # Empty by default, and that is the right default. Empty makes the app use
+      # the relative path `/api`, which the Vite dev server proxies to the
+      # backend container — so the browser only ever talks to one origin
+      # (http://localhost:3000). That matters for signing in: a session cookie
+      # from the same origin is a plain first-party cookie, with no CORS
+      # configuration involved at all.
+      #
+      # Set it to an absolute URL (for example http://localhost:8080/api) only
+      # if you deliberately want the browser to bypass the proxy. If you do, you
+      # must also set CORS_ALLOWED_ORIGINS on the backend to name this app's
+      # origin, or the browser will refuse to send the session cookie and the
+      # admin will appear to log in and then immediately forget you. The browser
+      # — not the container — makes these calls, so the URL must be reachable
+      # from your own machine; `http://backend:8080` would NOT work, because
+      # that hostname only exists inside the Docker network.
+      VITE_API_BASE: ${VITE_API_BASE:-}
+      # Makes Vite's file watcher work reliably across a bind mount on some
+      # host filesystems, where native change notifications are not delivered.
+      CHOKIDAR_USEPOLLING: "true"
+    ports:
+      - "${FRONTEND_HOST_PORT:-3000}:3000"
+    volumes:
+      # Live source mount, same idea as the backend.
+      - ./frontend:/app
+      # This one is important and easy to get wrong. The mount above would
+      # otherwise hide the node_modules that the image installed at build time,
+      # because the host's ./frontend has no node_modules (or has one built for
+      # a different OS). Mounting a named volume *on top* of /app/node_modules
+      # masks the host directory at that one path and keeps the container's own
+      # install intact.
+      - frontend-node-modules:/app/node_modules
+
+  # ---------------------------------------------------------------------------
+  # mongo-express — optional web UI for browsing the database.
+  #
+  # It sits behind a Compose *profile*, which means it does NOT start with a
+  # plain `docker compose up`. Start it explicitly with:
+  #     docker compose --profile tools up -d mongo-express
+  # then open http://localhost:8081.
+  # ---------------------------------------------------------------------------
+  mongo-express:
+    image: mongo-express:1.0.2
+    container_name: obs-effects-mongo-express
+    profiles: ["tools"]
+    restart: unless-stopped
+    depends_on:
+      mongo:
+        condition: service_healthy
+    environment:
+      ME_CONFIG_MONGODB_URL: ${MONGO_URI:-mongodb://mongo:27017}
+      ME_CONFIG_BASICAUTH: "false"
+      ME_CONFIG_MONGODB_ENABLE_ADMIN: "true"
+    ports:
+      - "${MONGO_EXPRESS_HOST_PORT:-8081}:8081"
+
+# Named volumes. Docker creates these on first use and keeps them until you
+# explicitly remove them (`docker compose down -v`, or `make clean`).
+volumes:
+  mongo-data:            # MongoDB database files
+  backend-out:           # Mill's compiled output directory (MILL_OUTPUT_DIR=/mill-out)
+  backend-tasks:         # A second Mill output directory for one-off test/lint runs
+  frontend-node-modules: # Installed npm packages for the frontend container

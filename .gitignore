@@ -1,0 +1,34 @@
+# Node / frontend
+node_modules/
+dist/
+.vite/
+# pnpm falls back to a project-local content store when its default location is on another
+# filesystem, which happens when the project is bind-mounted into a container.
+.pnpm-store/
+*.tsbuildinfo
+pnpm-debug.log*
+npm-debug.log*
+
+# Scala / Mill / sbt
+out/
+target/
+.bloop/
+.bsp/
+.metals/
+.scala-build/
+project/project/
+project/target/
+
+# Editors and IDEs
+.idea/
+*.iml
+.vscode/
+.DS_Store
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+
+# Runtime data
+mongo-data/

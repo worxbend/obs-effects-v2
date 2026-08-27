@@ -1,0 +1,294 @@
+# Continuous integration for obs-effects-v2.
+#
+# ---------------------------------------------------------------------------------------------
+# If you have never written a GitHub Actions workflow, read this first
+# ---------------------------------------------------------------------------------------------
+#
+# GitHub Actions is GitHub's built-in build server. Any file under `.github/workflows/` that ends
+# in `.yml` is a *workflow*: a description of work GitHub should do for you on a machine it rents
+# out, called a *runner*. Nobody has to install or start anything — pushing this file is enough.
+#
+# The vocabulary, smallest piece first:
+#
+#   step     one command, or one reusable action (`uses:`). Steps in a job run in order, and the
+#            job stops at the first one that exits with a non-zero status.
+#   job      a named group of steps with a fresh, empty virtual machine of its own. Jobs in this
+#            file have no `needs:` key, which means they all start at the same time and run in
+#            parallel. The whole workflow is red if *any* job is red.
+#   workflow this file.
+#
+# `uses: owner/name@v5` pulls in a ready-made action published by someone else. The `@v5` part is
+# a *major version tag*: it keeps moving to the newest v5.x release, so we get bug fixes without
+# having to edit this file, but never an unannounced v6 that changes how the action behaves.
+#
+# ---------------------------------------------------------------------------------------------
+# Why this file does NOT use Docker, when the rest of the project insists on it
+# ---------------------------------------------------------------------------------------------
+#
+# The README tells you that every command runs inside a container: `make backend-test`, not
+# `mill test`. That rule exists because a contributor's laptop is not expected to have Java,
+# Scala, Mill, Node or pnpm installed, and we would rather nobody had to install them.
+#
+# A GitHub runner is not a laptop. It boots from a fresh image that already contains Java, Node,
+# Docker and much more, and it is thrown away when the job ends, so there is nothing to pollute
+# and no version left behind to conflict with anything. Running the tools *natively* here is
+# therefore both simpler and considerably faster: no image to build, no layer cache to warm, and
+# the dependency caches below can be restored straight into the runner's home directory.
+#
+# So: the `backend` and `frontend` jobs below install a toolchain and call it directly. That is a
+# deliberate difference from local development, not an oversight, and it is the reason the exact
+# command lines here look slightly different from the ones in the Makefile.
+#
+# The `compose` job is the exception. Its whole purpose is to ask Docker whether
+# `docker-compose.yml` is still valid, so it uses the Docker that is preinstalled on the runner.
+#
+# To reproduce a failure from this workflow on your own machine — through Docker, with no
+# toolchain installed — run `make ci-backend`, `make ci-frontend` or `make ci-compose`. Those
+# targets exist precisely so you do not have to push a commit to find out whether CI is happy.
+
+name: CI
+
+# `on:` lists what makes this workflow start.
+#
+#   push          every push to every branch and tag in this repository.
+#   pull_request  every pull request when it is opened and on each later push to it.
+#
+# Note the one consequence of having both: a push to a branch that already has an open pull
+# request starts this workflow twice, once for each event. That is why the `concurrency` block
+# below exists. If the duplicate runs ever become annoying, narrow the push trigger to the
+# default branch with `push: { branches: [main] }` — pull requests would still cover the rest.
+on:
+  push:
+  pull_request:
+
+# Cancel a run as soon as a newer one for the same branch starts. Without this, pushing three
+# commits in a minute leaves three full runs competing for runners and only the last one matters.
+#
+# `github.workflow` is this file's `name`, and `github.ref` is the branch or tag being built, so
+# the group name is unique per branch and one branch never cancels another's run.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# The token GitHub hands to every job. `contents: read` is the minimum needed to check the code
+# out. Spelling it out means that if this workflow is ever tricked into running something hostile,
+# that thing cannot write to the repository, open issues, or publish packages.
+permissions:
+  contents: read
+
+jobs:
+  # =============================================================================================
+  # backend — Scala 3 compiled and tested with Mill
+  # =============================================================================================
+  backend:
+    name: Backend (Scala · Mill)
+    runs-on: ubuntu-latest
+
+    # Every `run:` step in this job starts in the `backend/` directory instead of the repository
+    # root. Mill has to be started from the directory holding `build.mill`, and saying it once
+    # here is less error-prone than repeating `cd backend &&` in five places.
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      # Copy the repository onto the runner. Without this the machine is empty — a workflow does
+      # not get the code automatically.
+      - name: Check out the repository
+        uses: actions/checkout@v5
+
+      # Install a Java Development Kit. "Temurin" is the name of the free, community-built
+      # OpenJDK distribution from the Eclipse Adoptium project; version 21 is the one this
+      # project targets, because the backend runs its HTTP handlers on Java 21 virtual threads.
+      #
+      # The Mill launcher script (`backend/mill`, committed to the repository) needs a working
+      # `java` on the PATH to start at all, which is what this step guarantees.
+      - name: Install JDK 21 (Temurin)
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      # Restore the two download caches so this job does not re-fetch hundreds of megabytes on
+      # every single push.
+      #
+      #   ~/.cache/coursier  Coursier is the library downloader Mill uses. Every third-party jar
+      #                      (Tapir, circe, the MongoDB driver, the Scala compiler itself) lands
+      #                      here. Mill also provisions a JDK of its own through Coursier rather
+      #                      than reusing the one installed above, and that download — a little
+      #                      over 200 MB before it is unpacked — is cached here too. Expect this
+      #                      cache to weigh roughly 800 MB once warm; restoring it is still much
+      #                      faster than fetching all of it again from Maven Central and Azul.
+      #   ~/.cache/mill      where `backend/mill` puts the Mill distribution named in
+      #                      `.mill-version`, so it is downloaded once rather than once per run.
+      #
+      # Both directories are chosen by the tools themselves and are not configurable here: they
+      # follow the home directory of the user the job runs as.
+      #
+      # How the cache works: at the end of a successful job the listed directories are uploaded
+      # and filed under `key`. A later run with the same key downloads them back. The key must
+      # therefore change whenever the contents should change, which is why it is built from a
+      # hash of the files that decide what gets downloaded: `build.mill` lists the libraries and
+      # `.mill-version` picks the Mill release.
+      #
+      # `restore-keys` is the fallback list. If no cache matches the exact key — someone added a
+      # dependency, so the hash moved — the newest cache whose name *starts with* the prefix is
+      # restored anyway. That partial cache is still worth having: only the new library has to be
+      # downloaded rather than all of them.
+      - name: Cache the Coursier and Mill downloads
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/coursier
+            ~/.cache/mill
+          key: ${{ runner.os }}-mill-${{ hashFiles('backend/build.mill', 'backend/.mill-version') }}
+          restore-keys: |
+            ${{ runner.os }}-mill-
+
+      # `./mill` is the launcher script in `backend/`. It downloads the Mill version pinned in
+      # `.mill-version` and then runs the task you name.
+      #
+      # `--no-daemon` tells Mill not to leave a background build server running afterwards. A
+      # daemon speeds up repeated builds on a developer's machine; on a runner that is destroyed
+      # after one build it only risks holding files open while the cache is being saved.
+      - name: Compile the Scala sources
+        run: ./mill --no-daemon compile
+
+      # `checkFormatAll` runs scalafmt in check-only mode over both `src/` and `test/src/`. It
+      # rewrites nothing: it fails, naming the files, if any of them is not already formatted the
+      # way `.scalafmt.conf` says. `mill reformatAll` is what fixes that locally.
+      #
+      # It is listed as its own step, even though the `lint` step below also checks formatting,
+      # because formatting is the failure people hit most often and a step of its own makes the
+      # cause obvious at a glance in the job summary instead of buried in a longer log.
+      - name: Check the Scala formatting (scalafmt)
+        run: ./mill --no-daemon checkFormatAll
+
+      # `lint` is the project's full gate: scalafmt's check plus scalafix's rules (unused
+      # imports, import order, and a short list of constructs `.scalafix.conf` forbids), over the
+      # main and the test sources. Despite scalafix's own wording in the log ("Rewriting and
+      # linting"), `--check` mode is used and no file on disk is modified.
+      #
+      # `mill fixAll` is what applies the fixes locally.
+      - name: Lint the Scala sources (scalafix)
+        run: ./mill --no-daemon lint
+
+      # The MUnit suites — 54 tests at the time of writing. They use in-memory repositories, so
+      # no MongoDB is needed here and the job stays a single container-free machine.
+      - name: Run the MUnit test suite
+        run: ./mill --no-daemon test
+
+  # =============================================================================================
+  # frontend — SolidJS + Vite, linted, type-checked and built
+  # =============================================================================================
+  frontend:
+    name: Frontend (SolidJS · Vite)
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: frontend
+
+    # Corepack (see the step below) normally asks for confirmation before downloading a package
+    # manager. A runner has nobody to answer, so this environment variable tells it to go ahead.
+    env:
+      COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v5
+
+      # Node 24, matching the `node:24-bookworm-slim` base image in `frontend/Dockerfile`. Keep
+      # the two in step: Vite 8 requires a recent Node, and the `@types/node` package pinned in
+      # `package.json` describes the APIs of this Node line.
+      - name: Install Node.js 24
+        uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+
+      # This project installs packages with pnpm, not npm. Corepack is a small program that ships
+      # inside Node itself and whose job is to fetch the exact package manager a project asks for
+      # — here `pnpm@9.12.3`, from the `packageManager` field of `frontend/package.json`.
+      # `corepack enable` puts a `pnpm` command on the PATH that reads that field, so the version
+      # used in CI is the same one everybody else uses, with nothing pinned twice.
+      - name: Enable Corepack so the pinned pnpm version is used
+        run: corepack enable
+
+      # pnpm keeps one shared, content-addressed store of downloaded packages and hard-links from
+      # it into each project's node_modules. Caching that store is what makes the install below
+      # take seconds instead of a minute.
+      #
+      # The store's location depends on the machine, so it is asked for rather than hard-coded.
+      # `--silent` suppresses pnpm's own chatter, leaving just the path, and the
+      # `name=value >> "$GITHUB_OUTPUT"` line is how a step publishes a value for later steps to
+      # read as `steps.<id>.outputs.<name>`.
+      - name: Work out where pnpm keeps its store
+        id: pnpm-store
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      # Keyed on the lockfile, because the lockfile is the exact list of package versions that
+      # will be downloaded: change it and a fresh cache is warranted, leave it alone and the
+      # previous one is a perfect match.
+      - name: Cache the pnpm store
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('frontend/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
+
+      # `--frozen-lockfile` means: install exactly what `pnpm-lock.yaml` says and fail if
+      # `package.json` asks for anything the lockfile does not already pin. That turns "someone
+      # edited package.json but forgot to commit the updated lockfile" into a clear CI failure
+      # instead of a build that quietly resolves different versions from everybody else's.
+      - name: Install the dependencies
+        run: pnpm install --frozen-lockfile
+
+      # ESLint. The script is `eslint . --max-warnings 0`, so a warning fails the job exactly
+      # like an error does — a warning nobody is forced to fix is a warning that accumulates.
+      - name: Lint (ESLint)
+        run: pnpm run lint
+
+      # Prettier in check-only mode: it reports files whose layout differs from what it would
+      # produce and changes nothing. `pnpm format` is what fixes them locally.
+      - name: Check the formatting (Prettier)
+        run: pnpm run format:check
+
+      # The TypeScript compiler in `--noEmit` mode: full type checking, no output files. This is
+      # the frontend's main safety net, because there is no unit test suite here yet.
+      - name: Type-check (tsc)
+        run: pnpm run typecheck
+
+      # The production build. It runs `tsc --noEmit` again before calling Vite, so the previous
+      # step is strictly speaking contained in this one — it is kept separate because a type
+      # error and a bundler error have different causes and different fixes, and a named step
+      # says which of the two happened without anyone opening the log.
+      - name: Build the production bundle (Vite)
+        run: pnpm run build
+
+  # =============================================================================================
+  # compose — is docker-compose.yml still valid?
+  # =============================================================================================
+  #
+  # `docker-compose.yml` is how every contributor runs this project, and it is not covered by any
+  # compiler or linter: a mistyped key or a service referring to a volume that no longer exists
+  # is only discovered by the next person who types `make up`.
+  #
+  # `docker compose config` parses the file, resolves `${VARIABLE:-default}` substitutions,
+  # merges any override files, and validates the result against the Compose specification. With
+  # `--quiet` it prints nothing and communicates purely through its exit status, which is exactly
+  # what a check wants. It starts no containers and pulls no images, so this job finishes in
+  # seconds.
+  #
+  # This is the one job that uses Docker, because Docker is the thing being checked. It needs no
+  # setup step: the runner image ships with Docker and the Compose plugin already installed.
+  compose:
+    name: Compose file
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v5
+
+      - name: Validate docker-compose.yml
+        run: docker compose config --quiet
