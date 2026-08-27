@@ -1,0 +1,161 @@
+//| mvnDeps:
+//| # Scalafix has no module built into Mill itself (Mill ships scalafmt support, but not
+//| # scalafix), so the linting half of `mill lint` comes from this plugin. It is the standard
+//| # Mill scalafix plugin and the one Mill's own documentation points at.
+//| - com.goyeau::mill-scalafix::0.6.2
+
+// Mill build definition for the obs-effects admin backend.
+//
+// Mill is a build tool (like sbt or Maven): it knows how to download the libraries this project
+// depends on, compile the Scala sources, and run the tests. The Mill version itself is pinned in
+// the `.mill-version` file next to this one, and the `./mill` launcher script downloads exactly
+// that version, so nobody has to install Mill by hand.
+//
+// The block at the very top of this file, the lines beginning `//|`, is Mill's *build header*. It
+// is YAML, and it lists extra libraries the build definition itself needs — as opposed to
+// `mvnDeps` further down, which lists the libraries the *application* needs. The two are separate
+// classpaths and never mix.
+//
+// The layout Mill expects here:
+//
+//   backend/src/       main Scala sources
+//   backend/resources/ files copied onto the classpath (logging configuration lives here)
+//   backend/test/src/  test sources (MUnit)
+//   backend/out/       everything Mill produces; safe to delete
+//
+// Useful commands (run from the `backend` directory):
+//
+//   ./mill compile         compile the main sources
+//   ./mill test            compile and run the MUnit test suites
+//   ./mill run             start the HTTP server
+//   ./mill assembly        build a single self-contained jar in out/assembly.dest/out.jar
+//   ./mill lint            the CI gate: check formatting and lint rules, changing nothing
+//   ./mill reformatAll     rewrite every Scala file into the house format
+//   ./mill fixAll          apply the scalafix rules, rewriting files in place
+package build
+
+import mill.*, scalalib.*
+import mill.scalalib.scalafmt.ScalafmtModule
+import com.goyeau.mill.scalafix.ScalafixModule
+
+object `package` extends ScalaModule with ScalafmtModule with ScalafixModule {
+
+  def scalaVersion = "3.8.4"
+
+  // `-no-indent` forces the classic curly-brace syntax: Scala 3 also allows an indentation-based
+  // syntax, and mixing the two in one codebase is confusing, so we pick one and let the compiler
+  // enforce it. The `-W...` flags turn sloppy code (unused imports, discarded values) into
+  // warnings so they get noticed during review.
+  //
+  // `-Wunused:all` is doing double duty: scalafix's `RemoveUnused` rule does not find unused code
+  // by itself, it reads the warnings the compiler already produced. Turn this flag off and
+  // `RemoveUnused` silently stops finding anything.
+  def scalacOptions = Seq(
+    "-no-indent",
+    "-deprecation",
+    "-feature",
+    "-unchecked",
+    "-Wunused:all",
+    "-Wvalue-discard",
+    "-source:3.7"
+  )
+
+  def mainClass: T[Option[String]] = Some("obseffects.Main")
+
+  def mvnDeps = Seq(
+    // Tapir describes HTTP endpoints as values. `netty-server-sync` is the *direct style* server:
+    // every request is handled by a Java 21 virtual thread running ordinary blocking code, so
+    // there is no Future/IO/ZIO plumbing anywhere in this project.
+    mvn"com.softwaremill.sttp.tapir::tapir-netty-server-sync:1.13.31",
+    // Teaches Tapir how to turn our case classes into JSON request/response bodies, using circe.
+    mvn"com.softwaremill.sttp.tapir::tapir-json-circe:1.13.31",
+    // Serves an interactive API documentation page (Swagger UI) at /docs.
+    mvn"com.softwaremill.sttp.tapir::tapir-swagger-ui-bundle:1.13.31",
+    // circe itself: parsing and printing JSON, plus compile-time derivation of codecs.
+    mvn"io.circe::circe-core:0.14.16",
+    mvn"io.circe::circe-parser:0.14.16",
+    // Derives circe encoders/decoders for our case classes at compile time.
+    mvn"io.circe::circe-generic:0.14.16",
+    // The *synchronous* MongoDB driver. Its blocking calls are exactly what we want on virtual
+    // threads; the "reactive streams" driver would drag an async runtime back in.
+    mvn"org.mongodb:mongodb-driver-sync:5.10.0",
+    // macwire generates the object-graph construction code at compile time (see Wiring.scala).
+    mvn"com.softwaremill.macwire::macros:2.6.7",
+    // Checks the admin password against the bcrypt hash in ADMIN_PASSWORD_HASH. Pure Java — it
+    // pulls in one small transitive library (`at.favre.lib:bytes`) and loads no native code, which
+    // is why it was picked over an argon2 binding; see docs/CONTRACT.md §4 "Verifying the password".
+    mvn"at.favre.lib:bcrypt:0.10.2",
+    // Netty and the Mongo driver log through SLF4J; without a backend they print a warning and
+    // stay silent. `slf4j-simple` writes to stderr, which is what we want inside Docker.
+    mvn"org.slf4j:slf4j-simple:2.0.18"
+  )
+
+  // The test sources are code too, so they get the same formatter and the same lint rules. Mixing
+  // the two traits in here is what gives us `test.reformat`, `test.checkFormat` and `test.fix`
+  // alongside the main module's versions of the same tasks.
+  object test extends ScalaTests with TestModule.Munit with ScalafmtModule with ScalafixModule {
+    def mvnDeps = Seq(mvn"org.scalameta::munit:1.3.5")
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // Formatting and linting
+  //
+  // Two separate tools, both configured by a file that sits next to this one:
+  //
+  //   scalafmt (.scalafmt.conf)  decides *layout* — line width, where line breaks go, how imports
+  //                              are laid out. It never changes what the code means.
+  //   scalafix (.scalafix.conf)  decides *content* — it deletes unused imports, reorders import
+  //                              groups, and refuses a few constructs that hide bugs. It can
+  //                              change what the code means, which is why it is a separate step
+  //                              you opt into rather than something that runs on every compile.
+  //
+  // Mixing `ScalafmtModule` into a module gives it `reformat` (rewrite the files) and
+  // `checkFormat` (fail if any file is not already formatted, touching nothing). Mixing in
+  // `ScalafixModule` gives it `fix` (apply the rules) and `fix --check` (report and fail without
+  // rewriting).
+  //
+  // Those built-in tasks are per-module, so `mill checkFormat` on its own would silently skip
+  // `test/`. The four commands below run each pair over both modules, so there is one name to type
+  // and one name for CI to call.
+  // ---------------------------------------------------------------------------------------------
+
+  /**
+   * Rewrite every Scala file, main and test, into the format described by `.scalafmt.conf`. Safe to
+   * run at any time; run it before committing.
+   */
+  def reformatAll() = Task.Command {
+    reformat()()
+    test.reformat()()
+  }
+
+  /**
+   * Apply the scalafix rules from `.scalafix.conf` to every Scala file, main and test. Unlike
+   * `reformatAll` this can change behaviour, so read the diff afterwards.
+   */
+  def fixAll() = Task.Command {
+    fix()()
+    test.fix()()
+  }
+
+  /**
+   * The CI gate. Fails if any file is not formatted, or if any scalafix rule is violated. Writes
+   * nothing, so it is safe to run against a checkout you do not want modified.
+   *
+   * When it fails, `mill reformatAll` and `mill fixAll` are what fix it.
+   */
+  def lint() = Task.Command {
+    checkFormat()()
+    test.checkFormat()()
+    fix("--check")()
+    test.fix("--check")()
+  }
+
+  /**
+   * The other half of the gate, kept separate because formatting failures are the common case and
+   * are fixed mechanically. Checks layout only; runs no lint rule.
+   */
+  def checkFormatAll() = Task.Command {
+    checkFormat()()
+    test.checkFormat()()
+  }
+}
