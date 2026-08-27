@@ -1,0 +1,50 @@
+{
+  "compilerOptions": {
+    /* Emit nothing: Vite does the actual transpiling. `tsc` is only used as a type checker. */
+    "noEmit": true,
+
+    /* Target a modern browser — the only consumers are Chrome-based (including OBS's embedded one). */
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+
+    /*
+     * SolidJS compiles JSX with its own transform, provided by @solidjs/vite-plugin.
+     *
+     * "jsxImportSource" names the package whose `JSX` namespace describes what an HTML tag such as
+     * <div> accepts. In Solid 2 the browser (DOM) renderer moved out of solid-js into its own
+     * package, @solidjs/web, and the JSX types moved with it — so this points at @solidjs/web and
+     * not at solid-js. Getting it wrong shows up as "Property 'div' does not exist on type
+     * 'JSX.IntrinsicElements'" on every tag in the project.
+     */
+    "jsx": "preserve",
+    "jsxImportSource": "@solidjs/web",
+
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "allowImportingTsExtensions": true,
+    "types": ["vite/client"],
+
+    /*
+     * "~/effects/registry" is nicer to read than "../../effects/registry".
+     *
+     * There is deliberately no "baseUrl" here. TypeScript 6 deprecated that option (it is a hard
+     * error, not a warning, and TypeScript 7 removes it). It is not needed: without "baseUrl" the
+     * paths below are resolved relative to the directory holding this tsconfig.json, which is
+     * exactly what "./src/*" already means. Vite is told about the same alias separately, in
+     * vite.config.ts — TypeScript only checks types, it never resolves the import at runtime.
+     */
+    "paths": {
+      "~/*": ["./src/*"]
+    }
+  },
+  "include": ["src", "vite.config.ts"]
+}

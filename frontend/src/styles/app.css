@@ -1,0 +1,1296 @@
+/*
+ * The single stylesheet for the admin UI.
+ *
+ * There is no CSS framework on purpose: the whole app is a handful of pages, and a framework
+ * would be more bytes and more indirection than the styling actually needs.
+ *
+ * The renderer page (/e/:slug) deliberately imports almost nothing from here — see the
+ * `.renderer-*` rules at the bottom, which strip the page back to a transparent surface so OBS
+ * can composite it over the rest of the scene.
+ */
+
+/* ---------------------------------------------------------------- */
+/* Design tokens                                                     */
+/* ---------------------------------------------------------------- */
+
+:root {
+  --bg: #0d1014;
+  --bg-raised: #151a21;
+  --bg-input: #0b0e12;
+  --border: #232a34;
+  --border-strong: #333d4b;
+
+  --text: #e6ebf2;
+  --text-dim: #97a3b4;
+  --text-faint: #66717f;
+
+  --accent: #4cc2ff;
+  --accent-strong: #1aa7ee;
+  --accent-ink: #04222f;
+
+  --ok: #3ddc84;
+  --warn: #ffc857;
+  --danger: #ff5f6d;
+
+  --radius: 8px;
+  --radius-sm: 5px;
+  --gap: 16px;
+
+  --font: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --mono: "JetBrains Mono", "Fira Code", ui-monospace, "SFMono-Regular", Consolas, monospace;
+
+  color-scheme: dark;
+}
+
+/* ---------------------------------------------------------------- */
+/* Base                                                              */
+/* ---------------------------------------------------------------- */
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 15px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+code,
+.mono {
+  font-family: var(--mono);
+  font-size: 0.9em;
+}
+
+h1,
+h2,
+h3 {
+  margin: 0;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+h1 {
+  font-size: 22px;
+}
+
+h2 {
+  font-size: 17px;
+}
+
+h3 {
+  font-size: 14px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+/* ---------------------------------------------------------------- */
+/* Shell                                                             */
+/* ---------------------------------------------------------------- */
+
+.shell {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  padding: 0 20px;
+  height: 56px;
+  background: var(--bg-raised);
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  flex-wrap: wrap;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-weight: 700;
+  font-size: 15px;
+  letter-spacing: 0.02em;
+  color: var(--text);
+}
+
+.brand:hover {
+  text-decoration: none;
+}
+
+.brand-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 10px var(--accent);
+}
+
+.nav {
+  display: flex;
+  gap: 4px;
+  flex: 1;
+}
+
+.nav a {
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  color: var(--text-dim);
+  font-size: 14px;
+}
+
+.nav a:hover {
+  background: #1d232c;
+  color: var(--text);
+  text-decoration: none;
+}
+
+/*
+ * The "you are here" highlight.
+ *
+ * Solid Router sets `aria-current="page"` on any anchor whose href is exactly the current URL, so
+ * the highlight is pure CSS — there is no active-link component and no JavaScript comparing paths.
+ *
+ * `aria-current="page"` is used rather than the router's `data-active`, because `data-active` also
+ * matches prefixes: on /admin/effects it would light up the "Routes" link (whose href is /admin)
+ * as well as the "Inventory" one.
+ */
+.nav a[aria-current="page"] {
+  background: #1d232c;
+  color: var(--text);
+}
+
+.topbar-status {
+  font-size: 12px;
+  color: var(--text-faint);
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-faint);
+}
+
+.status-dot.up {
+  background: var(--ok);
+}
+
+.status-dot.down {
+  background: var(--danger);
+}
+
+.page {
+  flex: 1;
+  width: 100%;
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 24px 20px 64px;
+}
+
+.page-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--gap);
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+}
+
+.page-head p {
+  margin: 4px 0 0;
+  color: var(--text-dim);
+  font-size: 13px;
+  max-width: 70ch;
+}
+
+/* ---------------------------------------------------------------- */
+/* Cards and panels                                                  */
+/* ---------------------------------------------------------------- */
+
+.card {
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 18px;
+}
+
+.card + .card {
+  margin-top: var(--gap);
+}
+
+.card-title {
+  margin-bottom: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.muted {
+  color: var(--text-dim);
+}
+
+.faint {
+  color: var(--text-faint);
+}
+
+.empty {
+  padding: 40px 20px;
+  text-align: center;
+  color: var(--text-dim);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius);
+}
+
+/* ---------------------------------------------------------------- */
+/* Buttons                                                           */
+/* ---------------------------------------------------------------- */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-strong);
+  background: #1b212a;
+  color: var(--text);
+  font: inherit;
+  font-size: 13.5px;
+  cursor: pointer;
+  transition:
+    background 0.12s ease,
+    border-color 0.12s ease;
+}
+
+.btn:hover:not(:disabled) {
+  background: #232b36;
+  border-color: #46525f;
+  text-decoration: none;
+}
+
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.btn-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 600;
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: var(--accent-strong);
+  border-color: var(--accent-strong);
+}
+
+.btn-danger {
+  border-color: #5c2a30;
+  color: var(--danger);
+}
+
+.btn-danger:hover:not(:disabled) {
+  background: #2a1518;
+  border-color: #7a3740;
+}
+
+.btn-sm {
+  padding: 4px 10px;
+  font-size: 12.5px;
+}
+
+.btn-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+/* ---------------------------------------------------------------- */
+/* Tables                                                            */
+/* ---------------------------------------------------------------- */
+
+.table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 720px;
+}
+
+th {
+  text-align: left;
+  font-size: 11px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  font-weight: 600;
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--border);
+  background: #121820;
+}
+
+td {
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+  font-size: 14px;
+}
+
+tbody tr:last-child td {
+  border-bottom: none;
+}
+
+tbody tr:hover td {
+  background: #171d25;
+}
+
+.cell-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+/* ---------------------------------------------------------------- */
+/* Badges                                                            */
+/* ---------------------------------------------------------------- */
+
+.badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  border: 1px solid var(--border-strong);
+  color: var(--text-dim);
+}
+
+.badge-on {
+  color: var(--ok);
+  border-color: #235c3c;
+  background: #10231a;
+}
+
+.badge-off {
+  color: var(--text-faint);
+}
+
+.badge-three {
+  color: #c9a6ff;
+  border-color: #43356b;
+  background: #1a1526;
+}
+
+.badge-pixi {
+  color: #ffb27a;
+  border-color: #6b4a35;
+  background: #241a13;
+}
+
+.badge-missing {
+  color: var(--danger);
+  border-color: #5c2a30;
+  background: #24151a;
+}
+
+/* ---------------------------------------------------------------- */
+/* Banners                                                           */
+/* ---------------------------------------------------------------- */
+
+.banner {
+  padding: 11px 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-strong);
+  font-size: 13.5px;
+  margin-bottom: var(--gap);
+}
+
+.banner-error {
+  border-color: #5c2a30;
+  background: #21151a;
+  color: #ffb0b6;
+}
+
+.banner-ok {
+  border-color: #235c3c;
+  background: #12211a;
+  color: #a4e8c2;
+}
+
+.banner-info {
+  border-color: #2b4a5c;
+  background: #101c22;
+  color: #a8d8ec;
+}
+
+/* ---------------------------------------------------------------- */
+/* Forms                                                             */
+/* ---------------------------------------------------------------- */
+
+.field {
+  margin-bottom: 16px;
+}
+
+.field:last-child {
+  margin-bottom: 0;
+}
+
+.field-label {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 5px;
+}
+
+.field-help {
+  margin: 5px 0 0;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
+.field-error {
+  margin: 5px 0 0;
+  font-size: 12px;
+  color: var(--danger);
+}
+
+input[type="text"],
+input[type="number"],
+select,
+textarea {
+  width: 100%;
+  padding: 8px 10px;
+  background: var(--bg-input);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+}
+
+input[type="text"]:focus,
+input[type="number"]:focus,
+select:focus,
+textarea:focus,
+input[type="range"]:focus,
+input[type="color"]:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+input.invalid {
+  border-color: var(--danger);
+}
+
+input[type="range"] {
+  width: 100%;
+  accent-color: var(--accent);
+}
+
+input[type="color"] {
+  width: 46px;
+  height: 34px;
+  padding: 2px;
+  background: var(--bg-input);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.checkbox-row input[type="checkbox"] {
+  width: 17px;
+  height: 17px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.slider-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.slider-row input[type="range"] {
+  flex: 1;
+}
+
+.slider-row .slider-value {
+  width: 88px;
+  flex: 0 0 88px;
+}
+
+.color-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.color-row input[type="text"] {
+  flex: 1;
+  font-family: var(--mono);
+}
+
+/* ---------------------------------------------------------------- */
+/* Effect picker                                                     */
+/* ---------------------------------------------------------------- */
+
+.picker-group + .picker-group {
+  margin-top: 16px;
+}
+
+.picker-group > h3 {
+  margin-bottom: 8px;
+}
+
+.picker-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 10px;
+}
+
+.picker-option {
+  text-align: left;
+  padding: 11px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.picker-option:hover {
+  border-color: #46525f;
+}
+
+.picker-option.selected {
+  border-color: var(--accent);
+  background: #0f2230;
+}
+
+.picker-option-name {
+  font-weight: 600;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.picker-option-desc {
+  font-size: 12px;
+  color: var(--text-faint);
+  line-height: 1.4;
+}
+
+/* ---------------------------------------------------------------- */
+/* Edit page layout                                                  */
+/* ---------------------------------------------------------------- */
+
+.edit-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 420px);
+  gap: var(--gap);
+  align-items: start;
+}
+
+@media (max-width: 940px) {
+  .edit-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.preview-sticky {
+  position: sticky;
+  top: 80px;
+}
+
+/*
+ * The preview surface. The checkerboard makes transparency visible: an effect meant to be
+ * composited over an OBS scene should let the squares show through.
+ */
+.preview-stage {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background-color: #10141a;
+  background-image:
+    linear-gradient(45deg, #191f27 25%, transparent 25%),
+    linear-gradient(-45deg, #191f27 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #191f27 75%),
+    linear-gradient(-45deg, transparent 75%, #191f27 75%);
+  background-size: 18px 18px;
+  background-position:
+    0 0,
+    0 9px,
+    9px -9px,
+    -9px 0;
+}
+
+.preview-host {
+  position: absolute;
+  inset: 0;
+}
+
+.preview-host canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.preview-note {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 20px;
+  color: var(--text-faint);
+  font-size: 13px;
+  pointer-events: none;
+}
+
+/* ---------------------------------------------------------------- */
+/* Canvas settings (route editor)                                    */
+/* ---------------------------------------------------------------- */
+
+/*
+ * Width and height sit side by side, because they are read as one value ("1920 by 1080") rather
+ * than two independent settings. `minmax(0, 1fr)` rather than plain `1fr` stops a long validation
+ * message from widening its column and pushing the other one off the card.
+ */
+.canvas-size-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px;
+}
+
+@media (max-width: 520px) {
+  .canvas-size-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/*
+ * The one-click resolution buttons ("1920 x 1080", ...). Named for what they are: the word
+ * "preset" now means a saved set of parameter values, and two meanings of one word in one
+ * stylesheet is one too many.
+ */
+.resolution-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+
+/* The chosen resolution, echoed back in plain words under the two inputs. */
+.canvas-summary {
+  margin: 10px 0 0;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+/* The frame-cap input and its "frames per second" label, side by side. */
+.fps-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.fps-row input[type="number"] {
+  width: 96px;
+  flex: 0 0 96px;
+}
+
+/* ---------------------------------------------------------------- */
+/* Presets                                                           */
+/* ---------------------------------------------------------------- */
+
+/*
+ * The saved-preset list, used both in the route editor's card and on /admin/presets. A list rather
+ * than a table because a preset has one thing worth reading — its name — and a table of one column
+ * is a list with extra lines drawn on it.
+ */
+.preset-list {
+  list-style: none;
+  margin: 0 0 var(--gap);
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.preset-item {
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.preset-item:last-child {
+  border-bottom: none;
+}
+
+/* One row: the name and its summary on the left, the buttons on the right. */
+.preset-item,
+.preset-item-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+/* A row whose editor can open inside it stacks instead, so the form gets the full width. */
+.preset-item-block {
+  display: block;
+}
+
+.preset-item-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  font-size: 13.5px;
+}
+
+.preset-item-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+}
+
+.preset-save {
+  border-top: 1px solid var(--border);
+  padding-top: 14px;
+}
+
+/* The name field and its save button, side by side; the field takes whatever is left. */
+.preset-save-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.preset-save-row input[type="text"] {
+  flex: 1;
+  min-width: 0;
+}
+
+/* The create/edit form on /admin/presets, opened inside the row it belongs to. */
+.preset-editor {
+  padding: 4px 0 8px;
+}
+
+/* ---------------------------------------------------------------- */
+/* Backup page (export and import)                                   */
+/* ---------------------------------------------------------------- */
+
+/*
+ * Lists inside a banner: the problems in a rejected file, the counts of a finished import. They
+ * inherit the banner's colour, so only the layout is set here.
+ */
+.issue-list {
+  margin: 6px 0 0;
+  padding-left: 18px;
+}
+
+.issue-list li + li {
+  margin-top: 3px;
+}
+
+/* Everything the confirmation step shows, separated from the file picker above it. */
+.import-plan {
+  margin-top: var(--gap);
+  border-top: 1px solid var(--border);
+  padding-top: var(--gap);
+}
+
+/*
+ * The merge/replace choice. A `<fieldset>` with a `<legend>` rather than a heading and two loose
+ * radio buttons: that pairing is what tells a screen reader that the question above belongs to the
+ * options below it. Its default border and padding are removed because the card already provides
+ * the box.
+ */
+.mode-choice {
+  border: none;
+  margin: 0 0 var(--gap);
+  padding: 0;
+}
+
+.mode-choice legend {
+  padding: 0;
+  margin-bottom: 8px;
+}
+
+.mode-choice .checkbox-row {
+  margin-top: 10px;
+  align-items: flex-start;
+}
+
+/* The consequence of one choice, indented under the option it describes. */
+.mode-help {
+  margin-left: 26px;
+  max-width: 62ch;
+}
+
+.checkbox-row input[type="radio"] {
+  width: 17px;
+  height: 17px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+/* The file picker. Browsers style the button inside it themselves; this is only the box. */
+input[type="file"] {
+  width: 100%;
+  padding: 8px 10px;
+  background: var(--bg-input);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+}
+
+input[type="file"]:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* ---------------------------------------------------------------- */
+/* Login page                                                        */
+/* ---------------------------------------------------------------- */
+
+.login-page {
+  min-height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 20px;
+}
+
+.login-card {
+  width: 100%;
+  max-width: 420px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 26px;
+}
+
+.login-brand {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-weight: 700;
+  font-size: 14px;
+  letter-spacing: 0.02em;
+  color: var(--text-dim);
+  margin-bottom: 18px;
+}
+
+.login-card h1 {
+  margin-bottom: 6px;
+}
+
+.login-intro {
+  font-size: 13px;
+  margin: 0 0 18px;
+}
+
+.login-card input[type="password"] {
+  width: 100%;
+  padding: 8px 10px;
+  background: var(--bg-input);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+}
+
+.login-card input[type="password"]:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.login-foot {
+  margin: 20px 0 0;
+  font-size: 12px;
+  border-top: 1px solid var(--border);
+  padding-top: 14px;
+}
+
+/* ---------------------------------------------------------------- */
+/* Inline confirmation (used instead of window.confirm)              */
+/* ---------------------------------------------------------------- */
+
+.confirm-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  font-size: 13px;
+  color: var(--warn);
+}
+
+/* ---------------------------------------------------------------- */
+/* Inventory page                                                    */
+/* ---------------------------------------------------------------- */
+
+/* ---------------------------------------------------------------- */
+/* Effect inventory — a list of widgets, not a grid                   */
+/* ---------------------------------------------------------------- */
+
+/* One column on purpose. With thirty effects a masonry grid gives the eye no
+   column to run down and no two cards line up; a single stack means every
+   name starts at the same left edge and the page can be scanned rather than
+   read. See the note on `EffectWidget` in InventoryPage.tsx. */
+.inventory-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap);
+}
+
+.inventory-widget {
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+}
+
+.inventory-widget-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px var(--gap);
+  margin-bottom: 6px;
+}
+
+.inventory-widget-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.inventory-widget-title h2 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.inventory-widget p {
+  margin: 0 0 6px;
+}
+
+/* The parameter table is what makes a card tall, so it is folded away. Closed,
+   a widget is three lines whatever the effect's complexity. */
+.inventory-params > summary {
+  cursor: pointer;
+  padding: 4px 0;
+  color: var(--text-dim);
+  font-size: 0.9rem;
+  user-select: none;
+}
+
+.inventory-params > summary:hover {
+  color: var(--text);
+}
+
+.inventory-params[open] > summary {
+  margin-bottom: 6px;
+  color: var(--text);
+}
+
+.tag-row {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+
+.tag {
+  font-size: 11px;
+  padding: 1px 7px;
+  border-radius: 4px;
+  background: #1b212a;
+  color: var(--text-dim);
+}
+
+.param-table {
+  min-width: 0;
+  width: 100%;
+  margin-top: 10px;
+}
+
+.param-table th,
+.param-table td {
+  padding: 6px 8px;
+  font-size: 12.5px;
+}
+
+/* ---------------------------------------------------------------- */
+/* Renderer page (/e/:slug) — OBS browser source                     */
+/* ---------------------------------------------------------------- */
+
+/*
+ * `body.renderer` is set by the renderer page while it is mounted. It removes every trace of the
+ * admin chrome: no background colour (so OBS sees through to the scene below), no scrollbars, no
+ * margins. The class is removed again when the page unmounts, so navigating back to /admin in a
+ * normal browser tab restores the dark theme.
+ */
+body.renderer {
+  background: transparent !important;
+  overflow: hidden;
+  margin: 0;
+}
+
+.renderer-root {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  background: transparent;
+}
+
+/*
+ * The effect's host element.
+ *
+ * It used to be `inset: 0` — "fill the browser source". Since Phase 2 it is laid out at exactly
+ * the route's canvas size (set inline by RendererPage.tsx, because those numbers come from the
+ * database) and then scaled as a whole to fit whatever size OBS made the source.
+ *
+ * How the centring works, since the two halves are in different files:
+ *
+ *   top/left: 50%             puts the element's top-left corner at the centre of the page,
+ *   translate(-50%, -50%)     pulls it back by half its own width and height, so its centre is
+ *                             now at the page's centre — percentages in `translate` resolve
+ *                             against the element's own box, which is the canvas size,
+ *   scale(s)                  shrinks or grows it about `transform-origin`, which is that same
+ *                             centre point, so the centring survives the scaling.
+ *
+ * `s` is `min(pageWidth / canvasWidth, pageHeight / canvasHeight)`, so the whole canvas always
+ * fits and the aspect ratio is preserved. Whatever is left over at the edges stays transparent:
+ * the OBS scene underneath shows there, not black bars.
+ */
+.renderer-host {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform-origin: 50% 50%;
+  /* width, height and transform are set inline — they depend on the route. */
+}
+
+.renderer-host canvas {
+  display: block;
+}
+
+/*
+ * Errors are the one thing the renderer *does* draw, because a silent black source is the worst
+ * possible failure mode while you are live: you would have no idea why nothing appears.
+ */
+.renderer-error {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  max-width: 640px;
+  padding: 14px 16px;
+  border-radius: var(--radius);
+  background: rgba(20, 8, 10, 0.86);
+  border: 1px solid #7a3740;
+  color: #ffd2d6;
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.renderer-error strong {
+  display: block;
+  margin-bottom: 4px;
+  color: #ff8f98;
+}
+
+/* ---------------------------------------------------------------- */
+/* OBS connection status and the live audio meter (Settings page)    */
+/* ---------------------------------------------------------------- */
+
+/* The state line at the top of the OBS settings form. The left border carries
+   the colour, so the four states are distinguishable at a glance without the
+   text needing to be read, and without colour being the *only* signal — the
+   words "Connected" / "Not connected" say the same thing. */
+.obs-status {
+  padding: 10px 14px;
+  margin-bottom: var(--gap);
+  border-left: 3px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+  color: var(--text-dim);
+  font-size: 0.92rem;
+}
+
+.obs-status strong {
+  color: var(--text);
+}
+
+.obs-status-connected {
+  border-left-color: var(--ok);
+}
+
+.obs-status-connecting {
+  border-left-color: var(--warn);
+}
+
+.obs-status-failed {
+  border-left-color: var(--danger);
+}
+
+.obs-status-error {
+  margin: 6px 0 0;
+  color: #ff8f98;
+}
+
+/* The live peak meter. Deliberately a plain bar rather than a canvas: it is a
+   diagnostic, it updates about twenty times a second, and a div whose width
+   changes is something the browser can composite without a repaint. */
+.meter {
+  height: 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+  overflow: hidden;
+}
+
+.meter-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--ok), var(--warn) 70%, var(--danger));
+  /* Short, and only on the way down: a transition long enough to see would put
+     the meter behind the audio, which is the one thing it must not do. The
+     value arrives already smoothed by nothing at all — this is the raw peak. */
+  transition: width 60ms linear;
+}
+
+.input-levels {
+  list-style: none;
+  margin: var(--gap) 0 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.input-levels li {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--gap);
+  padding: 4px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.92rem;
+}
+
+.input-levels .input-name {
+  color: var(--text-dim);
+}
+
+.input-levels .input-peak {
+  font-family: var(--mono);
+  color: var(--text);
+}
+
+/* ---------------------------------------------------------------- */
+/* The live Twitch chat preview (Settings page)                      */
+/* ---------------------------------------------------------------- */
+
+/* A capped, scrolling list rather than an ever-growing one: this is a
+   diagnostic that proves messages flow, not a chat client. */
+.chat-preview {
+  list-style: none;
+  margin: var(--gap) 0 0;
+  padding: 0;
+  display: grid;
+  gap: 2px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.chat-preview li {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.92rem;
+}
+
+/* The username's colour is set inline per message — it is the sender's own
+   Twitch chat colour, part of the data rather than of the theme. */
+.chat-preview .chat-user {
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.chat-preview .chat-text {
+  color: var(--text-dim);
+  /* Chat contains unbroken emote codes and links; without this a long one
+     would widen the card instead of wrapping. */
+  overflow-wrap: anywhere;
+}
+
+/* The SUB / GIFT / CHEER / RAID marker on channel events. */
+.chat-preview .chat-event {
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  color: var(--warn);
+  flex-shrink: 0;
+}

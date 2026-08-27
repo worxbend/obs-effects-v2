@@ -1,0 +1,70 @@
+/*
+ * Fonts that effects draw with.
+ *
+ * ## Why these are self-hosted rather than loaded from Google Fonts
+ *
+ * The delivery page runs inside an OBS browser source, which may be on a machine with no internet
+ * connection at all — a dedicated streaming box on a LAN is a normal setup. A font that fails to
+ * load does not fail loudly: the browser silently substitutes something else, and an effect that
+ * draws Nerd Font glyph U+F121 gets a "missing character" box instead of a code icon, on air. So
+ * the files ship with the application and are served from the same origin as everything else.
+ *
+ * They came from the old `obs-effects` repository along with the effects that use them.
+ *
+ * ## `font-display: block`, which is the unusual part
+ *
+ * The default (`font-display: auto`, in practice "swap"-like) draws text in a fallback font for the
+ * first few hundred milliseconds and then re-renders it in the real one. On a web page that is the
+ * right trade: text you can read immediately beats text that is perfectly styled.
+ *
+ * Here it is wrong twice over. An effect measures glyphs to lay out a grid, so a substituted font
+ * produces a grid at the wrong pitch that then jumps when the real font arrives; and this is going
+ * out on a live broadcast, where a visible re-flow is worse than a beat of nothing. `block` tells
+ * the browser to draw nothing at all until the font is ready.
+ *
+ * ## Waiting for them
+ *
+ * `font-display: block` stops the browser painting a *wrong* font, but it does not stop an effect
+ * measuring one. Effects that draw text call `await document.fonts.load(...)` in their setup — see
+ * `sdk/text.ts` — which is the only reliable way to know a face is usable.
+ */
+
+@font-face {
+  font-family: "SymbolsNF";
+  src: url("/fonts/SymbolsNerdFontMono-Regular.ttf") format("truetype");
+  font-weight: normal;
+  font-style: normal;
+  font-display: block;
+}
+
+@font-face {
+  font-family: "Silkscreen";
+  src: url("/fonts/Silkscreen-Regular.ttf") format("truetype");
+  font-weight: normal;
+  font-style: normal;
+  font-display: block;
+}
+
+@font-face {
+  font-family: "Silkscreen";
+  src: url("/fonts/Silkscreen-Bold.ttf") format("truetype");
+  font-weight: bold;
+  font-style: normal;
+  font-display: block;
+}
+
+@font-face {
+  font-family: "Rock Salt";
+  src: url("/fonts/RockSalt-Regular.ttf") format("truetype");
+  font-weight: normal;
+  font-style: normal;
+  font-display: block;
+}
+
+@font-face {
+  font-family: "Bangers";
+  src: url("/fonts/Bangers-Regular.ttf") format("truetype");
+  font-weight: normal;
+  font-style: normal;
+  font-display: block;
+}
