@@ -18,7 +18,10 @@ enum RepositoryFailure {
   /** Another route already owns the requested slug. */
   case SlugTaken
 
-  /** Another preset of the same effect already owns the requested name, compared without regard to case. */
+  /** Another preset of the same effect already owns the requested name, compared without regard to case — or, for a
+    * sound write, another sound already owns exactly that name. One case for both, because the reporting repository is
+    * what tells the service which kind of name was taken.
+    */
   case NameTaken
 }
 
@@ -196,4 +199,38 @@ trait ChatMessageRepository {
   def before(at: Long, id: Option[String], limit: Int): List[ChatMessage]
 
   def count(): Long
+}
+
+/** Reading and writing the stored sounds — audio files the chat overlay effect plays when a chat message arrives.
+  *
+  * The production implementation keeps the bytes in MongoDB's GridFS (a convention for storing files bigger than one
+  * document), which is why the bytes travel separately from the descriptions: listing sounds must not drag five
+  * megabytes per row out of the database.
+  *
+  * Name uniqueness is *exact*, unlike the case-insensitive preset rule. A sound name is a lookup key — effect
+  * parameters reference a sound by name and the public audio URL accepts the name verbatim — so "Discord" and "discord"
+  * would be two genuinely different keys, not two spellings of one.
+  */
+trait SoundRepository {
+
+  /** Every sound's description, in no particular order — sorting is the service's job. */
+  def listAll(): List[Sound]
+
+  def findById(id: SoundId): Option[Sound]
+
+  /** Finds the sound owning exactly this name — see the note above on why the comparison is case-sensitive. */
+  def findByName(name: String): Option[Sound]
+
+  /** Stores a brand new sound with its bytes. `uploadedAt` is a parameter rather than something this method reads from
+    * a clock, for the same test-pinning reason as [[RouteRepository.insert]].
+    */
+  def insert(input: SoundInput, bytes: Array[Byte], uploadedAt: Instant): Either[RepositoryFailure, Sound]
+
+  /** @return `true` if a sound was deleted, `false` if there was nothing to delete. */
+  def delete(id: SoundId): Boolean
+
+  /** The stored bytes of one sound, or `None` when no sound has that id. Materialising the whole file is fine here:
+    * uploads are capped at five megabytes, so "streaming" would buy nothing but plumbing.
+    */
+  def download(id: SoundId): Option[Array[Byte]]
 }

@@ -762,6 +762,43 @@ object Wire {
   given Decoder[TwitchOAuthCompleteRequestDto] = deriveDecoder
   given Encoder[TwitchOAuthCompleteRequestDto] = deriveEncoder
 
+  // -------------------------------------------------------------------------------------------
+  // Sounds
+  // -------------------------------------------------------------------------------------------
+
+  /** One stored sound as the admin panel and the chat overlay effect see it. The bytes are not here — they travel
+    * through `GET /api/sounds/{id}/audio` — so this stays small enough to list.
+    */
+  final case class SoundInfoDto(
+      id: String,
+      name: String,
+      builtin: Boolean,
+      contentType: String,
+      sizeBytes: Long,
+      uploadedAt: String
+  )
+
+  /** The response of `GET /api/sounds`. An envelope object rather than a bare array, so a later addition — a total
+    * size, say — has somewhere to go without changing the response's JSON type.
+    */
+  final case class SoundListDto(sounds: List[SoundInfoDto])
+
+  def toDto(sound: Sound): SoundInfoDto =
+    SoundInfoDto(
+      id = sound.id.value,
+      name = sound.name,
+      builtin = sound.builtin,
+      contentType = sound.contentType,
+      sizeBytes = sound.sizeBytes,
+      uploadedAt = formatInstant(sound.uploadedAt)
+    )
+
+  given Decoder[SoundInfoDto] = deriveDecoder
+  given Encoder[SoundInfoDto] = deriveEncoder
+
+  given Decoder[SoundListDto] = deriveDecoder
+  given Encoder[SoundListDto] = deriveEncoder
+
   given Schema[JsonValue] = Schema.any[JsonValue].description("any JSON value")
   given Schema[io.circe.Json] = Schema.any[io.circe.Json].description("any JSON value")
 
@@ -780,6 +817,9 @@ object Wire {
   given Schema[TwitchViewDto] = Schema.derived
   given Schema[TwitchTokensRequestDto] = Schema.derived
   given Schema[TwitchOAuthCompleteRequestDto] = Schema.derived
+
+  given Schema[SoundInfoDto] = Schema.derived
+  given Schema[SoundListDto] = Schema.derived
 
   given Schema[ParamSpecDto] = Schema.derived
   given Schema[EffectDescriptorDto] = Schema.derived
@@ -813,14 +853,17 @@ object Wire {
 
   /** Maps from an `AppError` case to the stable machine-readable code in the contract. */
   def errorCode(error: AppError): String = error match {
-    case _: AppError.BadRequest       => "BAD_REQUEST"
-    case _: AppError.Unauthorized     => "UNAUTHORIZED"
-    case _: AppError.NotFound         => "NOT_FOUND"
-    case _: AppError.SlugConflict     => "SLUG_CONFLICT"
-    case _: AppError.NameConflict     => "NAME_CONFLICT"
-    case _: AppError.UnknownEffect    => "UNKNOWN_EFFECT"
-    case _: AppError.ValidationFailed => "VALIDATION_FAILED"
-    case _: AppError.TooManyAttempts  => "TOO_MANY_ATTEMPTS"
-    case _: AppError.Internal         => "INTERNAL_ERROR"
+    case _: AppError.BadRequest   => "BAD_REQUEST"
+    case _: AppError.Unauthorized => "UNAUTHORIZED"
+    case _: AppError.NotFound     => "NOT_FOUND"
+    case _: AppError.SlugConflict => "SLUG_CONFLICT"
+    case _: AppError.NameConflict => "NAME_CONFLICT"
+    // Deliberately the same code as `NameConflict`: to a client both mean "pick another name", and the two cases only
+    // exist separately so the server-side message does not have to invent an effect id for a sound.
+    case _: AppError.SoundNameConflict => "NAME_CONFLICT"
+    case _: AppError.UnknownEffect     => "UNKNOWN_EFFECT"
+    case _: AppError.ValidationFailed  => "VALIDATION_FAILED"
+    case _: AppError.TooManyAttempts   => "TOO_MANY_ATTEMPTS"
+    case _: AppError.Internal          => "INTERNAL_ERROR"
   }
 }

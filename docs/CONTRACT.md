@@ -319,6 +319,31 @@ One Twitch chat event, exactly as every consumer receives it — in the WebSocke
 - **There is no avatar field.** Avatars need the Helix API plus a token, which is deferred; overlays
   must tolerate the absence and use their procedural fallbacks (that is what `seed` is for).
 
+### 2.9 `SoundInfo` *(added in Phase 5)*
+
+One stored sound — an audio file the chat overlay effect plays when a chat message arrives. This is
+the *description* of the file; the bytes themselves come from `GET /api/sounds/{id}/audio`.
+
+```jsonc
+{
+  "id": "66cf01a2e1a4c3d2b1a05555",   // server-assigned ObjectId, hex string
+  "name": "ding",                      // unique, 1–64 chars after trimming, compared exactly
+  "builtin": false,                    // true for the two server-seeded sounds; not deletable
+  "contentType": "audio/mpeg",         // one of audio/mpeg, audio/ogg, audio/wav, audio/webm
+  "sizeBytes": 48231,                  // size of the stored bytes
+  "uploadedAt": "2026-08-27T10:00:00.123Z"
+}
+```
+
+- **`name` uniqueness is exact**, unlike a preset's case-insensitive rule, because a sound name is a
+  lookup key: effect parameters reference a sound by name and the audio URL accepts the name
+  verbatim, so "Discord" and "discord" would be two different keys, not two spellings of one name.
+- **`builtin`** marks the two sounds the server seeds from its own resources at start-up, `discord`
+  and `slack-message` (both `audio/mpeg`). Seeding is idempotent — a builtin whose name already
+  exists is skipped — so restarts and multiple instances change nothing. A builtin cannot be
+  deleted: effect parameters may reference it by name, and the seed would recreate it on the next
+  restart anyway.
+
 ---
 
 ## 3. Error envelope
@@ -377,8 +402,10 @@ Phase 2 this document promised `application/json; charset=utf-8` while the serve
 G9). The endpoints that do not send a JSON body are the two Server-Sent Events streams
 (`GET /api/routes/by-slug/{slug}/events` and `GET /api/audio/levels/events`), which send
 `text/event-stream; charset=utf-8` — for `text/*` types the charset parameter *is* meaningful, and
-Tapir's SSE body sets it — and the WebSocket at `GET /api/chat/ws`, whose text frames carry JSON
-but which is not an HTTP response body at all.
+Tapir's SSE body sets it — the WebSocket at `GET /api/chat/ws`, whose text frames carry JSON
+but which is not an HTTP response body at all, and the two sound transfers: `POST /api/sounds`
+takes the raw audio bytes as its request body, and `GET /api/sounds/{id}/audio` answers with them
+under the stored audio `Content-Type`.
 
 **Authentication.** Write endpoints and admin reads require a session cookie; the handful of
 endpoints an OBS browser source or a login screen has to reach are public. The rules are next.
@@ -406,12 +433,14 @@ it public means adding a row here with the reason it cannot be protected.**
 | `GET /api/routes/by-slug/{slug}/events` | The push version of the same read, for the same reason. |
 | `GET /api/audio/levels/events` | **An OBS browser source cannot log in**, and every audio-reactive effect reads this. It carries loudness numbers and OBS input names — never the obs-websocket URL, and never its password, which is exactly why the WebSocket client lives in the backend and not in the page. |
 | `GET /api/chat/ws` | **An OBS browser source cannot log in**, and every chat overlay reads this. It carries public Twitch chat content and connection-state words — never the channel's tokens and never the client secret, which stay on the server for exactly the same reason as the obs-websocket password. |
+| `GET /api/sounds/{id}/audio` | **An OBS browser source cannot log in**, and the chat overlay effect plays these. It carries a stored notification sound — the least sensitive thing this server holds — and never any credential. This mirrors the audio-levels precedent above. Only the *download* is public: listing, uploading and deleting sounds are protected. |
 | `GET /docs`, `GET /docs/docs.yaml` | The generated API documentation. It describes shapes, not data, and it is outside `/api`. Mentioned here so the list is exhaustive. |
 
 Everything else is protected: `GET /api/effects`, `POST /api/effects/sync`, all of
 `GET`/`POST`/`PUT`/`DELETE /api/routes…`, all of `/api/presets…`, both `/api/admin/…` endpoints,
-every `/api/settings/…` endpoint (the OBS pair and the four Twitch ones), and
-`GET /api/chat/history`.
+every `/api/settings/…` endpoint (the OBS pair and the four Twitch ones),
+`GET /api/chat/history`, and the three sound management endpoints
+(`GET`/`POST /api/sounds`, `DELETE /api/sounds/{id}`).
 
 `GET /api/effects` is protected even though it only reads: it is an admin screen's data, and no
 public consumer needs it — the renderer page resolves an `effectId` against the effect registry
@@ -1177,6 +1206,58 @@ Two duplicates inside one file — the same slug twice, or the same `effectId` +
 > script, before any browser has opened the app, will report every route as an unknown effect —
 > open `/admin` once first.
 
+### `GET /api/sounds` *(protected, added in Phase 5)*
+
+`200` with every stored sound, wrapped in an envelope object and sorted by `name` ignoring case:
+
+```jsonc
+{ "sounds": [ /* SoundInfo, §2.9 */ ] }
+```
+
+An envelope rather than a bare array, so a later addition — a total size, say — has somewhere to go
+without changing the response's JSON type.
+
+### `POST /api/sounds` *(protected, added in Phase 5)*
+
+Uploads one sound. Unusually for this API the body is **not JSON**: it is the raw audio bytes, so
+`fetch(url + "?name=ding", { method: "POST", body: file })` works with no multipart encoding
+anywhere. The three pieces travel where raw-body uploads put them:
+
+- the bytes are the request body;
+- `name` is a **required query parameter** — the unique name, 1 to 64 characters after trimming;
+- the format is the ordinary `Content-Type` header, one of `audio/mpeg`, `audio/ogg`, `audio/wav`
+  or `audio/webm` (parameters such as `; codecs=opus` are allowed and ignored).
+
+The body must be non-empty and at most **5 MB** (5 242 880 bytes). `201` with the stored
+`SoundInfo` and a `Location: /api/sounds/{id}` header. A missing or unaccepted `Content-Type`, an
+empty or oversized body, or a bad name is **422** `VALIDATION_FAILED` (rule 14); a taken name is
+**409** `NAME_CONFLICT` (rule 15).
+
+### `DELETE /api/sounds/{id}` *(protected, added in Phase 5)*
+
+`204` on success. A malformed id is **400**; an unknown id is **404**. Deleting a **builtin** sound
+is **422** `VALIDATION_FAILED` with field `builtin`: effect parameters may reference it by name,
+and start-up seeding would recreate it on the next restart anyway.
+
+There is no "replace a sound" operation, and that is what makes the download below cacheable
+forever: the bytes under one id never change. To change a sound, delete it and upload again — the
+upload mints a fresh id.
+
+### `GET /api/sounds/{id}/audio` *(public, added in Phase 5)*
+
+The audio bytes, with the stored `Content-Type` and
+`Cache-Control: public, max-age=31536000, immutable` — a year of caching, safe because content
+under one id is immutable (see the delete endpoint above).
+
+**The `{id}` slot accepts either the database id or the sound's `name`.** Effect parameters
+reference sounds by name, because a name survives a delete-and-reupload while an id does not, so
+the chat overlay can build `/api/sounds/ding/audio` straight from its configuration. A value that
+looks like an ObjectId (24 hex characters) is tried as an id first, then as a name, so a sound
+whose name happens to be 24 hex characters is still reachable. Unknown id or name is **404**.
+
+Public for the standing reason — the overlay runs in an OBS browser source, which cannot sign in —
+and listed in the table in §4.
+
 ### CORS
 
 Cross-Origin Resource Sharing is the browser rule that a page loaded from one origin may not read a
@@ -1276,6 +1357,18 @@ requests.
 13. `POST /api/auth/login` requires `password` to be a string of 1 to 1024 characters. Anything else
     is **400** `BAD_REQUEST` — never 401, because the shape of the request is wrong rather than the
     credential.
+
+*Added in Phase 5:*
+
+14. A sound upload (`POST /api/sounds`): `name`, after trimming, is 1 to 64 characters with at
+    least one non-space character; the `Content-Type` media type is one of `audio/mpeg`,
+    `audio/ogg`, `audio/wav`, `audio/webm`; the body is non-empty and at most 5 242 880 bytes
+    (5 MB). Otherwise **422** `VALIDATION_FAILED` with `field` paths `name`, `contentType`, `body`,
+    all problems reported together.
+15. A sound `name` is unique, compared **exactly** (case matters — see §2.9 for why this differs
+    from the preset rule). Otherwise **409** `NAME_CONFLICT`, whose `details` carry `{ "name" }`
+    and — unlike a preset conflict — no `effectId`.
+16. A builtin sound cannot be deleted: **422** `VALIDATION_FAILED` with `field` `builtin`.
 
 ---
 
@@ -1436,6 +1529,37 @@ the WebSocket ring at start-up.
 
 There is no retention cap in this phase. Chat volume for a single channel is small (a document per
 message, a few hundred bytes each); if that ever matters, a TTL index on `at` is the one-line fix.
+
+### GridFS bucket `sounds` *(added in Phase 5)*
+
+Sounds are stored in **GridFS**, MongoDB's convention for files: the bytes live as chunk documents
+in `sounds.chunks`, and one description document per file lives in `sounds.files`. The driver
+already ships GridFS, so no new dependency was needed, and keeping the audio in the database means
+a backup of the database is a backup of the sounds too.
+
+Everything the API reports about a sound beyond its bytes lives in the files document's `metadata`
+sub-document:
+
+```jsonc
+{
+  "_id": ObjectId("..."),          // becomes SoundInfo.id
+  "length": 48231,                  // becomes SoundInfo.sizeBytes
+  "filename": "ding",               // GridFS's own name field; informational
+  "metadata": {
+    "name": "ding",                 // the unique name the API uses
+    "builtin": false,
+    "contentType": "audio/mpeg",
+    "uploadedAt": ISODate("...")    // the authoritative upload time (not GridFS's own uploadDate,
+                                    // so the application clock is the one source of truth)
+  }
+}
+```
+
+Indexes (on `sounds.files`, beyond the ones GridFS creates itself):
+
+| Index              | Definition             | Purpose                                                  |
+|--------------------|------------------------|----------------------------------------------------------|
+| `sounds_name_uniq` | `{ metadata.name: 1 }` unique, **no collation** | name uniqueness, exact-match on purpose (§2.9) |
 
 ### Sessions are not in MongoDB
 

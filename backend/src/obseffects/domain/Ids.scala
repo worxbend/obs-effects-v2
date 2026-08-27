@@ -111,3 +111,22 @@ object PresetId {
 
   extension (id: PresetId) def value: String = id
 }
+
+/** The database id of a stored sound: the same 24-character hexadecimal ObjectId shape as [[RouteId]], separate for the
+  * same reason [[PresetId]] is — the compiler refusing to let a sound id go where a route id belongs is the whole
+  * point.
+  */
+opaque type SoundId = String
+
+object SoundId {
+
+  val Pattern: Regex = "^[0-9a-fA-F]{24}$".r
+
+  def parse(raw: String): Either[String, SoundId] =
+    if (Pattern.matches(raw)) Right(raw.toLowerCase)
+    else Left("must be a 24-character hexadecimal ObjectId")
+
+  def unsafe(raw: String): SoundId = raw
+
+  extension (id: SoundId) def value: String = id
+}

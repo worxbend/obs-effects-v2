@@ -42,6 +42,11 @@ object Main {
       sys.exit(1)
     }
 
+    // The same start-up phase as the indexes, and deliberately right after them: the database is known to be
+    // reachable, and the unique name index the seed relies on now exists. Idempotent — a builtin sound that is
+    // already stored is skipped — so restarts and multiple instances are fine.
+    wiring.soundService.seedBuiltins()
+
     println(s"Starting obs-effects backend on port ${config.httpPort}")
     println(s"  MongoDB:       ${config.mongoUri} (database ${config.mongoDatabase})")
     println(s"  API base:      http://localhost:${config.httpPort}/api")

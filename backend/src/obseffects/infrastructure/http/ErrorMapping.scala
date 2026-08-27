@@ -44,6 +44,13 @@ object ErrorMapping {
           Some(Json.obj("effectId" -> effectId.asJson, "name" -> name.asJson))
         )
 
+      case AppError.SoundNameConflict(name) =>
+        (
+          StatusCode.Conflict,
+          s"A sound called '$name' already exists",
+          Some(Json.obj("name" -> name.asJson))
+        )
+
       case AppError.UnknownEffect(effectId) =>
         (
           StatusCode.UnprocessableEntity,
@@ -86,7 +93,12 @@ object ErrorMapping {
       case "NOT_FOUND"     => AppError.NotFound(error.message)
       case "SLUG_CONFLICT" => AppError.SlugConflict(stringField(error.details, "slug"))
       case "NAME_CONFLICT" =>
-        AppError.NameConflict(stringField(error.details, "effectId"), stringField(error.details, "name"))
+        // Two application errors share this code; the presence of `effectId` in the details is what tells a preset
+        // conflict (which always carries one) apart from a sound conflict (which has no effect to name).
+        error.details.flatMap(_.hcursor.get[String]("effectId").toOption) match {
+          case Some(effectId) => AppError.NameConflict(effectId, stringField(error.details, "name"))
+          case None           => AppError.SoundNameConflict(stringField(error.details, "name"))
+        }
       case "UNKNOWN_EFFECT"    => AppError.UnknownEffect(stringField(error.details, "effectId"))
       case "VALIDATION_FAILED" => AppError.ValidationFailed(issuesFrom(error.details))
       case "TOO_MANY_ATTEMPTS" =>

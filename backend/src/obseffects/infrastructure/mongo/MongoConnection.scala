@@ -1,5 +1,6 @@
 package obseffects.infrastructure.mongo
 
+import com.mongodb.client.gridfs.{GridFSBucket, GridFSBuckets}
 import com.mongodb.client.model.{Collation, CollationStrength, IndexOptions, Indexes}
 import com.mongodb.client.{MongoClient, MongoClients, MongoCollection, MongoDatabase}
 import com.mongodb.{ConnectionString, MongoClientSettings}
@@ -94,6 +95,18 @@ class MongoConnection(uri: String, databaseName: String) extends DatastoreHealth
     */
   val chatMessages: MongoCollection[Document] = database.getCollection("chatMessages")
 
+  /** The stored sounds, as a GridFS bucket. GridFS is MongoDB's convention for files: the bytes are split into chunk
+    * documents in `sounds.chunks`, and one description document per file lives in `sounds.files`. The driver already
+    * ships it — no extra dependency — and it keeps the audio next to everything else this application stores, so a
+    * backup of the database is a backup of the sounds too.
+    */
+  val sounds: GridFSBucket = GridFSBuckets.create(database, "sounds")
+
+  /** The `sounds.files` half of the bucket as a plain collection, exposed for one purpose: the unique-name index below
+    * lives on it, and the bucket API has no way to create an index.
+    */
+  val soundFiles: MongoCollection[Document] = database.getCollection("sounds.files")
+
   /** Creates the indexes described in the contract.
     *
     * MongoDB's `createIndex` is idempotent — asking for an index that already exists with the same definition does
@@ -126,6 +139,13 @@ class MongoConnection(uri: String, databaseName: String) extends DatastoreHealth
     // alone cannot use the compound index above, whose leading field is `channel`. Both exist so today's queries are
     // indexed and a future per-channel filter is too.
     val _ = chatMessages.createIndex(Indexes.descending("at"), new IndexOptions().name("chat_at_idx"))
+    // Exact-match unique, with no case-insensitive collation on purpose: a sound name is a lookup key that effect
+    // parameters and the public audio URL use verbatim, so "Discord" and "discord" are two different keys, not two
+    // spellings of one. See the note on `SoundRepository`.
+    val _ = soundFiles.createIndex(
+      Indexes.ascending("metadata.name"),
+      new IndexOptions().name("sounds_name_uniq").unique(true)
+    )
   }
 
   /** Waits for MongoDB to accept connections, then creates the indexes.

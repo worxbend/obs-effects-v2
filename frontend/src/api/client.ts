@@ -25,6 +25,8 @@ import type {
   Preset,
   PresetWriteRequest,
   SessionInfo,
+  SoundInfo,
+  SoundListResponse,
   WireErrorCode,
   RouteConfig,
   RouteWriteRequest,
@@ -142,8 +144,14 @@ export class NetworkError extends Error {
 interface RequestOptions {
   method: "GET" | "POST" | "PUT" | "DELETE";
   path: string;
-  /** Parsed and sent as a JSON body. Omit for GET/DELETE. */
+  /** Parsed and sent as a JSON body. Omit for GET/DELETE. Mutually exclusive with `rawBody`. */
   body?: unknown;
+  /**
+   * Sent as-is, with the blob's own `type` as the `Content-Type` header. This exists for the one
+   * endpoint that takes binary instead of JSON — the sound upload — where serialising through
+   * `JSON.stringify` would destroy the bytes.
+   */
+  rawBody?: Blob;
   /** Lets a caller cancel an in-flight request, used by the renderer's polling loop. */
   signal?: AbortSignal;
   /**
@@ -260,6 +268,11 @@ async function send(options: RequestOptions): Promise<Response> {
   if (options.body !== undefined) {
     init.headers = { ...init.headers, "Content-Type": "application/json" };
     init.body = JSON.stringify(options.body);
+  } else if (options.rawBody !== undefined) {
+    // The blob carries its own MIME type ("audio/mpeg" for an .mp3 the operator picked), and the
+    // backend validates that header — so it is forwarded rather than replaced with a JSON one.
+    init.headers = { ...init.headers, "Content-Type": options.rawBody.type };
+    init.body = options.rawBody;
   }
 
   try {
@@ -616,6 +629,62 @@ export function getChatHistory(
   if (options?.before !== undefined) params.set("before", String(options.before));
   const query = params.size > 0 ? `?${params.toString()}` : "";
   return requestJson<ChatMessage[]>({ method: "GET", path: `/chat/history${query}`, signal });
+}
+
+/* ------------------------------------------------------------------ */
+/* Sounds                                                              */
+/* ------------------------------------------------------------------ */
+
+/**
+ * `GET /api/sounds` — every stored sound, builtins included.
+ *
+ * Protected, like every other admin read: the listing is for the settings page, not for overlays.
+ * Overlays never need it — they fetch audio by a name they already know, via `soundAudioUrl`.
+ */
+export function listSounds(signal?: AbortSignal): Promise<SoundInfo[]> {
+  return requestJson<SoundListResponse>({ method: "GET", path: "/sounds", signal }).then(
+    (response) => response.sounds,
+  );
+}
+
+/**
+ * `POST /api/sounds?name=<name>` — upload one audio clip.
+ *
+ * The body is the raw file bytes, not JSON — which is why the name travels as a query parameter
+ * instead of in a body field. The file's own MIME type goes up as the `Content-Type` header; the
+ * backend accepts `audio/mpeg`, `audio/ogg`, `audio/wav` and `audio/webm`, up to 5 MB.
+ *
+ * Throws `ApiError` with:
+ *  - `status` 422 `VALIDATION_FAILED` — bad name, unsupported content type, or the file is too big.
+ *  - `status` 409 — a sound of that name already exists.
+ */
+export function uploadSound(name: string, file: Blob, signal?: AbortSignal): Promise<SoundInfo> {
+  const query = new URLSearchParams({ name }).toString();
+  return requestJson<SoundInfo>({ method: "POST", path: `/sounds?${query}`, rawBody: file, signal });
+}
+
+/**
+ * `DELETE /api/sounds/{id}` — remove an uploaded sound. Answers 204, so there is nothing to return.
+ *
+ * Deleting a builtin sound is refused with a validation error: effects reference "discord" and
+ * "slack-message" by name as their defaults, and a default that could vanish would leave every
+ * route using it silently broken.
+ */
+export function deleteSound(id: string, signal?: AbortSignal): Promise<void> {
+  return requestEmpty({ method: "DELETE", path: `/sounds/${encodeURIComponent(id)}`, signal });
+}
+
+/**
+ * The URL of one sound's audio bytes, for an `<audio>` element or `new Audio(...)`.
+ *
+ * A URL builder rather than a request function, like `audioLevelsUrl` and for the same reason:
+ * the audio element performs the fetch itself, so there is no `fetch` here to funnel through
+ * `send()`. The endpoint is **public** — an OBS browser source cannot sign in — and takes either
+ * the id or the stable sound name, which is what lets an effect default to `"discord"` without
+ * ever calling the protected listing.
+ */
+export function soundAudioUrl(idOrName: string): string {
+  return `${API_BASE}/sounds/${encodeURIComponent(idOrName)}/audio`;
 }
 
 /* ------------------------------------------------------------------ */

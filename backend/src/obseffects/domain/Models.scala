@@ -344,3 +344,33 @@ enum InputError {
   case Invalid(issues: List[ValidationIssue])
   case UnknownEffect(effectId: String)
 }
+
+// -------------------------------------------------------------------------------------------
+// Sounds
+// -------------------------------------------------------------------------------------------
+
+/** One stored audio file, as the chat overlay effect plays it when a chat message arrives.
+  *
+  * The bytes themselves are not part of this model on purpose: a sound file is up to five megabytes, and every use of
+  * this class except the one download endpoint only needs to describe the file, not carry it. The bytes travel through
+  * their own repository method instead.
+  *
+  * @param builtin
+  *   `true` for the two sounds seeded from the server's own resources at start-up. A builtin sound cannot be deleted,
+  *   because effect parameters may reference it by name and the seed would recreate it on the next restart anyway.
+  */
+final case class Sound(
+    id: SoundId,
+    name: String,
+    builtin: Boolean,
+    contentType: String,
+    sizeBytes: Long,
+    uploadedAt: Instant
+)
+
+/** The validated description of a sound about to be stored: a [[Sound]] without the fields the server assigns. */
+final case class SoundInput(
+    name: String,
+    builtin: Boolean,
+    contentType: String
+)

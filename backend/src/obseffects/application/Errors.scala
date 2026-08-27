@@ -35,6 +35,14 @@ enum AppError {
     */
   case NameConflict(effectId: String, name: String)
 
+  /** Another sound already owns the requested name.
+    *
+    * A separate case from [[NameConflict]] rather than a reuse of it, because that case carries an `effectId` and a
+    * sound does not belong to an effect — a message inventing one would read as a rule the operator did not break. On
+    * the wire both cases share the `NAME_CONFLICT` code and status 409, so a client handles them identically.
+    */
+  case SoundNameConflict(name: String)
+
   /** The `effectId` is not in the inventory the frontend published. */
   case UnknownEffect(effectId: String)
 

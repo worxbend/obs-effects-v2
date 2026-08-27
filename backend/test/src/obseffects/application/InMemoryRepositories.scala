@@ -266,3 +266,37 @@ class StubTwitchTokenExchanger(
   /** Every call made so far, oldest first, reduced to one line each for easy assertion. */
   def calls: List[String] = log.get().toList
 }
+
+/** In-memory sounds, including the exact-match name uniqueness rule that the `sounds_name_uniq` index enforces in
+  * production. The bytes are kept alongside the description, which is exactly what GridFS does at a larger scale.
+  */
+class InMemorySoundRepository extends SoundRepository {
+
+  private val state = new AtomicReference[Map[SoundId, (Sound, Array[Byte])]](Map.empty)
+
+  private val nextId = new java.util.concurrent.atomic.AtomicInteger(1)
+
+  private def freshId(): SoundId = SoundId.unsafe(f"${nextId.getAndIncrement()}%024x")
+
+  override def listAll(): List[Sound] = state.get().values.map(_._1).toList
+
+  override def findById(id: SoundId): Option[Sound] = state.get().get(id).map(_._1)
+
+  override def findByName(name: String): Option[Sound] =
+    state.get().values.map(_._1).find(_.name == name)
+
+  override def insert(input: SoundInput, bytes: Array[Byte], uploadedAt: Instant): Either[RepositoryFailure, Sound] =
+    if (findByName(input.name).isDefined) Left(RepositoryFailure.NameTaken)
+    else {
+      val sound = Sound(freshId(), input.name, input.builtin, input.contentType, bytes.length.toLong, uploadedAt)
+      state.updateAndGet(_.updated(sound.id, (sound, bytes)))
+      Right(sound)
+    }
+
+  override def delete(id: SoundId): Boolean = {
+    val before = state.getAndUpdate(_.removed(id))
+    before.contains(id)
+  }
+
+  override def download(id: SoundId): Option[Array[Byte]] = state.get().get(id).map(_._2)
+}

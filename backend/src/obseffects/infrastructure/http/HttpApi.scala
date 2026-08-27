@@ -10,6 +10,7 @@ import obseffects.application.{
   RouteService,
   SessionService,
   SettingsService,
+  SoundService,
   TwitchService
 }
 import obseffects.infrastructure.http.Wire.{ObsAudioViewDto, TwitchViewDto}
@@ -55,6 +56,7 @@ class HttpApi(
     settings: SettingsService,
     twitch: TwitchService,
     chatStream: ChatStream,
+    sounds: SoundService,
     clock: Clock,
     cookieSecure: Boolean
 ) {
@@ -125,7 +127,14 @@ class HttpApi(
     Endpoints.audioLevels.handle(_ => Right(audioLevels.open())),
     // Always a `Right` too: chat not being configured is answered inside the stream — an empty
     // snapshot and a status frame saying why — so an overlay never needs a failure branch either.
-    Endpoints.chatWs.handle(_ => Right(chatStream.open()))
+    Endpoints.chatWs.handle(_ => Right(chatStream.open())),
+    // The only public `/api/sounds/...` route. It cannot collide with the protected list at `/api/sounds` (different
+    // segment count) or with the delete at `/api/sounds/{id}` (different method and segment count), so the order
+    // relative to those does not matter — but it lives in this list because the OBS browser source that plays it
+    // cannot sign in.
+    Endpoints.soundAudio.handle { idOrName =>
+      sounds.audio(idOrName).map((sound, bytes) => (bytes, sound.contentType))
+    }
   )
 
   private val protectedEndpoints: List[ServerEndpoint[OxStreams & WebSockets, Identity]] = List(
@@ -192,7 +201,19 @@ class HttpApi(
       },
     Endpoints.importAll
       .handleSecurity(requireOperator)
-      .handle(_ => request => admin.importAll(Wire.toRaw(request)).map(Wire.toDto))
+      .handle(_ => request => admin.importAll(Wire.toRaw(request)).map(Wire.toDto)),
+    Endpoints.listSounds
+      .handleSecurity(requireOperator)
+      .handle(_ => _ => Right(Wire.SoundListDto(sounds.list().map(Wire.toDto)))),
+    Endpoints.uploadSound
+      .handleSecurity(requireOperator)
+      .handle { _ => (name, contentType, bytes) =>
+        sounds.upload(name, contentType, bytes).map { saved =>
+          val dto = Wire.toDto(saved)
+          (dto, s"/api/sounds/${dto.id}")
+        }
+      },
+    Endpoints.deleteSound.handleSecurity(requireOperator).handle(_ => id => sounds.delete(id))
   )
 
   /** The interactive documentation page at `/docs`, generated from the endpoint descriptions — it cannot drift out of

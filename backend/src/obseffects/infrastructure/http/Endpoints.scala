@@ -37,9 +37,10 @@ import sttp.tapir.server.netty.sync.*
   *
   * The rule for anyone adding an endpoint later, from `docs/CONTRACT.md` §4: **a new endpoint is protected by
   * default**. Making one public means adding a row to the table in that document with the reason it cannot be
-  * protected. The five public ones here are: the health check (monitoring calls it before anyone has signed in), the
-  * three authentication endpoints (you cannot sign in if signing in requires being signed in), and the by-slug route
-  * read — an OBS browser source opens one URL forever, unattended, and cannot log in.
+  * protected. The public ones here are: the health check (monitoring calls it before anyone has signed in), the three
+  * authentication endpoints (you cannot sign in if signing in requires being signed in), and the by-slug route read,
+  * the event/audio/chat streams and the sound audio download — an OBS browser source opens one URL forever, unattended,
+  * and cannot log in.
   */
 object Endpoints {
 
@@ -223,9 +224,66 @@ object Endpoints {
           "connection, including when chat is not configured — the snapshot is then empty and the status says why."
       )
 
+  /** The audio bytes of one stored sound, played by the chat overlay effect when a chat message arrives.
+    *
+    * Public, for the standing reason: the overlay runs in an OBS browser source, which cannot sign in, and a sound is
+    * the least sensitive thing this server stores — a notification noise. See the table in `docs/CONTRACT.md` §4.
+    *
+    * The `{id}` slot accepts either the database id or the sound's *name*, so effect parameters can reference a sound
+    * by its stable name rather than an id that changes on delete-and-reupload; the resolution rule is documented on
+    * `SoundService.audio`. The `Cache-Control` value promises a year of caching because the content under one id never
+    * changes — there is no "replace a sound" operation, only delete and upload, and an upload mints a fresh id.
+    *
+    * `Content-Type` is an output *value* rather than a fixed header, because each sound answers with the type it was
+    * uploaded with.
+    */
+  val soundAudio: PublicEndpoint[String, AppError, (Array[Byte], String), Any] =
+    base.get
+      .in("sounds" / path[String]("id").description("The sound's database id, or its name") / "audio")
+      .out(byteArrayBody)
+      .out(header[String]("Content-Type"))
+      .out(header("Cache-Control", "public, max-age=31536000, immutable"))
+      .summary("Download one sound's audio — the call the chat overlay effect makes")
+      .description(
+        "Public: an OBS browser source cannot sign in. The `{id}` slot accepts the database id or the sound's name; " +
+          "an id-shaped value is tried as an id first. The response carries the stored Content-Type and may be " +
+          "cached forever, because the bytes under one id are immutable."
+      )
+
   // -------------------------------------------------------------------------------------------
   // Protected endpoints — every one of these can also answer 401 UNAUTHORIZED
   // -------------------------------------------------------------------------------------------
+
+  val listSounds: Endpoint[Option[String], Unit, AppError, SoundListDto, Any] =
+    secureBase.get
+      .in("sounds")
+      .out(jsonBody[SoundListDto])
+      .summary("All stored sounds, sorted by name")
+      .description("Descriptions only — the audio bytes come from the public per-sound download endpoint.")
+
+  /** The upload is a raw binary body rather than a multipart form, which is why the name arrives as a query parameter
+    * and the format as the ordinary `Content-Type` header: `fetch(url + "?name=...", {body: file})` sends exactly this
+    * shape with no form encoding anywhere. The header is an `Option` so that a request without one reaches the
+    * validator and is reported as a 422 naming the accepted types, instead of failing to decode.
+    */
+  val uploadSound
+      : Endpoint[Option[String], (String, Option[String], Array[Byte]), AppError, (SoundInfoDto, String), Any] =
+    secureBase.post
+      .in("sounds")
+      .in(query[String]("name").description("The sound's unique name, 1 to 64 characters after trimming"))
+      .in(header[Option[String]]("Content-Type").description("audio/mpeg, audio/ogg, audio/wav or audio/webm"))
+      .in(byteArrayBody)
+      .out(statusCode(StatusCode.Created))
+      .out(jsonBody[SoundInfoDto])
+      .out(header[String]("Location"))
+      .summary("Upload a sound as a raw binary body")
+
+  val deleteSound: Endpoint[Option[String], String, AppError, Unit, Any] =
+    secureBase.delete
+      .in("sounds" / path[String]("id").description("24-character hexadecimal ObjectId"))
+      .out(statusCode(StatusCode.NoContent))
+      .summary("Delete an uploaded sound")
+      .description("A builtin sound cannot be deleted: start-up seeding would recreate it on the next restart anyway.")
 
   val chatHistory
       : Endpoint[Option[String], (Option[Int], Option[Long], Option[String]), AppError, List[ChatMessageDto], Any] =
@@ -456,6 +514,10 @@ object Endpoints {
       getTwitchSettings,
       updateTwitchSettings,
       twitchTokens,
-      twitchOAuthComplete
+      twitchOAuthComplete,
+      listSounds,
+      uploadSound,
+      deleteSound,
+      soundAudio
     )
 }

@@ -81,6 +81,7 @@ import glitchBurst from "./pixi/glitch-burst";
 import mrRobotCrt from "./pixi/mr-robot-crt";
 import grungeFilm from "./pixi/grunge-film";
 import piedPiperNet from "./pixi/pied-piper-net";
+import chatSound from "./pixi/chat-sound";
 
 /**
  * The effect inventory.
@@ -172,6 +173,7 @@ export const effects: EffectModule[] = [
   mrRobotCrt,
   grungeFilm,
   piedPiperNet,
+  chatSound,
 ];
 
 export {
@@ -248,4 +250,5 @@ export {
   mrRobotCrt,
   grungeFilm,
   piedPiperNet,
+  chatSound,
 };

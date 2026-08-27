@@ -4,6 +4,7 @@ import com.softwaremill.macwire.wire
 import obseffects.application.*
 import obseffects.infrastructure.http.{AudioLevelStream, ChatStream, HttpApi, RouteEventStream}
 import obseffects.infrastructure.mongo.{
+  GridFsSoundRepository,
   MongoChatMessageRepository,
   MongoConnection,
   MongoEffectRepository,
@@ -59,6 +60,7 @@ class Wiring(config: AppConfig, val authMode: AuthMode) extends AutoCloseable {
   lazy val routeRepository: RouteRepository = wire[MongoRouteRepository]
   lazy val presetRepository: PresetRepository = wire[MongoPresetRepository]
   lazy val settingsRepository: SettingsRepository = wire[MongoSettingsRepository]
+  lazy val soundRepository: SoundRepository = wire[GridFsSoundRepository]
 
   /** The registry of open event streams, and the thing route writes announce themselves through.
     *
@@ -115,6 +117,7 @@ class Wiring(config: AppConfig, val authMode: AuthMode) extends AutoCloseable {
   lazy val routeService: RouteService = wire[RouteService]
   lazy val presetService: PresetService = wire[PresetService]
   lazy val adminService: AdminService = wire[AdminService]
+  lazy val soundService: SoundService = wire[SoundService]
 
   lazy val routeEventStream: RouteEventStream = wire[RouteEventStream]
 
@@ -139,6 +142,7 @@ class Wiring(config: AppConfig, val authMode: AuthMode) extends AutoCloseable {
       settingsService,
       twitchService,
       chatStream,
+      soundService,
       clock,
       config.sessionCookieSecure
     )

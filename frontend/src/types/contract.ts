@@ -653,6 +653,41 @@ export type ChatWsFrame =
   | { type: "heartbeat"; at: number }
   | { type: "status"; status: TwitchConnectionStatus };
 
+/* ------------------------------------------------------------------ */
+/* Sounds                                                              */
+/* ------------------------------------------------------------------ */
+
+/**
+ * One stored audio clip, playable by chat-triggered effects.
+ *
+ * The bytes themselves are not in this object — they are large and binary, so they travel on
+ * their own endpoint (`GET /api/sounds/{idOrName}/audio`), which is public for the same reason
+ * the audio-levels and chat streams are: an OBS browser source cannot sign in.
+ */
+export interface SoundInfo {
+  /** Stable unique id, usable in `/api/sounds/{id}/audio` and as the delete target. */
+  id: string;
+  /** Human-chosen name, unique, also accepted by the audio endpoint in place of the id. */
+  name: string;
+  /**
+   * `true` for the sounds that ship with the server ("discord", "slack-message"). Builtin sounds
+   * cannot be deleted — the backend refuses with a validation error — so the admin UI hides the
+   * delete button for them rather than offering an action that can only fail.
+   */
+  builtin: boolean;
+  /** The MIME type the clip was uploaded with, e.g. "audio/mpeg". */
+  contentType: string;
+  /** Size of the stored bytes, for the listing. */
+  sizeBytes: number;
+  /** Epoch milliseconds the clip was uploaded (or seeded, for builtins). */
+  uploadedAt: number;
+}
+
+/** Response of `GET /api/sounds`. */
+export interface SoundListResponse {
+  sounds: SoundInfo[];
+}
+
 /** Regular expression a route slug and an effect id must match. */
 export const SLUG_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
 

@@ -12,12 +12,16 @@ import type { JSX } from "@solidjs/web";
 import {
   audioLevelsUrl,
   chatWsUrl,
+  deleteSound,
   describeError,
   getObsAudioSettings,
   getTwitchSettings,
+  listSounds,
+  soundAudioUrl,
   submitTwitchTokens,
   updateObsAudioSettings,
   updateTwitchSettings,
+  uploadSound,
 } from "~/api/client";
 import type {
   AudioLevels,
@@ -26,6 +30,7 @@ import type {
   ObsAudioSettingsRequest,
   ObsAudioView,
   ObsConnectionState,
+  SoundInfo,
   TwitchConnectionState,
   TwitchConnectionStatus,
   TwitchSettingsRequest,
@@ -76,6 +81,7 @@ export default function SettingsPage(): JSX.Element {
       <LevelMeterCard />
       <TwitchCard />
       <ChatPreviewCard />
+      <SoundsCard />
     </>
   );
 }
@@ -950,5 +956,210 @@ function ChatPreviewCard(): JSX.Element {
         </ul>
       </Show>
     </section>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Chat-triggered sounds                                               */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The library of audio clips chat-triggered effects can play.
+ *
+ * Same shape as `ObsAudioCard` and `TwitchCard`: a loader keyed on a reload token, re-run after
+ * every mutation so the listing never shows a sound that is already gone or misses one that was
+ * only uploaded. Two builtin clips ("discord", "slack-message") always exist and cannot be
+ * deleted, so effects can reference them by name as safe defaults.
+ */
+function SoundsCard(): JSX.Element {
+  /** Bumped after every upload or delete so the loader below re-reads the listing. */
+  const [reloadToken, setReloadToken] = createSignal(0);
+
+  const loaded = createMemo(async (): Promise<SoundInfo[]> => {
+    reloadToken();
+    return listSounds();
+  });
+
+  return (
+    <section class="card">
+      <div class="card-title">
+        <h2>Sounds</h2>
+      </div>
+      <p>
+        Audio clips the chat-triggered effects can play — the Chat Sound effect picks one of these
+        by name. The playback endpoint is public, like the audio and chat streams, because an OBS
+        browser source cannot sign in.
+      </p>
+      <Errored
+        fallback={(error: unknown) => <Banner kind="error" message={describeError(error)} />}
+      >
+        <Loading fallback={<p class="muted">Loading sounds…</p>}>
+          <Show when={loaded()} keyed>
+            {(sounds: SoundInfo[]) => (
+              <>
+                <SoundList sounds={sounds} onChanged={() => setReloadToken((n) => n + 1)} />
+                <SoundUploadForm onUploaded={() => setReloadToken((n) => n + 1)} />
+              </>
+            )}
+          </Show>
+        </Loading>
+      </Errored>
+    </section>
+  );
+}
+
+/** A human-readable size: bytes below a kilobyte, then one-decimal KB / MB. */
+function formatSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function SoundList(props: { sounds: SoundInfo[]; onChanged: () => void }): JSX.Element {
+  const [error, setError] = createSignal<string | null>(null);
+  const [deleting, setDeleting] = createSignal<string | null>(null);
+
+  async function remove(sound: SoundInfo): Promise<void> {
+    setDeleting(sound.id);
+    setError(null);
+    try {
+      await deleteSound(sound.id);
+      props.onChanged();
+    } catch (cause) {
+      setError(describeError(cause));
+    } finally {
+      setDeleting(null);
+    }
+  }
+
+  return (
+    <>
+      <Show when={props.sounds.length > 0} fallback={<p class="muted">No sounds stored yet.</p>}>
+        <ul class="sound-list">
+          <For each={props.sounds}>
+            {(sound) => (
+              <li class="sound-row">
+                <span class="sound-name">
+                  {sound.name}
+                  <Show when={sound.builtin}>
+                    {/* Builtins cannot be deleted, so the badge explains the missing button. */}
+                    <span class="badge"> built-in</span>
+                  </Show>
+                </span>
+                <span class="muted"> · {formatSize(sound.sizeBytes)}</span>
+                {/*
+                 * `preload="none"` keeps the page from downloading every clip on load — the bytes
+                 * only travel when the operator presses play on that row.
+                 */}
+                <audio controls preload="none" src={soundAudioUrl(sound.id)} />
+                <Show when={!sound.builtin}>
+                  <button
+                    type="button"
+                    class="btn btn-sm"
+                    disabled={deleting() === sound.id}
+                    onClick={() => void remove(sound)}
+                  >
+                    {deleting() === sound.id ? "Deleting…" : "Delete"}
+                  </button>
+                </Show>
+              </li>
+            )}
+          </For>
+        </ul>
+      </Show>
+      <Banner kind="error" message={error()} />
+    </>
+  );
+}
+
+function SoundUploadForm(props: { onUploaded: () => void }): JSX.Element {
+  const [file, setFile] = createSignal<File | null>(null);
+  const [name, setName] = createSignal("");
+  /** Whether the operator has typed in the name box, so picking a new file stops renaming it. */
+  const [nameTouched, setNameTouched] = createSignal(false);
+  const [uploading, setUploading] = createSignal(false);
+  const [error, setError] = createSignal<string | null>(null);
+
+  let fileInput: HTMLInputElement | undefined;
+
+  function pick(picked: File | null): void {
+    setFile(picked);
+    // Defaulting the name from the filename (minus its extension) saves typing the common case;
+    // a name the operator already edited is theirs and is left alone.
+    if (picked !== null && !nameTouched()) {
+      setName(picked.name.replace(/\.[^.]+$/, ""));
+    }
+  }
+
+  async function upload(event: SubmitEvent): Promise<void> {
+    event.preventDefault();
+    const picked = file();
+    if (picked === null) return;
+    setUploading(true);
+    setError(null);
+    try {
+      await uploadSound(name().trim(), picked);
+      setFile(null);
+      setName("");
+      setNameTouched(false);
+      if (fileInput !== undefined) fileInput.value = "";
+      props.onUploaded();
+    } catch (cause) {
+      setError(describeError(cause));
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  return (
+    <form onSubmit={(event) => void upload(event)}>
+      <div class="field">
+        <label class="field-label" for="sound-file">
+          Upload a sound
+        </label>
+        <input
+          id="sound-file"
+          type="file"
+          ref={(el) => {
+            fileInput = el;
+          }}
+          accept="audio/mpeg,audio/ogg,audio/wav,audio/webm,.mp3,.ogg,.wav,.webm"
+          onChange={(event) => pick(event.currentTarget.files?.[0] ?? null)}
+        />
+        <p class="field-help">
+          MP3, Ogg, WAV or WebM, up to 5 MB. Keep clips short — they play over the stream.
+        </p>
+      </div>
+      <div class="field">
+        <label class="field-label" for="sound-name">
+          Name
+        </label>
+        <input
+          id="sound-name"
+          type="text"
+          value={name()}
+          spellcheck={false}
+          onInput={(event) => {
+            setNameTouched(true);
+            setName(event.currentTarget.value);
+          }}
+          placeholder="Defaults to the file name"
+        />
+        <p class="field-help">
+          How effects refer to this clip. The playback URL accepts this name directly, so renaming
+          a clip means updating any effect configured to use the old name.
+        </p>
+      </div>
+      <div class="btn-row">
+        <button
+          type="submit"
+          class="btn btn-primary"
+          disabled={uploading() || file() === null || name().trim() === ""}
+        >
+          {uploading() ? "Uploading…" : "Upload"}
+        </button>
+      </div>
+      <Banner kind="error" message={error()} />
+    </form>
   );
 }
