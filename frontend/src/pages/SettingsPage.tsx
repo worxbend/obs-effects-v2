@@ -655,9 +655,9 @@ function TwitchStatusBadge(props: { status: TwitchConnectionStatus }): JSX.Eleme
   const label = (): string => {
     const state: TwitchConnectionState = props.status.state;
     switch (state) {
-      case "connectedAuthed":
+      case "connected_authed":
         return "Connected (signed in)";
-      case "connectedAnonymous":
+      case "connected_anonymous":
         return "Connected (anonymous, read-only)";
       case "connecting":
         return "Connecting…";
@@ -675,8 +675,8 @@ function TwitchStatusBadge(props: { status: TwitchConnectionStatus }): JSX.Eleme
    */
   const tone = (): string => {
     switch (props.status.state) {
-      case "connectedAuthed":
-      case "connectedAnonymous":
+      case "connected_authed":
+      case "connected_anonymous":
         return "connected";
       case "connecting":
         return "connecting";

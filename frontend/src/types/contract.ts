@@ -617,11 +617,15 @@ export interface TwitchOAuthCompleteRequest {
  * What the backend's Twitch chat connection is doing.
  *
  * Two "connected" states exist because the IRC connection works with no token at all: Twitch
- * allows anonymous read-only connections. `connectedAnonymous` means chat is flowing but the
- * server is not signed in as anyone; `connectedAuthed` means the stored token worked.
+ * allows anonymous read-only connections. `connected_anonymous` means chat is flowing but the
+ * server is not signed in as anyone; `connected_authed` means the stored token worked.
+ *
+ * These are snake_case because that is what the backend actually sends (see `docs/CONTRACT.md`
+ * §2.8). They were spelled in camelCase here until 2026-08-31, which meant every comparison
+ * against the two "connected" values silently failed.
  */
 export type TwitchConnectionState =
-  "disabled" | "connecting" | "connectedAnonymous" | "connectedAuthed" | "failed";
+  "disabled" | "connecting" | "connected_anonymous" | "connected_authed" | "failed";
 
 /** The live connection status. Not stored — it is rebuilt every time the server starts. */
 export interface TwitchConnectionStatus {
