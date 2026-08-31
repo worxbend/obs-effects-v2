@@ -32,3 +32,7 @@ project/target/
 
 # Runtime data
 mongo-data/
+
+# JVM crash dumps
+hs_err_pid*.log
+replay_pid*.log
