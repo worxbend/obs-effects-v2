@@ -115,6 +115,7 @@ export function AdminShell(props: { children?: JSX.Element }): JSX.Element {
           <a href="/admin/presets">Presets</a>
           <a href="/admin/effects">Inventory</a>
           <a href="/admin/backup">Backup</a>
+          <a href="/admin/twitch">Twitch</a>
           <a href="/admin/settings">Settings</a>
         </nav>
 

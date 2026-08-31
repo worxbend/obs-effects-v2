@@ -357,6 +357,13 @@ export type ApiErrorCode =
   | "UNKNOWN_EFFECT"
   | "VALIDATION_FAILED"
   | "TOO_MANY_ATTEMPTS"
+  /**
+   * The Twitch moderation feature cannot run right now: no channel, no credentials, no token, or
+   * a token that was granted before the moderation scopes were asked for. It is a 409 rather than
+   * a 500 because it is an expected, fixable configuration state, not a fault — see
+   * {@link TwitchAdminStatus}.
+   */
+  | "TWITCH_UNAVAILABLE"
   | "INTERNAL_ERROR";
 
 /**
@@ -622,7 +629,8 @@ export interface TwitchOAuthCompleteRequest {
  *
  * These are snake_case because that is what the backend actually sends (see `docs/CONTRACT.md`
  * §2.8). They were spelled in camelCase here until 2026-08-31, which meant every comparison
- * against the two "connected" values silently failed.
+ * against the two "connected" values silently failed and a working connection was drawn as
+ * "Switched off".
  */
 export type TwitchConnectionState =
   "disabled" | "connecting" | "connected_anonymous" | "connected_authed" | "failed";
@@ -656,6 +664,160 @@ export type ChatWsFrame =
   | { type: "message"; message: ChatMessage }
   | { type: "heartbeat"; at: number }
   | { type: "status"; status: TwitchConnectionStatus };
+
+/* ------------------------------------------------------------------ */
+/* Twitch moderation (the /admin/twitch dashboard)                     */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Whether the moderation dashboard can do anything, and why not when it cannot.
+ *
+ * The whole feature is optional: a stream that never configured Twitch, or configured only the
+ * channel name for anonymous chat reading, is a perfectly normal installation. So
+ * `GET /api/twitch/admin/status` always answers **200** with this object — "unavailable" is an
+ * answer, not a failure — and the dashboard renders an explanation instead of a broken table.
+ *
+ * A "scope" is one permission the operator granted when they signed in with Twitch. A token
+ * obtained before this feature existed only carries `chat:read`, which is enough to read chat and
+ * not enough to ban anyone; reconnecting the account on the Settings page is what grants the rest.
+ */
+export interface TwitchAdminStatus {
+  /** True when every moderation call below can actually be made. */
+  available: boolean;
+  /** The channel being moderated, e.g. "worxbend". Empty string when none is configured. */
+  channel: string;
+  /** Twitch's numeric user id for the channel, or `null` when it has not been resolved yet. */
+  broadcasterId: string | null;
+  /** The login of the account whose token performs the moderation, or `null` when none. */
+  moderatorLogin: string | null;
+  /** The scopes the stored token really carries. Empty when there is no token to inspect. */
+  grantedScopes: string[];
+  /** Required scopes that are missing from the stored token. Empty when nothing is missing. */
+  missingScopes: string[];
+  /** One plain sentence explaining an unavailable state, or `null` when `available` is true. */
+  reason: string | null;
+}
+
+/** One entry of the channel's ban list. */
+export interface TwitchBan {
+  /** Twitch's numeric user id of the banned account. */
+  userId: string;
+  /** The banned account's login name, always lowercase. */
+  login: string;
+  /** The banned account's name as they style it. Falls back to the login. */
+  displayName: string;
+  /** The moderator's note, or `null`/empty when they left none. */
+  reason: string | null;
+  /** The login of whoever issued the ban, or `null` when Twitch did not say. */
+  moderatorLogin: string | null;
+  /**
+   * ISO-8601 instant the ban was issued, or `null` when Twitch did not send a usable one. It is
+   * nullable for the same reason `reason` and `moderatorLogin` are: the backend only fills it in
+   * when Twitch's own answer carried a timestamp it could parse.
+   */
+  createdAt: string | null;
+  /**
+   * ISO-8601 instant a timeout runs out, or `null` for a permanent ban. Twitch sends an empty
+   * string for "permanent"; the backend normalises that to `null` so there is one thing to check.
+   */
+  expiresAt: string | null;
+}
+
+/**
+ * One page of the ban list.
+ *
+ * Twitch pages this endpoint with an opaque **cursor**, not with page numbers: `cursor` is the
+ * token to hand back to ask for the page after this one, and `null` means this was the last page.
+ * There is no way to jump to "page 7", which is why the UI offers "Load more" rather than pager
+ * buttons.
+ */
+export interface TwitchBanPage {
+  bans: TwitchBan[];
+  cursor: string | null;
+}
+
+/** One channel moderator. */
+export interface TwitchModerator {
+  userId: string;
+  login: string;
+  displayName: string;
+}
+
+/** One cursor-paged page of the channel's moderators. See {@link TwitchBanPage} on the cursor. */
+export interface TwitchModeratorPage {
+  moderators: TwitchModerator[];
+  cursor: string | null;
+}
+
+/** What happened to one user in a bulk ban or unban. */
+export interface BulkOutcome {
+  /** The login exactly as it went in, so an operator can find it in what they pasted. */
+  login: string;
+  ok: boolean;
+  /** Why it failed, in words meant for a human. `null` when it succeeded. */
+  message: string | null;
+}
+
+/**
+ * The result of one bulk operation.
+ *
+ * A bulk tool exists so that one bad name among a hundred does not stop the other ninety-nine, so
+ * every user is attempted independently and a mixed result is the *normal* outcome rather than an
+ * error: `succeeded` and `failed` always add up to the number of users the request asked about.
+ */
+export interface BulkResult {
+  succeeded: number;
+  failed: number;
+  /** Every user's outcome, in the order they were sent. */
+  outcomes: BulkOutcome[];
+}
+
+/** Body of `POST /api/twitch/admin/bans` — ban or time out up to 100 accounts at once. */
+export interface TwitchBanRequest {
+  /** Login names. De-duplicated case-insensitively by the backend; at most 100. */
+  users: string[];
+  /**
+   * `null` or omitted for a permanent ban; a number of seconds (1 … 1 209 600, i.e. 14 days) for a
+   * timeout. Twitch models both with the same call, which is why one field decides between them.
+   */
+  durationSeconds?: number | null;
+  /** The note shown to the banned viewer, or `null` for none. */
+  reason?: string | null;
+}
+
+/**
+ * One already-resolved account to unban, as {@link TwitchUnbanRequest.targets} carries it.
+ *
+ * The `userId` is the part that does the work: Twitch's numeric id for an account never changes,
+ * while a login name can be renamed away and later claimed by somebody else. Naming the id means
+ * the request cannot land on a different account than the one the operator picked out of the ban
+ * list. The `login` rides along only so the per-user report reads in human names.
+ */
+export interface TwitchUnbanTarget {
+  /** Twitch's numeric user id, acted on directly — never re-resolved from the login. */
+  userId: string;
+  /** The account's login name, used only to label the {@link BulkOutcome}. */
+  login: string;
+}
+
+/**
+ * Body of `POST /api/twitch/admin/unbans` — lift the ban or timeout on up to 100 accounts.
+ *
+ * There are two ways to name an account, and a request may mix them:
+ *  - `users` — login names the backend looks up through Twitch before acting. This is for names
+ *    typed or pasted by hand, where an id is not known.
+ *  - `targets` — accounts whose id is already known, taken straight from the ban list. These skip
+ *    the lookup entirely, which is what closes the rename race described on
+ *    {@link TwitchUnbanTarget}.
+ *
+ * Both fields are optional and default to an empty list, but at least one must be non-empty, and
+ * their *combined* length is what the 100-per-request cap counts. Outcomes come back in a stable
+ * order: every `targets` outcome first, then every `users` outcome.
+ */
+export interface TwitchUnbanRequest {
+  users?: string[];
+  targets?: TwitchUnbanTarget[];
+}
 
 /* ------------------------------------------------------------------ */
 /* Sounds                                                              */

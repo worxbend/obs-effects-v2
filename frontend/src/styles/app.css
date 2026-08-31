@@ -1459,3 +1459,103 @@ body.renderer {
 .sb-issues code {
   font-family: var(--mono);
 }
+
+/* ---------------------------------------------------------------- */
+/* The Twitch moderation dashboard (/admin/twitch)                   */
+/* ---------------------------------------------------------------- */
+
+/* The channel summary: a two-column definition list that collapses to
+   stacked rows on a narrow window. */
+.twitch-summary {
+  display: grid;
+  grid-template-columns: 150px 1fr;
+  gap: 6px 14px;
+  margin: 0;
+  align-items: baseline;
+}
+
+.twitch-summary dt {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-dim);
+}
+
+.twitch-summary dd {
+  margin: 0;
+}
+
+@media (max-width: 640px) {
+  .twitch-summary {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Search box, kind filter and the bulk unban button above the ban table. */
+.twitch-filters {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: var(--gap);
+}
+
+.twitch-filters input[type="text"] {
+  flex: 2 1 220px;
+  width: auto;
+}
+
+.twitch-filters select {
+  flex: 0 1 160px;
+  width: auto;
+}
+
+/* The row-selection column stays as narrow as its checkbox. */
+th.col-tick,
+td.col-tick {
+  width: 1%;
+  padding-right: 0;
+}
+
+/* The seconds box and its quick presets sit on one line. */
+.twitch-duration-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.twitch-duration-row input[type="number"] {
+  flex: 0 1 140px;
+  width: auto;
+}
+
+/* Per-user failures under a bulk result. Deliberately quiet: a batch where
+   most users landed is a success with notes, and the banner above already
+   carries the headline. */
+.twitch-outcomes {
+  margin: 0 0 var(--gap);
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 4px;
+  font-size: 13px;
+}
+
+.twitch-outcomes li {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-raised);
+}
+
+.twitch-outcomes code {
+  color: var(--text);
+  flex-shrink: 0;
+}
+
+.twitch-outcomes span {
+  color: var(--text-dim);
+}

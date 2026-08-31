@@ -17,6 +17,7 @@ import {
   describeError,
   getObsAudioSettings,
   getSoundboard,
+  getTwitchAdminStatus,
   getTwitchSettings,
   listSounds,
   soundAudioUrl,
@@ -42,12 +43,14 @@ import type {
   SoundboardLeafCondition,
   SoundboardLeafType,
   SoundboardRuleWrite,
+  TwitchAdminStatus,
   TwitchConnectionState,
   TwitchConnectionStatus,
   TwitchSettingsRequest,
   TwitchView,
   ValidationIssue,
 } from "~/types/contract";
+import { newTwitchOauthState, rememberTwitchOauthState, twitchRedirectUri } from "~/auth/twitchOauth";
 import { compileSoundboard, matchRule } from "~/effects/sdk/soundboard";
 import { Banner } from "~/components/Banner";
 
@@ -701,9 +704,65 @@ function TwitchStatusBadge(props: { status: TwitchConnectionStatus }): JSX.Eleme
   );
 }
 
-/** The redirect URI both halves of the OAuth flow must agree on, byte for byte. */
-function oauthRedirectUri(): string {
-  return `${location.origin}/admin/twitch/callback`;
+/**
+ * The redirect URI both halves of the OAuth flow must agree on, byte for byte. It lives in
+ * `auth/twitchOauth.ts` alongside the flow's other shared piece, the one-time `state` value.
+ */
+const oauthRedirectUri = twitchRedirectUri;
+
+/**
+ * The permissions the "Connect with Twitch" button asks for, space-separated as Twitch wants them.
+ *
+ * A "scope" is one permission the operator grants while approving the app. `chat:read` is all the
+ * chat overlays have ever needed; the three moderation scopes are what the Twitch dashboard at
+ * `/admin/twitch` uses to read the ban list and to ban, time out and unban accounts.
+ *
+ * Asking for all four here, rather than only when somebody first opens the dashboard, is what
+ * keeps the flow to a single approval screen. A token granted before this list grew simply lacks
+ * the moderation scopes: chat keeps working exactly as it did, and reconnecting is what upgrades
+ * it. Nothing about chat is ever blocked on a moderation permission.
+ */
+const TWITCH_OAUTH_SCOPES =
+  "chat:read moderator:read:banned_users moderator:manage:banned_users moderation:read";
+
+/**
+ * What the stored token is actually allowed to do.
+ *
+ * The permissions live on the token, not in these settings, so the only honest source for them is
+ * the server that holds it: `GET /api/twitch/admin/status` reports the granted scopes and which
+ * required ones are missing, and it always answers 200 — "nothing is connected" is one of its
+ * normal answers rather than an error. The `.catch(() => null)` keeps a backend that is down from
+ * turning this footnote into a failure on a page whose main job is unrelated.
+ */
+function TwitchScopesNote(): JSX.Element {
+  const status = createMemo(() => getTwitchAdminStatus().catch(() => null));
+
+  return (
+    <Loading fallback={null}>
+      {/* `keyed` unwraps the settled value; a `null` from the catch above is falsy, so a backend
+          that could not answer draws nothing at all rather than an empty permissions list. */}
+      <Show when={status()} keyed>
+        {(info: TwitchAdminStatus) => (
+          <Show when={info.grantedScopes.length > 0}>
+            <div class="field">
+              <span class="field-label">Permissions this token carries</span>
+              <div class="tag-row">
+                <For each={info.grantedScopes}>{(scope) => <span class="tag">{scope}</span>}</For>
+              </div>
+              <Show when={info.missingScopes.length > 0}>
+                <p class="field-help">
+                  Missing for moderation: {info.missingScopes.join(", ")}. Press “Connect with
+                  Twitch” again to grant them — the sign-in now asks for the moderation permissions
+                  as well, and the <a href="/admin/twitch">Twitch dashboard</a> needs them. Chat is
+                  unaffected either way.
+                </p>
+              </Show>
+            </div>
+          </Show>
+        )}
+      </Show>
+    </Loading>
+  );
 }
 
 /**
@@ -728,12 +787,25 @@ function TwitchAuthPanel(props: { view: TwitchView; onChanged: () => void }): JS
   const oauthReady = (): boolean =>
     props.view.settings.clientId.trim() !== "" && props.view.settings.clientSecretSet;
 
+  /*
+   * The one-time random `state` this panel's link carries. See `auth/twitchOauth.ts`: Twitch echoes
+   * it back to the callback page, which refuses to exchange a code that did not come with the value
+   * this browser sent. That is what stops somebody from mailing the operator a link to the callback
+   * with an authorization code for *their* Twitch account in it.
+   *
+   * It is made once per panel so the address the link points at is stable, and written to storage
+   * on the click — see the anchor below — so that leaving for Twitch a second time from the same
+   * page still has a value waiting on the way back.
+   */
+  const oauthState = newTwitchOauthState();
+
   const oauthHref = (): string => {
     const params = new URLSearchParams({
       response_type: "code",
       client_id: props.view.settings.clientId.trim(),
       redirect_uri: oauthRedirectUri(),
-      scope: "chat:read",
+      scope: TWITCH_OAUTH_SCOPES,
+      state: oauthState,
     });
     return `https://id.twitch.tv/oauth2/authorize?${params.toString()}`;
   };
@@ -780,11 +852,18 @@ function TwitchAuthPanel(props: { view: TwitchView; onChanged: () => void }): JS
               </button>
             }
           >
-            <a class="btn btn-primary" href={oauthHref()}>
+            <a
+              class="btn btn-primary"
+              href={oauthHref()}
+              onClick={() => rememberTwitchOauthState(oauthState)}
+            >
               Connect with Twitch
             </a>
           </Show>
         </div>
+        <Show when={props.view.settings.tokensSet}>
+          <TwitchScopesNote />
+        </Show>
         <Show when={!oauthReady()}>
           <p class="field-help">
             Save a client ID and client secret above first — the sign-in flow sends Twitch's answer

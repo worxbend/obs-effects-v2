@@ -234,7 +234,10 @@ class RecordingTwitchConnection extends TwitchChatConnection {
 class StubTwitchTokenExchanger(
     exchange: Either[String, TwitchTokenPair] = Left("exchange not stubbed"),
     refresh: Either[String, TwitchTokenPair] = Left("refresh not stubbed"),
-    validate: Either[String, String] = Left("validate not stubbed")
+    validate: Either[String, TwitchTokenInfo] = Left("validate not stubbed"),
+    // Answers keyed by the token presented, for the tests where a refresh must change what Twitch says: the old access
+    // token is refused and the rotated one is accepted. Any token not named here gets `validate`.
+    validatePerToken: Map[String, Either[String, TwitchTokenInfo]] = Map.empty
 ) extends TwitchTokenExchanger {
 
   private val log = new AtomicReference[Vector[String]](Vector.empty)
@@ -258,9 +261,9 @@ class StubTwitchTokenExchanger(
     refresh
   }
 
-  override def validateToken(accessToken: String): Either[String, String] = {
+  override def validateToken(accessToken: String): Either[String, TwitchTokenInfo] = {
     val _ = log.updateAndGet(_ :+ s"validate $accessToken")
-    validate
+    validatePerToken.getOrElse(accessToken, validate)
   }
 
   /** Every call made so far, oldest first, reduced to one line each for easy assertion. */
@@ -299,4 +302,98 @@ class InMemorySoundRepository extends SoundRepository {
   }
 
   override def download(id: SoundId): Option[Array[Byte]] = state.get().get(id).map(_._2)
+}
+
+/** A Twitch Helix API whose answers the test decides, recording every call with the token it was made with.
+  *
+  * The token is recorded because two of the rules this feature is judged on are invisible without it: that a `401`
+  * refreshes the token and retries the *same* call once, and that the rest of a batch then carries on with the new
+  * token rather than the dead one.
+  *
+  * @param users
+  *   the accounts this fake knows; a login absent from here resolves to nothing, exactly as Twitch does.
+  * @param acceptedToken
+  *   when set, any call presenting a different token answers `401`. That is how an expired token is simulated without a
+  *   single string comparison inside the code under test.
+  * @param banAnswers
+  *   per-login answers for `ban`, defaulting to success — the way one bad user among good ones is set up.
+  */
+class FakeTwitchHelix(
+    users: List[TwitchUser] = Nil,
+    acceptedToken: Option[String] = None,
+    banAnswers: Map[String, Either[HelixFailure, Unit]] = Map.empty,
+    unbanAnswers: Map[String, Either[HelixFailure, Unit]] = Map.empty,
+    banPages: Map[Option[String], Either[HelixFailure, TwitchBanPage]] = Map.empty,
+    moderatorPages: Map[Option[String], Either[HelixFailure, TwitchModeratorPage]] = Map.empty,
+    resolveAnswer: Option[Either[HelixFailure, List[TwitchUser]]] = None
+) extends TwitchHelixApi {
+
+  private val log = new AtomicReference[Vector[String]](Vector.empty)
+
+  private def record(line: String): Unit = { val _ = log.updateAndGet(_ :+ line) }
+
+  private def authorised[A](token: String)(answer: => Either[HelixFailure, A]): Either[HelixFailure, A] =
+    if (acceptedToken.forall(_ == token)) answer else Left(HelixFailure.Unauthorized)
+
+  private def byId(userId: String): String = users.find(_.id == userId).map(_.login).getOrElse(userId)
+
+  override def resolveUsers(
+      clientId: String,
+      accessToken: String,
+      logins: List[String]
+  ): Either[HelixFailure, List[TwitchUser]] = {
+    record(s"resolve[$accessToken] ${logins.mkString(",")}")
+    authorised(accessToken) {
+      resolveAnswer.getOrElse(Right(users.filter(user => logins.exists(_.equalsIgnoreCase(user.login)))))
+    }
+  }
+
+  override def listBans(
+      clientId: String,
+      accessToken: String,
+      broadcasterId: String,
+      moderatorId: String,
+      cursor: Option[String],
+      limit: Int
+  ): Either[HelixFailure, TwitchBanPage] = {
+    record(s"bans[$accessToken] cursor=${cursor.getOrElse("-")} limit=$limit")
+    authorised(accessToken)(banPages.getOrElse(cursor, Right(TwitchBanPage(Nil, None))))
+  }
+
+  override def ban(
+      clientId: String,
+      accessToken: String,
+      broadcasterId: String,
+      moderatorId: String,
+      userId: String,
+      durationSeconds: Option[Int],
+      reason: Option[String]
+  ): Either[HelixFailure, Unit] = {
+    record(s"ban[$accessToken] ${byId(userId)} duration=${durationSeconds.getOrElse("-")}")
+    authorised(accessToken)(banAnswers.getOrElse(byId(userId), Right(())))
+  }
+
+  override def unban(
+      clientId: String,
+      accessToken: String,
+      broadcasterId: String,
+      moderatorId: String,
+      userId: String
+  ): Either[HelixFailure, Unit] = {
+    record(s"unban[$accessToken] ${byId(userId)}")
+    authorised(accessToken)(unbanAnswers.getOrElse(byId(userId), Right(())))
+  }
+
+  override def listModerators(
+      clientId: String,
+      accessToken: String,
+      broadcasterId: String,
+      cursor: Option[String]
+  ): Either[HelixFailure, TwitchModeratorPage] = {
+    record(s"moderators[$accessToken] cursor=${cursor.getOrElse("-")}")
+    authorised(accessToken)(moderatorPages.getOrElse(cursor, Right(TwitchModeratorPage(Nil, None))))
+  }
+
+  /** Every call made so far, oldest first, reduced to one line each for easy assertion. */
+  def calls: List[String] = log.get().toList
 }

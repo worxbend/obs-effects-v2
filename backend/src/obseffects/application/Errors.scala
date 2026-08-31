@@ -57,6 +57,15 @@ enum AppError {
     */
   case TooManyAttempts(retryAfterSeconds: Int)
 
+  /** The Twitch moderation feature cannot act right now, and `reason` is one plain sentence saying why: no channel is
+    * configured, no account is connected, the connected account is missing a permission, or Twitch itself refused.
+    *
+    * This exists so that "the optional feature is not set up" is an ordinary, expected answer instead of a crash. Every
+    * one of those situations is a normal state of a fresh installation, so none of them may reach a client as a `500` —
+    * they answer `409 TWITCH_UNAVAILABLE`, and the status endpoint answers `200` describing the same thing.
+    */
+  case TwitchUnavailable(reason: String)
+
   /** Something unexpected. `message` is safe to show to a user and must never contain a stack trace. `details` carries
     * small machine-readable hints, e.g. `Map("mongo" -> "down")`.
     */

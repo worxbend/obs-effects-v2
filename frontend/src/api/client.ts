@@ -34,9 +34,15 @@ import type {
   RouteWriteRequest,
   ValidationIssue,
   ChatMessage,
+  BulkResult,
+  TwitchAdminStatus,
+  TwitchBanPage,
+  TwitchBanRequest,
+  TwitchModeratorPage,
   TwitchOAuthCompleteRequest,
   TwitchSettingsRequest,
   TwitchTokensRequest,
+  TwitchUnbanRequest,
   TwitchView,
 } from "~/types/contract";
 
@@ -631,6 +637,91 @@ export function getChatHistory(
   if (options?.before !== undefined) params.set("before", String(options.before));
   const query = params.size > 0 ? `?${params.toString()}` : "";
   return requestJson<ChatMessage[]>({ method: "GET", path: `/chat/history${query}`, signal });
+}
+
+/* ------------------------------------------------------------------ */
+/* Twitch moderation                                                   */
+/* ------------------------------------------------------------------ */
+
+/**
+ * `GET /api/twitch/admin/status` — can this installation moderate the channel, and if not, why not?
+ *
+ * **This call always succeeds with a 200.** "Twitch is not configured" and "the stored token
+ * predates the moderation permissions" are ordinary answers carried in the body, not errors, which
+ * is what lets the dashboard open on a fresh install without a single failing request in the
+ * network log. Only a genuinely broken backend makes this throw.
+ *
+ * Every other function below should be called *only* after this one answered `available: true`;
+ * they answer 409 `TWITCH_UNAVAILABLE` otherwise.
+ */
+export function getTwitchAdminStatus(signal?: AbortSignal): Promise<TwitchAdminStatus> {
+  return requestJson<TwitchAdminStatus>({ method: "GET", path: "/twitch/admin/status", signal });
+}
+
+/**
+ * `GET /api/twitch/admin/bans` — one page of the channel's ban list.
+ *
+ * Paging is by opaque cursor rather than by page number, because that is all Twitch offers: pass
+ * the `cursor` from the previous page to get the next one, and omit it for the first page. `limit`
+ * is 1…100 and defaults to 100 on the backend.
+ */
+export function listTwitchBans(
+  options?: { cursor?: string | null; limit?: number },
+  signal?: AbortSignal,
+): Promise<TwitchBanPage> {
+  const params = new URLSearchParams();
+  if (options?.cursor) params.set("cursor", options.cursor);
+  if (options?.limit !== undefined) params.set("limit", String(options.limit));
+  const query = params.size > 0 ? `?${params.toString()}` : "";
+  return requestJson<TwitchBanPage>({ method: "GET", path: `/twitch/admin/bans${query}`, signal });
+}
+
+/**
+ * `POST /api/twitch/admin/bans` — ban or time out up to 100 accounts in one request.
+ *
+ * `durationSeconds` is what separates the two: absent or `null` bans permanently, a number of
+ * seconds times the account out. A mixed result is normal and is *not* thrown — read `succeeded`,
+ * `failed` and the per-user `outcomes` of the returned {@link BulkResult}.
+ *
+ * Throws `ApiError` with:
+ *  - `status` 409 `TWITCH_UNAVAILABLE` — the feature is not configured; re-read the status.
+ *  - `status` 422 `VALIDATION_FAILED` — no usable logins, more than 100, or a bad duration.
+ */
+export function banTwitchUsers(body: TwitchBanRequest, signal?: AbortSignal): Promise<BulkResult> {
+  return requestJson<BulkResult>({ method: "POST", path: "/twitch/admin/bans", body, signal });
+}
+
+/**
+ * `POST /api/twitch/admin/unbans` — lift the ban or timeout on up to 100 accounts.
+ *
+ * A POST rather than a `DELETE` carrying a list: this is one bulk action with one result, not N
+ * resource deletions, and a request body on a `DELETE` is awkward for browsers and servers alike.
+ *
+ * The body names accounts in either of two ways, and may use both at once — see
+ * {@link TwitchUnbanRequest}. Pass `targets` whenever the user id is already known (every row of
+ * the ban list carries one), because a login can be renamed and re-registered by somebody else
+ * between reading the list and pressing the button, and only the id is stable. `users` stays for
+ * names that were typed by hand, where there is no id to send. The 100-per-request cap counts the
+ * two lists together.
+ */
+export function unbanTwitchUsers(
+  body: TwitchUnbanRequest,
+  signal?: AbortSignal,
+): Promise<BulkResult> {
+  return requestJson<BulkResult>({ method: "POST", path: "/twitch/admin/unbans", body, signal });
+}
+
+/** `GET /api/twitch/admin/moderators` — one cursor-paged page of the channel's moderators. */
+export function listTwitchModerators(
+  cursor?: string | null,
+  signal?: AbortSignal,
+): Promise<TwitchModeratorPage> {
+  const query = cursor ? `?${new URLSearchParams({ cursor }).toString()}` : "";
+  return requestJson<TwitchModeratorPage>({
+    method: "GET",
+    path: `/twitch/admin/moderators${query}`,
+    signal,
+  });
 }
 
 /* ------------------------------------------------------------------ */

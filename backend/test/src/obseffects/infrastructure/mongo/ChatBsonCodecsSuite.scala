@@ -39,6 +39,35 @@ class ChatBsonCodecsSuite extends FunSuite {
     assertEquals(BsonCodecs.twitchSettingsFromDocument(new Document()), TwitchSettings.Default)
   }
 
+  test("the moderation fields round-trip: the two ids and the scope list") {
+    val moderating = settings.copy(
+      broadcasterId = Some("12345"),
+      botUserId = Some("67890"),
+      scopes = List("chat:read", "moderator:manage:banned_users")
+    )
+
+    val document = BsonCodecs.twitchSettingsToDocument(moderating)
+
+    assertEquals(BsonCodecs.twitchSettingsFromDocument(document), moderating)
+  }
+
+  test("a document written before the moderation fields existed still reads, with them absent") {
+    // Exactly what the previous build wrote: no broadcasterId, no botUserId, no scopes. The moderation dashboard
+    // treats all three as "not looked up yet" and asks Twitch, rather than the settings document failing to load and
+    // taking the whole Twitch integration down with it.
+    val older = BsonCodecs.twitchSettingsToDocument(settings)
+    assert(!older.containsKey("broadcasterId"), s"the fixture should not carry one, but the document is $older")
+    assert(!older.containsKey("botUserId"), s"the fixture should not carry one, but the document is $older")
+    assert(!older.containsKey("scopes"), s"an empty scope list is stored as nothing at all, but got $older")
+
+    val read = BsonCodecs.twitchSettingsFromDocument(older)
+
+    assertEquals(read.broadcasterId, None)
+    assertEquals(read.botUserId, None)
+    assertEquals(read.scopes, Nil)
+    assertEquals(read.channel, "worxbend")
+  }
+
   test("a chat message round-trips through a document, parts and event data included") {
     val message = Fixtures.chatMessage(
       event = ChatEventKind.Cheer,

@@ -2,6 +2,7 @@ import { createMemo, Errored, Loading, Show, untrack } from "solid-js";
 import type { JSX } from "@solidjs/web";
 import { useSearchParams } from "@solidjs/router";
 import { completeTwitchOAuth, describeError } from "~/api/client";
+import { consumeTwitchOauthState, twitchRedirectUri } from "~/auth/twitchOauth";
 import type { TwitchView } from "~/types/contract";
 import { Banner } from "~/components/Banner";
 
@@ -41,6 +42,7 @@ export default function TwitchCallbackPage(): JSX.Element {
    */
   const [searchParams] = useSearchParams<{
     code?: string;
+    state?: string;
     error?: string;
     error_description?: string;
   }>();
@@ -49,17 +51,32 @@ export default function TwitchCallbackPage(): JSX.Element {
   const refusalDetail = untrack(() => searchParams.error_description);
 
   /*
+   * Does this callback belong to a sign-in this browser actually started?
+   *
+   * The Settings page put a one-time random value in `sessionStorage` and sent the same value to
+   * Twitch as `state`; Twitch echoes it back here. Reading it consumes it, so this runs once,
+   * before anything else, and its answer is what gates the exchange below.
+   *
+   * A mismatch is not a stray edge case. Without this check the page would exchange any code that
+   * turned up in its address bar, so anybody could send the signed-in operator a link carrying an
+   * authorization code for *their own* Twitch account and quietly rebind this installation to it —
+   * with the moderation permissions the token now carries, that means an outsider's account doing
+   * the banning. A code that did not arrive with this browser's own value is therefore never sent
+   * anywhere.
+   */
+  const expectedState = untrack(() => consumeTwitchOauthState());
+  const returnedState = untrack(() => searchParams.state);
+  const stateMatches = expectedState !== null && returnedState === expectedState;
+
+  /*
    * The exchange, started as the page opens. An async memo whose body reads only the constants
    * above, so it runs exactly once — which matters more than usual here, because the code is
    * single-use: a second POST with the same code would fail at Twitch even though the first one
    * succeeded.
    */
   const exchanged = createMemo(async (): Promise<TwitchView | null> => {
-    if (!code) return null;
-    return completeTwitchOAuth({
-      code,
-      redirectUri: `${location.origin}/admin/twitch/callback`,
-    });
+    if (!code || !stateMatches) return null;
+    return completeTwitchOAuth({ code, redirectUri: twitchRedirectUri() });
   });
 
   return (
@@ -98,8 +115,26 @@ export default function TwitchCallbackPage(): JSX.Element {
               </p>
             }
           >
-            <Errored
-              fallback={(error: unknown) => (
+            <Show
+              when={stateMatches}
+              fallback={
+                <>
+                  <Banner
+                    kind="error"
+                    message="This sign-in did not start in this browser, so it was not completed."
+                  />
+                  <p class="muted">
+                    Nothing was changed and the code in the address was not used. Every "Connect
+                    with Twitch" click carries a one-time value that has to come back with it; this
+                    one either had none, had the wrong one, or belongs to a flow that already
+                    finished — reloading this page counts as the last of those. Start again from the
+                    Settings page.
+                  </p>
+                </>
+              }
+            >
+              <Errored
+                fallback={(error: unknown) => (
                 <>
                   <Banner kind="error" message={describeError(error)} />
                   <p class="muted">
@@ -130,7 +165,8 @@ export default function TwitchCallbackPage(): JSX.Element {
                   )}
                 </Show>
               </Loading>
-            </Errored>
+              </Errored>
+            </Show>
           </Show>
         </Show>
 

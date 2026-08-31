@@ -28,12 +28,18 @@ final class FakeSettingsRepository(
   override def updateTwitchAuth(
       accessToken: Option[String],
       refreshToken: Option[String],
-      botLogin: Option[String]
+      botLogin: Option[String],
+      botUserId: Option[String],
+      scopes: Option[List[String]],
+      broadcasterId: Option[String]
   ): Unit =
     storedTwitch = storedTwitch.copy(
       accessToken = accessToken.orElse(storedTwitch.accessToken),
       refreshToken = refreshToken.orElse(storedTwitch.refreshToken),
-      botLogin = botLogin.orElse(storedTwitch.botLogin)
+      botLogin = botLogin.orElse(storedTwitch.botLogin),
+      botUserId = botUserId.orElse(storedTwitch.botUserId),
+      scopes = scopes.getOrElse(storedTwitch.scopes),
+      broadcasterId = broadcasterId.orElse(storedTwitch.broadcasterId)
     )
   override def loadSoundboard(): Soundboard = storedSoundboard
   override def saveSoundboard(soundboard: Soundboard): Soundboard = { storedSoundboard = soundboard; soundboard }

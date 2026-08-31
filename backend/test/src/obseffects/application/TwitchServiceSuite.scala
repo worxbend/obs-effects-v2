@@ -19,7 +19,10 @@ class TwitchServiceSuite extends FunSuite {
     clientSecret = Some("shhh"),
     accessToken = Some("access-1"),
     refreshToken = Some("refresh-1"),
-    botLogin = Some("botty")
+    botLogin = Some("botty"),
+    broadcasterId = Some("777"),
+    botUserId = Some("42"),
+    scopes = List("chat:read")
   )
 
   private def service(
@@ -91,6 +94,35 @@ class TwitchServiceSuite extends FunSuite {
     val _ = twitch.saveTwitch(unchanged)
 
     assertEquals(connection.applied.size, 2)
+  }
+
+  test("changing the channel forgets the cached broadcaster id, so the dashboard cannot moderate the old channel") {
+    val (twitch, repository, _, _, _) = service(configured)
+
+    val _ = twitch.saveTwitch(
+      TwitchSettingsUpdate(enabled = true, channel = "elsewhere", clientId = "client-1", clientSecret = None)
+    )
+
+    assertEquals(repository.loadTwitch().broadcasterId, None)
+  }
+
+  test("saving without changing the channel keeps the cached broadcaster id, sparing a lookup") {
+    val (twitch, repository, _, _, _) = service(configured)
+
+    val _ = twitch.saveTwitch(
+      TwitchSettingsUpdate(enabled = false, channel = "worxbend", clientId = "client-1", clientSecret = None)
+    )
+
+    assertEquals(repository.loadTwitch().broadcasterId, Some("777"))
+  }
+
+  test("storing a new token forgets the account id and scopes it was not issued for") {
+    val (twitch, repository, _, _, _) = service(configured)
+
+    val _ = twitch.storeTokens("new-access", None)
+
+    assertEquals(repository.loadTwitch().botUserId, None)
+    assertEquals(repository.loadTwitch().scopes, Nil)
   }
 
   test("storing tokens trims them, strips a pasted oauth: prefix, and forgets the previous bot login") {

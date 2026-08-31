@@ -6,6 +6,16 @@ import org.slf4j.{Logger, LoggerFactory}
 /** A fresh access token and, when Twitch sent one, the refresh token that rotates it. */
 final case class TwitchTokenPair(accessToken: String, refreshToken: Option[String])
 
+/** Who a stored access token belongs to and what it is allowed to do — everything Twitch's `/oauth2/validate` endpoint
+  * answers with.
+  *
+  * All three parts are needed and none of them can be guessed. The `login` is what an authenticated IRC connection uses
+  * as its NICK; the `userId` is the *moderator id* every Twitch moderation call carries (that API addresses accounts by
+  * number, never by name); and the `scopes` decide which moderation panels can work at all, so the admin dashboard can
+  * say "reconnect to grant these" instead of letting a call fail with a bare 401.
+  */
+final case class TwitchTokenInfo(login: String, userId: String, scopes: List[String])
+
 /** What the application needs from Twitch's OAuth endpoints, without knowing that HTTP is involved.
   *
   * A port in the same sense as `ObsAudioConnection`: the infrastructure implementation (`TwitchOAuth`) talks to
@@ -29,8 +39,8 @@ trait TwitchTokenExchanger {
     */
   def refreshTokens(clientId: String, clientSecret: String, refreshToken: String): Either[String, TwitchTokenPair]
 
-  /** Asks Twitch whose token this is. The returned login is what an authenticated IRC connection uses as its NICK. */
-  def validateToken(accessToken: String): Either[String, String]
+  /** Asks Twitch whose token this is, and what it may do. */
+  def validateToken(accessToken: String): Either[String, TwitchTokenInfo]
 }
 
 /** A Twitch settings change as it arrives from the API, before validation.
@@ -90,7 +100,11 @@ final class TwitchService(
         case None            => existing.clientSecret // untouched
         case Some(None)      => None // cleared
         case Some(Some(raw)) => Option(raw.trim).filter(_.nonEmpty)
-      }
+      },
+      // A different channel is a different broadcaster, and the cached numeric id belongs to the old one. Forgetting
+      // it here is what makes the admin dashboard look the new channel up again instead of moderating the previous
+      // one — the worst possible kind of silent bug in a tool that bans people.
+      broadcasterId = if (channel == existing.channel) existing.broadcasterId else None
     )
 
     validated match {
@@ -114,7 +128,12 @@ final class TwitchService(
           refreshToken = refreshToken.map(_.trim).filter(_.nonEmpty),
           // Whoever this token belongs to is not who the old one belonged to until proven otherwise. The connection
           // rediscovers the login from Twitch's validate endpoint on its next connect and stores it then.
-          botLogin = None
+          botLogin = None,
+          // Same reasoning for the two facts the moderation dashboard reads: a new token may belong to a different
+          // account and may carry different permissions, so the remembered ones are wrong until re-validated. Keeping
+          // stale scopes here would make the dashboard offer buttons the token cannot actually use.
+          botUserId = None,
+          scopes = Nil
         )
       Right(applyAndSave(settings))
     }

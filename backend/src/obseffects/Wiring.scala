@@ -13,7 +13,7 @@ import obseffects.infrastructure.mongo.{
   MongoSettingsRepository
 }
 import obseffects.infrastructure.obs.ObsAudioSupervisor
-import obseffects.infrastructure.twitch.{TwitchChatSupervisor, TwitchOAuth}
+import obseffects.infrastructure.twitch.{TwitchChatSupervisor, TwitchHelixClient, TwitchOAuth}
 
 import java.security.SecureRandom
 import java.time.Clock
@@ -113,6 +113,25 @@ class Wiring(config: AppConfig, val authMode: AuthMode) extends AutoCloseable {
 
   lazy val chatStream: ChatStream = wire[ChatStream]
 
+  /** Twitch's REST API, and the moderation use cases on top of it.
+    *
+    * Nothing here starts anything: no thread, no connection, no start-up call. That is part of how the moderation
+    * dashboard stays optional — an installation with no Twitch credentials constructs these two objects, never calls
+    * them, and behaves exactly as it did before the feature existed.
+    *
+    * Constructed by hand rather than with `wire` because of the last parameter: macwire matches by type, and a bare
+    * `Long` is a type any future setting would share, so naming the value here keeps the wiring unambiguous.
+    */
+  lazy val twitchHelix: TwitchHelixApi = new TwitchHelixClient()
+
+  lazy val twitchAdminService: TwitchAdminService =
+    new TwitchAdminService(
+      settingsRepository,
+      twitchHelix,
+      twitchOAuth,
+      TwitchAdminService.RateLimitPauseMillis
+    )
+
   lazy val effectService: EffectService = wire[EffectService]
   lazy val routeService: RouteService = wire[RouteService]
   lazy val presetService: PresetService = wire[PresetService]
@@ -142,6 +161,7 @@ class Wiring(config: AppConfig, val authMode: AuthMode) extends AutoCloseable {
       audioLevelStream,
       settingsService,
       twitchService,
+      twitchAdminService,
       chatStream,
       soundService,
       soundboardService,

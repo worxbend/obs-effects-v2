@@ -286,6 +286,11 @@ private[infrastructure] object BsonCodecs {
     settings.accessToken.foreach(value => { val _ = document.append("accessToken", value) })
     settings.refreshToken.foreach(value => { val _ = document.append("refreshToken", value) })
     settings.botLogin.foreach(value => { val _ = document.append("botLogin", value) })
+    settings.broadcasterId.foreach(value => { val _ = document.append("broadcasterId", value) })
+    settings.botUserId.foreach(value => { val _ = document.append("botUserId", value) })
+    // Written only when there is something to write, so a document keeps the "absent, not empty" convention its
+    // optional string fields already follow.
+    if (settings.scopes.nonEmpty) { val _ = document.append("scopes", settings.scopes.asJava) }
     document
   }
 
@@ -300,7 +305,12 @@ private[infrastructure] object BsonCodecs {
       clientSecret = Option(document.getString("clientSecret")).filter(_.nonEmpty),
       accessToken = Option(document.getString("accessToken")).filter(_.nonEmpty),
       refreshToken = Option(document.getString("refreshToken")).filter(_.nonEmpty),
-      botLogin = Option(document.getString("botLogin")).filter(_.nonEmpty)
+      botLogin = Option(document.getString("botLogin")).filter(_.nonEmpty),
+      // The three moderation fields are as optional as the rest: a document written before this feature existed simply
+      // has none of them, and reads back as "not looked up yet" rather than failing.
+      broadcasterId = Option(document.getString("broadcasterId")).filter(_.nonEmpty),
+      botUserId = Option(document.getString("botUserId")).filter(_.nonEmpty),
+      scopes = readStringList(document.get("scopes"))
     )
 
   /** The soundboard document: the whole ordered rule list, stored beside the other settings documents.

@@ -165,11 +165,18 @@ trait SettingsRepository {
     * operator may be saving the same document from an HTTP request. A load-then-`saveTwitch` on the supervisor's side
     * would replace the *whole* document with a pre-save snapshot, silently reverting every field the operator just
     * changed; a field-level update cannot revert anything it does not mention.
+    *
+    * `scopes` is an `Option[List[String]]` rather than a plain list so that the outer "leave it alone" and an inner
+    * "the token has no scopes at all" stay two different instructions — a caller that only learned a rotated token must
+    * not blank the permission list as a side effect.
     */
   def updateTwitchAuth(
       accessToken: Option[String] = None,
       refreshToken: Option[String] = None,
-      botLogin: Option[String] = None
+      botLogin: Option[String] = None,
+      botUserId: Option[String] = None,
+      scopes: Option[List[String]] = None,
+      broadcasterId: Option[String] = None
   ): Unit
 
   /** The stored soundboard, or [[obseffects.domain.Soundboard.Empty]] if nothing is stored yet — a fresh installation

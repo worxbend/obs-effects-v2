@@ -5,7 +5,8 @@ import obseffects.application.{
   ChatMessageRepository,
   SettingsRepository,
   TwitchChatConnection,
-  TwitchTokenExchanger
+  TwitchTokenExchanger,
+  TwitchTokenInfo
 }
 import obseffects.domain.{ChatMessage, TwitchConnectionState, TwitchConnectionStatus, TwitchSettings}
 import org.slf4j.{Logger, LoggerFactory}
@@ -176,15 +177,17 @@ final class TwitchChatSupervisor(
         case None        => None
         case Some(token) =>
           oauth.validateToken(token) match {
-            case Right(login) =>
-              rememberBotLogin(settings, login)
-              Some(Credentials(login, token))
+            case Right(info) =>
+              rememberIdentity(settings, info)
+              Some(Credentials(info.login, token))
             case Left(reason) =>
               refreshOnce(settings) match {
                 case Some(rotated) =>
                   oauth.validateToken(rotated) match {
-                    case Right(login) => Some(Credentials(login, rotated))
-                    case Left(again)  => fallBackToAnonymous(s"the refreshed token was rejected too ($again)")
+                    case Right(info) =>
+                      rememberIdentity(settings, info)
+                      Some(Credentials(info.login, rotated))
+                    case Left(again) => fallBackToAnonymous(s"the refreshed token was rejected too ($again)")
                   }
                 case None => fallBackToAnonymous(reason)
               }
@@ -229,14 +232,26 @@ final class TwitchChatSupervisor(
     None
   }
 
-  /** Persists the login the token turned out to belong to, for the settings page's "connected as" line. Written only
-    * when it changed, so the steady state does no writes per connect — and written as a field-level patch, so it can
-    * never revert an operator save that raced this connect attempt.
+  /** Persists what the token turned out to be: the login for the settings page's "connected as" line, and the numeric
+    * user id and scopes the moderation dashboard reads. Written only when something changed, so the steady state does
+    * no writes per connect — and written as a field-level patch, so it can never revert an operator save that raced
+    * this connect attempt.
+    *
+    * The connect path fills these in as a side effect because it already validates the token on every attempt; the
+    * dashboard would otherwise have to make the same call itself the first time somebody opens it.
     */
-  private def rememberBotLogin(settings: TwitchSettings, login: String): Unit =
-    if (!settings.botLogin.contains(login)) {
-      settingsRepository.updateTwitchAuth(botLogin = Some(login))
+  private def rememberIdentity(settings: TwitchSettings, info: TwitchTokenInfo): Unit = {
+    val loginChanged = !settings.botLogin.contains(info.login)
+    val userIdChanged = info.userId.nonEmpty && !settings.botUserId.contains(info.userId)
+    val scopesChanged = settings.scopes != info.scopes
+    if (loginChanged || userIdChanged || scopesChanged) {
+      settingsRepository.updateTwitchAuth(
+        botLogin = Some(info.login),
+        botUserId = Option.when(info.userId.nonEmpty)(info.userId),
+        scopes = Some(info.scopes)
+      )
     }
+  }
 
   /** Twitch accepted the login. */
   private def connected(era: Long, authenticated: Boolean): Unit = if (era == generation.get()) {

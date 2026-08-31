@@ -67,7 +67,10 @@ final class MongoSettingsRepository(connection: MongoConnection) extends Setting
   override def updateTwitchAuth(
       accessToken: Option[String],
       refreshToken: Option[String],
-      botLogin: Option[String]
+      botLogin: Option[String],
+      botUserId: Option[String],
+      scopes: Option[List[String]],
+      broadcasterId: Option[String]
   ): Unit = {
     // A `$set` on exactly the fields provided, rather than a whole-document replace: this runs from the supervisor's
     // background thread while an operator may be saving the same document, and a field-level update is atomic on the
@@ -75,7 +78,10 @@ final class MongoSettingsRepository(connection: MongoConnection) extends Setting
     val sets = List(
       accessToken.map(value => Updates.set("accessToken", value)),
       refreshToken.map(value => Updates.set("refreshToken", value)),
-      botLogin.map(value => Updates.set("botLogin", value))
+      botLogin.map(value => Updates.set("botLogin", value)),
+      botUserId.map(value => Updates.set("botUserId", value)),
+      scopes.map(value => Updates.set("scopes", value.asJava)),
+      broadcasterId.map(value => Updates.set("broadcasterId", value))
     ).flatten
     if (sets.nonEmpty) {
       val _ = collection.updateOne(

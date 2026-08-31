@@ -5,10 +5,17 @@ import io.circe.syntax.*
 import io.circe.{Decoder, DecodingFailure, Encoder, Json}
 import obseffects.application.{
   AppError,
+  BulkOutcome,
+  BulkResult,
   EffectSyncOutcome,
   HealthStatus,
   ObsAudioUpdate,
   SessionInfo,
+  TwitchAdminStatus,
+  TwitchBan,
+  TwitchBanPage,
+  TwitchModerator,
+  TwitchModeratorPage,
   TwitchSettingsUpdate
 }
 import obseffects.domain.*
@@ -639,7 +646,8 @@ object Wire {
       clientId: String,
       clientSecretSet: Boolean,
       tokensSet: Boolean,
-      botLogin: Option[String]
+      botLogin: Option[String],
+      scopes: List[String]
   )
 
   /** A Twitch settings save. `clientSecret` is the same three-state field as the obs-audio `password`: absent leaves
@@ -673,6 +681,74 @@ object Wire {
     */
   final case class TwitchOAuthCompleteRequestDto(code: String, redirectUri: String)
 
+  // -------------------------------------------------------------------------------------------
+  // Twitch moderation (the admin dashboard)
+  // -------------------------------------------------------------------------------------------
+
+  /** Whether the moderation dashboard can work, and why not when it cannot. Ids and scope names are safe to send — they
+    * are labels, not credentials — while the token that carries those scopes never leaves the server.
+    */
+  final case class TwitchAdminStatusDto(
+      available: Boolean,
+      channel: String,
+      broadcasterId: Option[String],
+      moderatorLogin: Option[String],
+      grantedScopes: List[String],
+      missingScopes: List[String],
+      reason: Option[String]
+  )
+
+  /** One entry of the ban list. `expiresAt` is `null` for a permanent ban — Twitch sends an empty string, which the
+    * Helix client already normalised away, so a client only ever has to check for null.
+    */
+  final case class TwitchBanDto(
+      userId: String,
+      login: String,
+      displayName: String,
+      reason: Option[String],
+      moderatorLogin: Option[String],
+      createdAt: Option[String],
+      expiresAt: Option[String]
+  )
+
+  /** One page of the ban list. `cursor` is Twitch's opaque "carry on from here" string, and `null` on the last page —
+    * there are no page numbers, because Twitch's paging has none to give.
+    */
+  final case class TwitchBanPageDto(bans: List[TwitchBanDto], cursor: Option[String])
+
+  final case class TwitchModeratorDto(userId: String, login: String, displayName: String)
+
+  final case class TwitchModeratorPageDto(moderators: List[TwitchModeratorDto], cursor: Option[String])
+
+  /** The body of `POST /api/twitch/admin/bans`: whom to ban, and for how long.
+    *
+    * `durationSeconds` absent or `null` is a permanent ban; a number from 1 to 1209600 is a timeout. That is Twitch's
+    * own model of the two actions, kept rather than translated into a `kind` field that would then have to be mapped
+    * back.
+    */
+  final case class TwitchBanRequestDto(users: List[String], durationSeconds: Option[Int], reason: Option[String])
+
+  /** One already-resolved account to unban: the numeric id the unban is issued against, and the login it read as when
+    * the ban-list row was loaded, which is used only to label the outcome.
+    */
+  final case class TwitchUnbanTargetDto(userId: String, login: String)
+
+  /** The body of `POST /api/twitch/admin/unbans`.
+    *
+    * Two lists rather than one, because the two ways of naming an account are not equally safe. `users` holds logins,
+    * which the server looks up before acting — the right shape for a pasted list of names, and the only shape older
+    * clients send. `targets` holds rows whose numeric id is already known, and those are acted on directly: a login can
+    * be renamed and re-registered by somebody else, so looking one up again can land the unban on a different account
+    * than the operator picked. Both default to empty, so a client sending only `users` keeps working unchanged.
+    */
+  final case class TwitchUnbanRequestDto(users: List[String], targets: List[TwitchUnbanTargetDto])
+
+  /** What happened to one user in a bulk operation. */
+  final case class BulkOutcomeDto(login: String, ok: Boolean, message: Option[String])
+
+  /** The counts plus every outcome, in the order the request listed the users. */
+  final case class BulkResultDto(succeeded: Int, failed: Int, outcomes: List[BulkOutcomeDto])
+
   def toDto(part: ChatPart): ChatPartDto = part match {
     case ChatPart.Text(text) =>
       ChatPartDto(`type` = "text", text = Some(text), name = None, url = None, animatedUrl = None)
@@ -702,7 +778,10 @@ object Wire {
       clientId = settings.clientId,
       clientSecretSet = settings.clientSecret.isDefined,
       tokensSet = settings.accessToken.isDefined,
-      botLogin = settings.botLogin
+      botLogin = settings.botLogin,
+      // Safe to send, unlike everything else the token implies: a scope name is a permission label, not a credential,
+      // and the settings page needs it to say "this token cannot moderate until you reconnect".
+      scopes = settings.scopes
     )
 
   def toDto(status: TwitchConnectionStatus, subscribers: Int): TwitchStatusDto =
@@ -716,6 +795,43 @@ object Wire {
 
   def toUpdate(dto: TwitchSettingsRequestDto): TwitchSettingsUpdate =
     TwitchSettingsUpdate(dto.enabled, dto.channel, dto.clientId, dto.clientSecret)
+
+  def toDto(status: TwitchAdminStatus): TwitchAdminStatusDto =
+    TwitchAdminStatusDto(
+      available = status.available,
+      channel = status.channel,
+      broadcasterId = status.broadcasterId,
+      moderatorLogin = status.moderatorLogin,
+      grantedScopes = status.grantedScopes,
+      missingScopes = status.missingScopes,
+      reason = status.reason
+    )
+
+  def toDto(ban: TwitchBan): TwitchBanDto =
+    TwitchBanDto(
+      userId = ban.userId,
+      login = ban.login,
+      displayName = ban.displayName,
+      reason = ban.reason,
+      moderatorLogin = ban.moderatorLogin,
+      createdAt = ban.createdAt.map(Timestamps.format),
+      expiresAt = ban.expiresAt.map(Timestamps.format)
+    )
+
+  def toDto(page: TwitchBanPage): TwitchBanPageDto =
+    TwitchBanPageDto(page.bans.map(toDto), page.cursor)
+
+  def toDto(moderator: TwitchModerator): TwitchModeratorDto =
+    TwitchModeratorDto(moderator.userId, moderator.login, moderator.displayName)
+
+  def toDto(page: TwitchModeratorPage): TwitchModeratorPageDto =
+    TwitchModeratorPageDto(page.moderators.map(toDto), page.cursor)
+
+  def toDto(outcome: BulkOutcome): BulkOutcomeDto =
+    BulkOutcomeDto(outcome.login, outcome.ok, outcome.message)
+
+  def toDto(result: BulkResult): BulkResultDto =
+    BulkResultDto(result.succeeded, result.failed, result.outcomes.map(toDto))
 
   given Decoder[ChatPartDto] = deriveDecoder
   given Encoder[ChatPartDto] = deriveEncoder[ChatPartDto].mapJson(_.deepDropNullValues)
@@ -762,6 +878,45 @@ object Wire {
 
   given Decoder[TwitchOAuthCompleteRequestDto] = deriveDecoder
   given Encoder[TwitchOAuthCompleteRequestDto] = deriveEncoder
+
+  given Decoder[TwitchAdminStatusDto] = deriveDecoder
+  given Encoder[TwitchAdminStatusDto] = deriveEncoder
+
+  given Decoder[TwitchBanDto] = deriveDecoder
+  given Encoder[TwitchBanDto] = deriveEncoder
+
+  given Decoder[TwitchBanPageDto] = deriveDecoder
+  given Encoder[TwitchBanPageDto] = deriveEncoder
+
+  given Decoder[TwitchModeratorDto] = deriveDecoder
+  given Encoder[TwitchModeratorDto] = deriveEncoder
+
+  given Decoder[TwitchModeratorPageDto] = deriveDecoder
+  given Encoder[TwitchModeratorPageDto] = deriveEncoder
+
+  given Decoder[TwitchBanRequestDto] = deriveDecoder
+  given Encoder[TwitchBanRequestDto] = deriveEncoder
+
+  given Decoder[TwitchUnbanTargetDto] = deriveDecoder
+  given Encoder[TwitchUnbanTargetDto] = deriveEncoder
+
+  /** Hand-written because both lists are optional with an empty default, and a derived decoder would reject a body that
+    * leaves either key out — which every client written before `targets` existed does.
+    */
+  given Decoder[TwitchUnbanRequestDto] = Decoder.instance { cursor =>
+    for {
+      users <- cursor.get[Option[List[String]]]("users")
+      targets <- cursor.get[Option[List[TwitchUnbanTargetDto]]]("targets")
+    } yield TwitchUnbanRequestDto(users.getOrElse(Nil), targets.getOrElse(Nil))
+  }
+
+  given Encoder[TwitchUnbanRequestDto] = deriveEncoder
+
+  given Decoder[BulkOutcomeDto] = deriveDecoder
+  given Encoder[BulkOutcomeDto] = deriveEncoder
+
+  given Decoder[BulkResultDto] = deriveDecoder
+  given Encoder[BulkResultDto] = deriveEncoder
 
   // -------------------------------------------------------------------------------------------
   // Sounds
@@ -969,6 +1124,16 @@ object Wire {
   given Schema[TwitchViewDto] = Schema.derived
   given Schema[TwitchTokensRequestDto] = Schema.derived
   given Schema[TwitchOAuthCompleteRequestDto] = Schema.derived
+  given Schema[TwitchAdminStatusDto] = Schema.derived
+  given Schema[TwitchBanDto] = Schema.derived
+  given Schema[TwitchBanPageDto] = Schema.derived
+  given Schema[TwitchModeratorDto] = Schema.derived
+  given Schema[TwitchModeratorPageDto] = Schema.derived
+  given Schema[TwitchBanRequestDto] = Schema.derived
+  given Schema[TwitchUnbanTargetDto] = Schema.derived
+  given Schema[TwitchUnbanRequestDto] = Schema.derived
+  given Schema[BulkOutcomeDto] = Schema.derived
+  given Schema[BulkResultDto] = Schema.derived
 
   given Schema[SoundInfoDto] = Schema.derived
   given Schema[SoundListDto] = Schema.derived
@@ -1025,6 +1190,7 @@ object Wire {
     case _: AppError.UnknownEffect     => "UNKNOWN_EFFECT"
     case _: AppError.ValidationFailed  => "VALIDATION_FAILED"
     case _: AppError.TooManyAttempts   => "TOO_MANY_ATTEMPTS"
+    case _: AppError.TwitchUnavailable => "TWITCH_UNAVAILABLE"
     case _: AppError.Internal          => "INTERNAL_ERROR"
   }
 }

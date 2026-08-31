@@ -184,6 +184,18 @@ object ChatMessage {
   * @param botLogin
   *   the login the access token belongs to, learned from Twitch's validate endpoint. Purely informational for the admin
   *   panel ("connected as ..."); rediscovered on every authenticated connect.
+  * @param broadcasterId
+  *   the channel's numeric Twitch user id, looked up once from [[channel]] and remembered. Twitch's moderation API
+  *   addresses a channel by id and never by name, so without this every moderation call would need a lookup first.
+  *   `None` means "not looked up yet", which is also what a channel change resets it to.
+  * @param botUserId
+  *   the numeric user id of the account the access token belongs to — the *moderator id* every moderation call carries,
+  *   because Twitch wants to know which moderator is acting, not only in which channel.
+  * @param scopes
+  *   the permissions the stored access token actually carries, learned from Twitch's validate endpoint. Empty means
+  *   "not known yet", which is not the same as "none": a token issued before this field existed still has its scopes,
+  *   they have simply never been read back. Safe to show in the admin panel — a scope name is a permission label, not a
+  *   credential.
   */
 final case class TwitchSettings(
     enabled: Boolean,
@@ -192,7 +204,10 @@ final case class TwitchSettings(
     clientSecret: Option[String],
     accessToken: Option[String],
     refreshToken: Option[String],
-    botLogin: Option[String]
+    botLogin: Option[String],
+    broadcasterId: Option[String] = None,
+    botUserId: Option[String] = None,
+    scopes: List[String] = Nil
 )
 
 object TwitchSettings {
@@ -208,7 +223,10 @@ object TwitchSettings {
       clientSecret = None,
       accessToken = None,
       refreshToken = None,
-      botLogin = None
+      botLogin = None,
+      broadcasterId = None,
+      botUserId = None,
+      scopes = Nil
     )
 
   /** A Twitch login: letters, digits and underscores, at most 25 of them. The rule Twitch itself applies to account

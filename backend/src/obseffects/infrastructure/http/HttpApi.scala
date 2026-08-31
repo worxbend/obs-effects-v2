@@ -12,7 +12,9 @@ import obseffects.application.{
   SettingsService,
   SoundService,
   SoundboardService,
-  TwitchService
+  TwitchAdminService,
+  TwitchService,
+  TwitchUnbanTarget
 }
 import obseffects.infrastructure.http.Wire.{ObsAudioViewDto, TwitchViewDto}
 import sttp.capabilities.WebSockets
@@ -56,6 +58,7 @@ class HttpApi(
     audioLevels: AudioLevelStream,
     settings: SettingsService,
     twitch: TwitchService,
+    twitchAdmin: TwitchAdminService,
     chatStream: ChatStream,
     sounds: SoundService,
     soundboard: SoundboardService,
@@ -157,6 +160,29 @@ class HttpApi(
     Endpoints.twitchOAuthComplete
       .handleSecurity(requireOperator)
       .handle(_ => request => twitch.completeOAuth(request.code, request.redirectUri).map(_ => twitchView())),
+    // The five moderation endpoints. Only the first is infallible: it describes the feature's availability, and
+    // "not set up" is a description rather than a failure. The other four refuse with 409 TWITCH_UNAVAILABLE in
+    // exactly the situations the first one reports, so nothing here can reach a client as a 500.
+    Endpoints.twitchAdminStatus
+      .handleSecurity(requireOperator)
+      .handle(_ => _ => Right(Wire.toDto(twitchAdmin.status()))),
+    Endpoints.twitchAdminBans
+      .handleSecurity(requireOperator)
+      .handle(_ => (cursor, limit) => twitchAdmin.bans(cursor, limit).map(Wire.toDto)),
+    Endpoints.twitchAdminBan
+      .handleSecurity(requireOperator)
+      .handle { _ => request =>
+        twitchAdmin.banMany(request.users, request.durationSeconds, request.reason).map(Wire.toDto)
+      },
+    Endpoints.twitchAdminUnban
+      .handleSecurity(requireOperator)
+      .handle { _ => request =>
+        val targets = request.targets.map(target => TwitchUnbanTarget(target.userId, target.login))
+        twitchAdmin.unbanMany(request.users, targets).map(Wire.toDto)
+      },
+    Endpoints.twitchAdminModerators
+      .handleSecurity(requireOperator)
+      .handle(_ => cursor => twitchAdmin.moderators(cursor).map(Wire.toDto)),
     Endpoints.chatHistory
       .handleSecurity(requireOperator)
       .handle(_ => (limit, before, beforeId) => twitch.chatHistory(limit, before, beforeId).map(_.map(Wire.toDto))),

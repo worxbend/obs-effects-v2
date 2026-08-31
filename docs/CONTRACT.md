@@ -468,6 +468,121 @@ tree shape, so the first save after an upgrade completes the migration.
 
 ---
 
+### 2.11 `TwitchAdminStatus`, bans and bulk results *(added in Phase 6)*
+
+The models behind the Twitch moderation dashboard: seeing the channel's ban list and moderators,
+and banning, timing out or unbanning people in bulk.
+
+**The whole feature is optional, and that is a rule rather than a nicety.** An installation with no
+Twitch application, no token, or a token that predates the moderation permissions must keep working
+exactly as before — chat overlays included. So "not set up" is modelled as an ordinary answer:
+`GET /api/twitch/admin/status` answers **200** in every case, and the four acting endpoints answer
+**409** `TWITCH_UNAVAILABLE` (§3) with a sentence saying what to fix. None of these situations is a
+`500`, and none of them stops the server starting.
+
+#### `TwitchAdminStatus`
+
+```jsonc
+{
+  "available": false,                   // can the dashboard act at all?
+  "channel": "worxbend",                // the configured channel login; "" when none is set
+  "broadcasterId": "123456",            // the channel's numeric Twitch id, or null until looked up
+  "moderatorLogin": "botty",            // the account whose token would act, or null
+  "grantedScopes": ["chat:read"],       // what the stored token carries; [] also means "never read back"
+  "missingScopes": [                    // which of the three this feature uses are absent
+    "moderator:read:banned_users",
+    "moderator:manage:banned_users",
+    "moderation:read"
+  ],
+  "reason": "No Twitch account is connected — connect one in Settings."  // null when available
+}
+```
+
+**When it is unavailable**, in the order the reason names them: Twitch chat is switched off; no
+channel is configured; the client id or client secret is not saved; no access token is stored; the
+stored token cannot be validated; the token is missing `moderator:read:banned_users` or
+`moderator:manage:banned_users`; or the channel login is one Twitch does not know.
+
+`moderation:read` is listed in `missingScopes` but does **not** make the dashboard unavailable — it
+is needed only by the moderator list, so its absence disables that one panel (which then answers
+`409 TWITCH_UNAVAILABLE`) and leaves the ban list and the bulk actions working.
+
+Ids and scope names are safe to expose: a scope name is a permission label, not a credential. The
+access token, refresh token and client secret still never leave the server, exactly as in §2.8's
+settings view.
+
+#### `TwitchBan`
+
+```jsonc
+{
+  "userId": "1234",                       // the banned account's numeric Twitch id
+  "login": "someviewer",                  // lowercase login
+  "displayName": "SomeViewer",            // may differ in case and script
+  "reason": "spam",                       // null when the moderator gave none
+  "moderatorLogin": "botty",              // who banned them, or null when Twitch did not say
+  "createdAt": "2026-08-27T10:00:00.000Z",// when the ban was placed, or null
+  "expiresAt": null                       // when a timeout lifts; null means a permanent ban
+}
+```
+
+**`expiresAt` is `null` for a permanent ban.** Twitch itself sends an empty string there; the
+backend normalises it to `null` so a client only ever has to check for one absent-value spelling.
+Both timestamps are the contract's ISO-8601 instants, like every other time in this document.
+
+#### `TwitchBanPage` and `TwitchModeratorPage`
+
+```jsonc
+{ "bans": [ TwitchBan, ... ], "cursor": "eyJiIjpudWxsL..." }        // cursor null on the last page
+{ "moderators": [ { "userId": "1", "login": "mod", "displayName": "Mod" } ], "cursor": null }
+```
+
+Paging is **cursor-based, not page-numbered**, because Twitch's is: pass the `cursor` from one
+response to get the page after it, and `null` means there is no page after this one. There is no
+total count, because Twitch does not send one — a client must not invent page numbers from these.
+
+#### `BulkResult`
+
+```jsonc
+{
+  "succeeded": 98,
+  "failed": 2,
+  "outcomes": [
+    { "login": "alice", "ok": true,  "message": null },
+    { "login": "bob",   "ok": false, "message": "The user specified in the user_id field is already banned" },
+    { "login": "ghost", "ok": false, "message": "no such Twitch account" }
+  ]
+}
+```
+
+**One failure never aborts a batch**, and that is the point of the feature: after a raid, ninety-
+eight of a hundred bans landing is the useful outcome, not an aborted request. Every user is
+attempted independently, every outcome is collected in the order the request listed them, and a
+partial success is a **200** whose counts tell the story — never an error. `message` carries
+Twitch's own words when Twitch refused (already banned, not currently banned), because that
+sentence is the answer to "why did this one not work?".
+
+#### `TwitchUnbanTarget` — unbanning an account that is already identified
+
+```jsonc
+{ "userId": "1234", "login": "someviewer" }
+```
+
+A row taken straight from `TwitchBan` (above): the numeric id the unban is issued against, plus the
+login as it read when that row was loaded, which the server uses **only** to label the outcome so
+the report still reads in names.
+
+**Why an id and not a name.** A Twitch login can be renamed, and once the old name is freed anybody
+else may register it. So a login is not a stable way of saying "this account": between the moment a
+ban list is drawn on screen and the moment the operator presses Unban, `someviewer` can have become
+a different person. Unbanning by login means looking the name up again and acting on whoever holds
+it now — which can free an account nobody selected while leaving the intended ban in place. The
+numeric id never moves between accounts, so a client that already has one must send it.
+
+A client should therefore send `targets` for anything it read out of the ban list, and `users` only
+for names a person typed or pasted, where there is no id to send and a lookup is the only option.
+
+---
+
 ## 3. Error envelope
 
 Every non-2xx response has exactly this body:
@@ -489,6 +604,7 @@ Every non-2xx response has exactly this body:
 | 404  | `NOT_FOUND`          | No route with that id or slug; no preset with that id; no effect with that id |
 | 409  | `SLUG_CONFLICT`      | Creating/updating a route with a slug another route already owns         |
 | 409  | `NAME_CONFLICT`      | Creating/updating a preset with a name another preset of the same effect already owns |
+| 409  | `TWITCH_UNAVAILABLE` | A Twitch moderation endpoint (§2.11) was called while the feature cannot act: not configured, no connected account, or a missing permission |
 | 422  | `UNKNOWN_EFFECT`     | `effectId` is not present in the inventory                               |
 | 422  | `VALIDATION_FAILED`  | Slug pattern, unknown param key, wrong param type, out-of-range number, bad canvas value, anything wrong inside an import file |
 | 429  | `TOO_MANY_ATTEMPTS`  | Too many failed logins in a row — see the login endpoint in §4          |
@@ -500,6 +616,8 @@ Every non-2xx response has exactly this body:
 - `UNKNOWN_EFFECT` → `{ "effectId": "no-such-effect" }`
 - `SLUG_CONFLICT` → `{ "slug": "main-camera" }`
 - `NAME_CONFLICT` → `{ "effectId": "plasma-field", "name": "Neon night" }`
+- `TWITCH_UNAVAILABLE` → **no `details`.** The `message` is the whole explanation: one plain
+  sentence naming what is missing and where to fix it, written for a person to read
 - `TOO_MANY_ATTEMPTS` → `{ "retryAfterSeconds": 60 }`, and the response also carries a
   `Retry-After: 60` header, which is the standard place a client looks for that number
 - `UNAUTHORIZED` → **no `details` at all.** A 401 must not report whether a password is configured,
@@ -562,6 +680,7 @@ it public means adding a row here with the reason it cannot be protected.**
 Everything else is protected: `GET /api/effects`, `POST /api/effects/sync`, all of
 `GET`/`POST`/`PUT`/`DELETE /api/routes…`, all of `/api/presets…`, both `/api/admin/…` endpoints,
 every `/api/settings/…` endpoint (the OBS pair and the four Twitch ones),
+the five `/api/twitch/admin/…` moderation endpoints,
 `GET /api/chat/history`, and the three sound management endpoints
 (`GET`/`POST /api/sounds`, `DELETE /api/sounds/{id}`).
 
@@ -1129,7 +1248,8 @@ The stored Twitch chat settings, and what that connection is currently doing.
     "clientId": "abcd1234",
     "clientSecretSet": true,
     "tokensSet": true,
-    "botLogin": "worxbend"
+    "botLogin": "worxbend",
+    "scopes": ["chat:read", "moderator:manage:banned_users"]
   },
   "status": {
     "state": "connected_authed",
@@ -1159,6 +1279,12 @@ Anonymous and authenticated are separate states because they answer the question
 is really asking: "did my token work?" A token that expires or is revoked does **not** take chat
 down — the backend refreshes it once per settings generation when it can (refresh token + client
 secret present), and otherwise falls back to `connected_anonymous` with the reason in `lastError`.
+
+`scopes` *(added in Phase 6)* lists what the stored token is allowed to do, as far as the server has
+been able to read it back from Twitch; `[]` means "not known yet", which is not the same as "none".
+It is safe to send for the same reason as `botLogin`: a scope name is a permission label, not a
+credential. It is what lets the settings page say that a token connected before the moderation
+feature existed still reads chat but cannot moderate until the account is reconnected.
 
 ### `PUT /api/settings/twitch` *(protected, added in Phase 4)*
 
@@ -1213,7 +1339,8 @@ stores them, and reconnects.
 ```
 
 The admin UI sends the operator to Twitch's authorize page
-(`https://id.twitch.tv/oauth2/authorize?response_type=code&client_id=...&redirect_uri=...&scope=chat:read`);
+(`https://id.twitch.tv/oauth2/authorize?response_type=code&client_id=...&redirect_uri=...&scope=...`), asking for
+`chat:read` plus the three moderation scopes the dashboard uses (§2.11), space-separated;
 Twitch redirects the browser back to the admin's callback route with `?code=...`, and that page
 POSTs the code here. `redirectUri` must be the exact value the authorize request used — Twitch
 requires the exchange to repeat it as proof the code was not intercepted.
@@ -1222,6 +1349,99 @@ requires the exchange to repeat it as proof the code was not intercepted.
 client secret are saved (the exchange needs the secret, so the flow is only offered once they are),
 and when Twitch rejects the code — the body's `message` carries Twitch's reason. `422` for a blank
 `code` or `redirectUri`. `401` without a session.
+
+### `GET /api/twitch/admin/status` *(protected, added in Phase 6)*
+
+**Always 200**, with a `TwitchAdminStatus` (§2.11) — including on a brand new installation that has
+never seen a Twitch credential. This is the endpoint the dashboard calls on mount to decide whether
+to render its panels or an explanation, so it has no failure branch to render.
+
+`401` without a session, like every protected endpoint.
+
+### `GET /api/twitch/admin/bans` *(protected, added in Phase 6)*
+
+| Query    | Meaning |
+|----------|---------|
+| `cursor` | Twitch's opaque next-page cursor from a previous response. Absent for the first page. |
+| `limit`  | How many entries, 1 to 100. Defaults to 100. Outside the range → `422 VALIDATION_FAILED`. |
+
+- **200** `TwitchBanPage` (§2.11), newest first.
+- **409** `TWITCH_UNAVAILABLE` when the feature cannot act, or when Twitch itself refused (its
+  message is carried through, rate limits included).
+- **422** `VALIDATION_FAILED` for a `limit` outside 1..100.
+
+### `POST /api/twitch/admin/bans` *(protected, added in Phase 6)*
+
+Bans or times out up to 100 accounts in one request.
+
+```jsonc
+{
+  "users": ["alice", "@Bob", "carol"],  // logins; a leading @ is stripped, blanks dropped,
+                                        // duplicates removed without regard to case
+  "durationSeconds": 600,               // OPTIONAL. Absent or null = permanent ban;
+                                        // 1..1209600 (14 days) = a timeout
+  "reason": "raid"                      // OPTIONAL, shown in the ban list
+}
+```
+
+- **200** `BulkResult` (§2.11) — including for a partial success, and including when every user
+  failed. The counts and the per-user `outcomes` are the result; the status code is not.
+- **409** `TWITCH_UNAVAILABLE` when the feature cannot act, or when Twitch refused to resolve the
+  names at all (nothing could be attempted).
+- **422** `VALIDATION_FAILED` when `users` names nobody after cleaning, when it names more than 100
+  accounts (100 is what a single Twitch lookup resolves), or when `durationSeconds` is outside
+  1..1209600.
+
+Requests are issued sequentially with a short pause between them, so a hundred-user batch stays
+inside Twitch's rate limit for the channel.
+
+### `POST /api/twitch/admin/unbans` *(protected, added in Phase 6)*
+
+Lifts the ban or timeout on up to 100 accounts, named either by login or by id.
+
+```jsonc
+{
+  "users": ["alice", "@Bob"],                     // OPTIONAL, default []. Logins, looked up before
+                                                  // acting; same cleaning as the bulk ban above
+  "targets": [{ "userId": "3", "login": "carol" }] // OPTIONAL, default []. TwitchUnbanTarget (§2.11)
+                                                  // rows, acted on directly by id — no lookup
+}
+```
+
+**Both fields are optional and default to an empty list**, so a client that sends only `users` — as
+every client written before `targets` existed does — keeps working exactly as before. At least one
+of the two must be non-empty after cleaning, and the **combined** count is what the 100-account
+limit applies to: 60 rows plus 41 logins is 101 and is refused, 60 plus 40 is allowed.
+
+**Prefer `targets` for anything read out of the ban list.** A `users` entry is resolved through
+Twitch at request time, and a login can have been renamed and re-registered by somebody else since
+the ban list was drawn — so a login-based unban can free an account the operator never selected.
+A `targets` entry carries the account's numeric id, which never moves between accounts, and is
+acted on with no lookup at all. Its `login` is used only to label the outcome. §2.11 spells the
+race out in full.
+
+**Ordering and duplicates.** Outcomes come back in a stable order: every `targets` outcome first,
+in the order they were sent, then every `users` outcome, in the order they were sent. A repeated
+`userId` counts once, and a repeated login counts once without regard to case, exactly as on the
+bulk ban. A login that happens to name the same account as one of the `targets` is **not** detected
+as a duplicate — spotting that would need the very lookup the id path exists to avoid — so such a
+request issues both calls and the second comes back as Twitch's "not banned" refusal for that one
+entry.
+
+Same responses as the bulk ban above; a `422 VALIDATION_FAILED` for an empty or over-long request
+names the field `users` in both cases, because that is the request's list of accounts as a whole.
+
+**Why a `POST` and not a `DELETE` with a body:** a `DELETE` carrying a list is awkward for both
+tapir and browsers — several HTTP stacks drop a `DELETE` body — and this is *one bulk action*
+rather than N resource deletions, so there is no single resource path to delete.
+
+### `GET /api/twitch/admin/moderators` *(protected, added in Phase 6)*
+
+Optional query parameter `cursor`, exactly as on the ban list.
+
+- **200** `TwitchModeratorPage` (§2.11).
+- **409** `TWITCH_UNAVAILABLE` when the feature cannot act, **and** when the stored token does not
+  carry `moderation:read` — the one scope that disables a single panel rather than the dashboard.
 
 ### `GET /api/presets` *(protected, added in Phase 2)*
 
@@ -1610,9 +1830,21 @@ The Twitch chat document *(added in Phase 4)* sits beside it under `_id: "twitch
   "clientSecret": "the-app-client-secret",
   "accessToken": "abc...",
   "refreshToken": "def...",
-  "botLogin": "worxbend"
+  "botLogin": "worxbend",
+  "broadcasterId": "123456",
+  "botUserId": "654321",
+  "scopes": ["chat:read", "moderator:manage:banned_users"]
 }
 ```
+
+The last three were added in Phase 6 for the moderation dashboard (§2.11). `broadcasterId` is the
+channel's numeric Twitch id, looked up once from `channel` and remembered — the moderation API
+addresses a channel by id and never by name — and it is cleared whenever the channel changes, so a
+renamed channel can never be moderated by the previous channel's id. `botUserId` and `scopes` are
+what the stored token turned out to be and to allow, learned from Twitch's validate endpoint and
+re-learned whenever a new token is stored. All three are absent when unknown, and a document
+written before Phase 6 reads back with them absent rather than failing — the same boot-safety rule
+as every other field here.
 
 The optional fields (`clientSecret`, `accessToken`, `refreshToken`, `botLogin`) are absent when not
 set, never `null`; every field is optional on read and falls back to its default, the same

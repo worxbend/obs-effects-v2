@@ -1,7 +1,7 @@
 package obseffects.infrastructure.twitch
 
 import io.circe.parser.parse
-import obseffects.application.{TwitchTokenExchanger, TwitchTokenPair}
+import obseffects.application.{TwitchTokenExchanger, TwitchTokenInfo, TwitchTokenPair}
 
 import java.net.http.{HttpClient, HttpRequest, HttpResponse}
 import java.net.{URI, URLEncoder}
@@ -63,7 +63,7 @@ final class TwitchOAuth(baseUrl: String = TwitchOAuth.DefaultBaseUrl) extends Tw
       )
     )
 
-  override def validateToken(accessToken: String): Either[String, String] = {
+  override def validateToken(accessToken: String): Either[String, TwitchTokenInfo] = {
     val request = HttpRequest
       .newBuilder(URI.create(s"$baseUrl/oauth2/validate"))
       // `OAuth`, not `Bearer`: the validate endpoint predates Twitch's move to standard schemes and still wants the
@@ -74,9 +74,22 @@ final class TwitchOAuth(baseUrl: String = TwitchOAuth.DefaultBaseUrl) extends Tw
       .build()
 
     describe(request).flatMap { body =>
-      parse(body).toOption
-        .flatMap(_.hcursor.get[String]("login").toOption)
-        .toRight("Twitch's validate response did not carry a login")
+      // One response answers three questions the rest of the system needs: whose token this is (`login`), which
+      // numeric account that is (`user_id`, the id every moderation call carries), and what the token may do
+      // (`scopes`). The login is the only one that has to be there — a validate answer without it is not one — while
+      // an older token that predates the scope list simply reports no scopes.
+      val cursor = parse(body).toOption.map(_.hcursor)
+      cursor.flatMap(_.get[String]("login").toOption) match {
+        case None        => Left("Twitch's validate response did not carry a login")
+        case Some(login) =>
+          Right(
+            TwitchTokenInfo(
+              login = login,
+              userId = cursor.flatMap(_.get[String]("user_id").toOption).getOrElse(""),
+              scopes = cursor.flatMap(_.get[List[String]]("scopes").toOption).getOrElse(Nil)
+            )
+          )
+      }
     }
   }
 

@@ -68,6 +68,12 @@ object ErrorMapping {
           Some(Json.obj("retryAfterSeconds" -> retryAfterSeconds.asJson))
         )
 
+      case AppError.TwitchUnavailable(reason) =>
+        // 409 rather than 503 or 500: nothing is broken, the request simply conflicts with the current state of the
+        // installation — no channel, no connected account, or a token without the permission this asks for. The
+        // reason is the whole payload, because it is a sentence written for a person to act on.
+        (StatusCode.Conflict, reason, None)
+
       case AppError.Internal(message, extra) =>
         val details = Option.when(extra.nonEmpty)(Json.obj(extra.toList.map((k, v) => k -> v.asJson)*))
         (StatusCode.InternalServerError, message, details)
@@ -99,9 +105,10 @@ object ErrorMapping {
           case Some(effectId) => AppError.NameConflict(effectId, stringField(error.details, "name"))
           case None           => AppError.SoundNameConflict(stringField(error.details, "name"))
         }
-      case "UNKNOWN_EFFECT"    => AppError.UnknownEffect(stringField(error.details, "effectId"))
-      case "VALIDATION_FAILED" => AppError.ValidationFailed(issuesFrom(error.details))
-      case "TOO_MANY_ATTEMPTS" =>
+      case "TWITCH_UNAVAILABLE" => AppError.TwitchUnavailable(error.message)
+      case "UNKNOWN_EFFECT"     => AppError.UnknownEffect(stringField(error.details, "effectId"))
+      case "VALIDATION_FAILED"  => AppError.ValidationFailed(issuesFrom(error.details))
+      case "TOO_MANY_ATTEMPTS"  =>
         // The header is the authority — it is the value an HTTP client acts on — with the body's
         // copy as the fallback for a response that lost the header on the way through a proxy.
         AppError.TooManyAttempts(

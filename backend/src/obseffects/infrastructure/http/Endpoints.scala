@@ -384,6 +384,69 @@ object Endpoints {
           "400 otherwise."
       )
 
+  /** The moderation dashboard's first call, and the one endpoint here that cannot fail.
+    *
+    * It answers `200` whether or not anything is configured, because "nothing is configured" is the normal state of a
+    * fresh installation and the page needs to render an explanation rather than an error. Every *other* endpoint below
+    * answers `409 TWITCH_UNAVAILABLE` in exactly the situations this one describes with `available: false`.
+    */
+  val twitchAdminStatus: Endpoint[Option[String], Unit, AppError, TwitchAdminStatusDto, Any] =
+    secureBase.get
+      .in("twitch" / "admin" / "status")
+      .out(jsonBody[TwitchAdminStatusDto])
+      .summary("Whether the Twitch moderation dashboard can work, and why not when it cannot")
+      .description(
+        "Always 200. `available: false` carries a `reason` sentence and, when permissions are what is missing, the " +
+          "`missingScopes` a reconnection would grant."
+      )
+
+  val twitchAdminBans: Endpoint[Option[String], (Option[String], Option[Int]), AppError, TwitchBanPageDto, Any] =
+    secureBase.get
+      .in("twitch" / "admin" / "bans")
+      .in(query[Option[String]]("cursor").description("Twitch's opaque next-page cursor from a previous response"))
+      .in(query[Option[Int]]("limit").description("How many entries, 1 to 100. Defaults to 100."))
+      .out(jsonBody[TwitchBanPageDto])
+      .summary("One page of the channel's ban list, newest first")
+      .description(
+        "Paging is cursor-based, because Twitch's is: pass the `cursor` from the previous response to get the page " +
+          "after it, and a `null` cursor means there is no page after this one."
+      )
+
+  val twitchAdminBan: Endpoint[Option[String], TwitchBanRequestDto, AppError, BulkResultDto, Any] =
+    secureBase.post
+      .in("twitch" / "admin" / "bans")
+      .in(jsonBody[TwitchBanRequestDto])
+      .out(jsonBody[BulkResultDto])
+      .summary("Ban or time out up to 100 accounts in one request")
+      .description(
+        "`durationSeconds` absent or null bans permanently; 1 to 1209600 times the account out for that long. One " +
+          "user's failure never stops the rest — every outcome is reported, in the order the request listed them, " +
+          "so a partial success answers 200 and is read from the counts."
+      )
+
+  /** A `POST` to its own path rather than a `DELETE` with a body, and that is a deliberate choice worth writing down: a
+    * `DELETE` carrying a list is awkward for tapir and for browsers (several HTTP stacks drop a `DELETE` body), and
+    * this is *one bulk action* rather than N resource deletions, so it has no single resource path to delete anyway.
+    */
+  val twitchAdminUnban: Endpoint[Option[String], TwitchUnbanRequestDto, AppError, BulkResultDto, Any] =
+    secureBase.post
+      .in("twitch" / "admin" / "unbans")
+      .in(jsonBody[TwitchUnbanRequestDto])
+      .out(jsonBody[BulkResultDto])
+      .summary("Lift the ban or timeout on up to 100 accounts in one request")
+      .description("Same partial-success reporting as the bulk ban above.")
+
+  val twitchAdminModerators: Endpoint[Option[String], Option[String], AppError, TwitchModeratorPageDto, Any] =
+    secureBase.get
+      .in("twitch" / "admin" / "moderators")
+      .in(query[Option[String]]("cursor").description("Twitch's opaque next-page cursor from a previous response"))
+      .out(jsonBody[TwitchModeratorPageDto])
+      .summary("One page of the channel's moderators")
+      .description(
+        "Needs the `moderation:read` permission in addition to the two the dashboard always needs; without it this " +
+          "one endpoint answers 409 TWITCH_UNAVAILABLE while the rest keep working."
+      )
+
   val getObsAudioSettings: Endpoint[Option[String], Unit, AppError, ObsAudioViewDto, Any] =
     secureBase.get
       .in("settings" / "obs-audio")
@@ -545,6 +608,11 @@ object Endpoints {
       updateTwitchSettings,
       twitchTokens,
       twitchOAuthComplete,
+      twitchAdminStatus,
+      twitchAdminBans,
+      twitchAdminBan,
+      twitchAdminUnban,
+      twitchAdminModerators,
       listSounds,
       uploadSound,
       deleteSound,

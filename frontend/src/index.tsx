@@ -10,6 +10,7 @@ import InventoryPage from "~/pages/InventoryPage";
 import PresetsPage from "~/pages/PresetsPage";
 import BackupPage from "~/pages/BackupPage";
 import SettingsPage from "~/pages/SettingsPage";
+import TwitchAdminPage from "~/pages/TwitchAdminPage";
 import TwitchCallbackPage from "~/pages/TwitchCallbackPage";
 import LoginPage from "~/pages/LoginPage";
 import NotFoundPage from "~/pages/NotFoundPage";
@@ -88,6 +89,16 @@ const Router = createRouter({
         { path: "/presets", component: PresetsPage },
         { path: "/backup", component: BackupPage },
         { path: "/settings", component: SettingsPage },
+        /*
+         * The Twitch moderation dashboard. A child of "/admin" like every other admin page, so it
+         * inherits the shell's session gate: the endpoints behind it can ban people, and nothing
+         * that can ban people is reachable without a session.
+         *
+         * It is listed above "/twitch/callback" only for readability — the router ranks branches
+         * by how specific they are, so the two static segments of the callback path win over this
+         * one regardless of the order here.
+         */
+        { path: "/twitch", component: TwitchAdminPage },
         /*
          * Where Twitch's OAuth redirect lands after "Connect with Twitch" on the Settings page.
          * A child of "/admin" on purpose: the completion endpoint it calls is protected, and only
