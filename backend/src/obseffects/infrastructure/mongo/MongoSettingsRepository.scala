@@ -2,7 +2,7 @@ package obseffects.infrastructure.mongo
 
 import com.mongodb.client.model.{Filters, ReplaceOptions, UpdateOptions, Updates}
 import obseffects.application.SettingsRepository
-import obseffects.domain.{ObsAudioSettings, TwitchSettings}
+import obseffects.domain.{ObsAudioSettings, Soundboard, TwitchSettings}
 
 import scala.jdk.CollectionConverters.*
 
@@ -85,6 +85,27 @@ final class MongoSettingsRepository(connection: MongoConnection) extends Setting
       )
     }
   }
+
+  override def loadSoundboard(): Soundboard =
+    Option(collection.find(Filters.eq("_id", MongoSettingsRepository.SoundboardId)).first())
+      .map(BsonCodecs.soundboardFromDocument)
+      .getOrElse(Soundboard.Empty)
+
+  override def saveSoundboard(soundboard: Soundboard): Soundboard = {
+    val document = BsonCodecs
+      .soundboardToDocument(soundboard)
+      .append("_id", MongoSettingsRepository.SoundboardId)
+
+    // The same upsert-always shape as the two documents above, and again a document of its own: the soundboard is
+    // written by exactly one form in the admin UI, and sharing a document with either neighbour would let their
+    // writers race it.
+    val _ = collection.replaceOne(
+      Filters.eq("_id", MongoSettingsRepository.SoundboardId),
+      document,
+      new ReplaceOptions().upsert(true)
+    )
+    soundboard
+  }
 }
 
 object MongoSettingsRepository {
@@ -98,4 +119,7 @@ object MongoSettingsRepository {
 
   /** The fixed key of the Twitch chat settings document, sitting beside the OBS one in the same collection. */
   val TwitchId = "twitch"
+
+  /** The fixed key of the soundboard document, third in the same collection. */
+  val SoundboardId = "soundboard"
 }

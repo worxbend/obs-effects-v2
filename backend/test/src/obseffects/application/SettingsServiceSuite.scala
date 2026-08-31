@@ -1,7 +1,7 @@
 package obseffects.application
 
 import munit.FunSuite
-import obseffects.domain.{ObsAudioSettings, ObsConnectionState, TwitchSettings}
+import obseffects.domain.{ObsAudioSettings, ObsConnectionState, Soundboard, TwitchSettings}
 
 import scala.collection.mutable
 
@@ -20,6 +20,7 @@ final class FakeSettingsRepository(
 ) extends SettingsRepository {
   private var stored: ObsAudioSettings = initial
   private var storedTwitch: TwitchSettings = initialTwitch
+  private var storedSoundboard: Soundboard = Soundboard.Empty
   override def loadObsAudio(): ObsAudioSettings = stored
   override def saveObsAudio(settings: ObsAudioSettings): ObsAudioSettings = { stored = settings; settings }
   override def loadTwitch(): TwitchSettings = storedTwitch
@@ -34,6 +35,8 @@ final class FakeSettingsRepository(
       refreshToken = refreshToken.orElse(storedTwitch.refreshToken),
       botLogin = botLogin.orElse(storedTwitch.botLogin)
     )
+  override def loadSoundboard(): Soundboard = storedSoundboard
+  override def saveSoundboard(soundboard: Soundboard): Soundboard = { storedSoundboard = soundboard; soundboard }
 }
 
 /** Tests for saving the OBS connection settings.

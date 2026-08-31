@@ -1,7 +1,8 @@
 package obseffects.infrastructure.http
 
 import io.circe.generic.semiauto.{deriveDecoder, deriveEncoder}
-import io.circe.{Decoder, DecodingFailure, Encoder}
+import io.circe.syntax.*
+import io.circe.{Decoder, DecodingFailure, Encoder, Json}
 import obseffects.application.{
   AppError,
   EffectSyncOutcome,
@@ -799,6 +800,157 @@ object Wire {
   given Decoder[SoundListDto] = deriveDecoder
   given Encoder[SoundListDto] = deriveEncoder
 
+  // -------------------------------------------------------------------------------------------
+  // Soundboard
+  // -------------------------------------------------------------------------------------------
+
+  /** One node of a rule's condition tree, exactly as both directions of the wire speak it: a tagged union on `type`,
+    * flattened into one shape whose non-`type` fields are all optional. One DTO serves requests and responses alike —
+    * the request side needs the optionality so a malformed node reaches the validator as a 422 naming the field, and
+    * the response side fills in whichever fields the node's type actually has, dropping the rest from the JSON.
+    */
+  final case class SoundboardConditionDto(
+      `type`: String,
+      op: Option[String],
+      negate: Option[Boolean],
+      children: Option[List[SoundboardConditionDto]],
+      value: Option[String]
+  )
+
+  /** One soundboard rule as the API answers it: every field present, `id` always the server-assigned 8-hex string. */
+  final case class SoundboardRuleDto(
+      id: String,
+      label: String,
+      condition: SoundboardConditionDto,
+      sound: String,
+      enabled: Boolean
+  )
+
+  /** The response of both soundboard endpoints. An envelope object rather than a bare array, for the same room-to-grow
+    * reason as `SoundListDto`.
+    */
+  final case class SoundboardDto(rules: List[SoundboardRuleDto])
+
+  /** One rule as `PUT /api/soundboard` receives it. `id` is optional — absent for a freshly added rule — and the
+    * condition tree keeps its raw strings so an unknown `type` or `op` word is a 422 naming the field, not a 400.
+    */
+  final case class SoundboardRuleRequestDto(
+      id: Option[String],
+      label: String,
+      condition: SoundboardConditionDto,
+      sound: String,
+      enabled: Boolean
+  )
+
+  final case class SoundboardRequestDto(rules: List[SoundboardRuleRequestDto])
+
+  def toDto(condition: SoundboardCondition): SoundboardConditionDto = condition match {
+    case SoundboardCondition.Group(op, negate, children) =>
+      SoundboardConditionDto(
+        `type` = "group",
+        op = Some(op.wireName),
+        negate = Some(negate),
+        children = Some(children.map(toDto)),
+        value = None
+      )
+    case SoundboardCondition.Command(value)  => leafDto("command", value)
+    case SoundboardCondition.Contains(value) => leafDto("contains", value)
+    case SoundboardCondition.Regex(value)    => leafDto("regex", value)
+    case SoundboardCondition.Emote(value)    => leafDto("emote", value)
+    case SoundboardCondition.Emoji(value)    => leafDto("emoji", value)
+    case SoundboardCondition.Event(value)    => leafDto("event", value)
+    case SoundboardCondition.User(value)     => leafDto("user", value)
+  }
+
+  private def leafDto(`type`: String, value: String): SoundboardConditionDto =
+    SoundboardConditionDto(`type` = `type`, op = None, negate = None, children = None, value = Some(value))
+
+  def toDto(soundboard: Soundboard): SoundboardDto =
+    SoundboardDto(
+      soundboard.rules.map(rule =>
+        SoundboardRuleDto(
+          id = rule.id,
+          label = rule.label,
+          condition = toDto(rule.condition),
+          sound = rule.sound,
+          enabled = rule.enabled
+        )
+      )
+    )
+
+  def toRaw(dto: SoundboardConditionDto): RawSoundboardCondition =
+    RawSoundboardCondition(
+      `type` = dto.`type`,
+      op = dto.op,
+      negate = dto.negate,
+      children = dto.children.map(_.map(toRaw)),
+      value = dto.value
+    )
+
+  def toRaw(dto: SoundboardRequestDto): RawSoundboard =
+    RawSoundboard(
+      dto.rules.map(rule =>
+        RawSoundboardRule(
+          id = rule.id,
+          label = rule.label,
+          condition = toRaw(rule.condition),
+          sound = rule.sound,
+          enabled = rule.enabled
+        )
+      )
+    )
+
+  // The condition codecs are written by hand rather than derived: `deriveDecoder` resolves the instance for
+  // `List[SoundboardConditionDto]` while the very `given` being defined is still initialising, which a recursive type
+  // cannot survive. `Decoder.instance`/`Encoder.instance` defer the self-reference to decode/encode time, where the
+  // instance exists.
+  /** How deep the condition decoder will follow `children` before refusing the document. The real nesting limit is the
+    * validator's (5 levels, with its friendly message); this one exists only so a pathologically deep payload — tens of
+    * thousands of nested groups fit in a small request body — fails with an ordinary decode error instead of a
+    * StackOverflowError, since the decoder below recurses once per level. Generous on purpose: no payload the validator
+    * could ever accept comes near it.
+    */
+  private val MaxConditionDecodeDepth = 32
+
+  private def soundboardConditionDecoder(depth: Int): Decoder[SoundboardConditionDto] = Decoder.instance(cursor =>
+    if (depth > MaxConditionDecodeDepth)
+      Left(DecodingFailure(s"conditions may nest at most $MaxConditionDecodeDepth levels deep", cursor.history))
+    else
+      for {
+        tpe <- cursor.get[String]("type")
+        op <- cursor.get[Option[String]]("op")
+        negate <- cursor.get[Option[Boolean]]("negate")
+        children <- cursor.get[Option[List[SoundboardConditionDto]]]("children")(using
+          Decoder.decodeOption(using Decoder.decodeList(using soundboardConditionDecoder(depth + 1)))
+        )
+        value <- cursor.get[Option[String]]("value")
+      } yield SoundboardConditionDto(tpe, op, negate, children, value)
+  )
+
+  given Decoder[SoundboardConditionDto] = soundboardConditionDecoder(depth = 1)
+
+  given Encoder[SoundboardConditionDto] = Encoder.instance(dto =>
+    Json.fromFields(
+      List("type" -> Json.fromString(dto.`type`)) ++
+        dto.op.map(op => "op" -> Json.fromString(op)) ++
+        dto.negate.map(negate => "negate" -> Json.fromBoolean(negate)) ++
+        dto.children.map(children => "children" -> Json.fromValues(children.map(_.asJson))) ++
+        dto.value.map(value => "value" -> Json.fromString(value))
+    )
+  )
+
+  given Decoder[SoundboardRuleDto] = deriveDecoder
+  given Encoder[SoundboardRuleDto] = deriveEncoder
+
+  given Decoder[SoundboardDto] = deriveDecoder
+  given Encoder[SoundboardDto] = deriveEncoder
+
+  given Decoder[SoundboardRuleRequestDto] = deriveDecoder
+  given Encoder[SoundboardRuleRequestDto] = deriveEncoder
+
+  given Decoder[SoundboardRequestDto] = deriveDecoder
+  given Encoder[SoundboardRequestDto] = deriveEncoder
+
   given Schema[JsonValue] = Schema.any[JsonValue].description("any JSON value")
   given Schema[io.circe.Json] = Schema.any[io.circe.Json].description("any JSON value")
 
@@ -820,6 +972,15 @@ object Wire {
 
   given Schema[SoundInfoDto] = Schema.derived
   given Schema[SoundListDto] = Schema.derived
+
+  // `Schema.derived` cannot terminate on a self-referential case class, so the condition tree is documented as "any
+  // JSON" the same way `JsonValue` is; the contract (docs/CONTRACT.md §2.10) carries the real shape.
+  given Schema[SoundboardConditionDto] =
+    Schema.any[SoundboardConditionDto].description("one node of a soundboard condition tree; see the contract, §2.10")
+  given Schema[SoundboardRuleDto] = Schema.derived
+  given Schema[SoundboardDto] = Schema.derived
+  given Schema[SoundboardRuleRequestDto] = Schema.derived
+  given Schema[SoundboardRequestDto] = Schema.derived
 
   given Schema[ParamSpecDto] = Schema.derived
   given Schema[EffectDescriptorDto] = Schema.derived

@@ -27,6 +27,8 @@ import type {
   SessionInfo,
   SoundInfo,
   SoundListResponse,
+  Soundboard,
+  SoundboardWriteRequest,
   WireErrorCode,
   RouteConfig,
   RouteWriteRequest,
@@ -685,6 +687,38 @@ export function deleteSound(id: string, signal?: AbortSignal): Promise<void> {
  */
 export function soundAudioUrl(idOrName: string): string {
   return `${API_BASE}/sounds/${encodeURIComponent(idOrName)}/audio`;
+}
+
+/* ------------------------------------------------------------------ */
+/* Soundboard                                                          */
+/* ------------------------------------------------------------------ */
+
+/**
+ * `GET /api/soundboard` — the chat-triggered sound rules.
+ *
+ * **Public**, unlike the sound listing: the soundboard overlay effect reads it from an OBS browser
+ * source, which cannot sign in — the same reason the audio bytes endpoint is public. It carries no
+ * secrets, only rule labels, condition trees and sound names.
+ */
+export function getSoundboard(signal?: AbortSignal): Promise<Soundboard> {
+  return requestJson<Soundboard>({ method: "GET", path: "/soundboard", signal });
+}
+
+/**
+ * `PUT /api/soundboard` — replace the whole rule list.
+ *
+ * Protected, like every other admin write. This is a replacement, not a patch: any rule you leave
+ * out is gone. Rules may omit their `id` — the server assigns fresh ones — and keeping a stored
+ * rule's id keeps the overlay's per-rule cooldown state stable across edits.
+ *
+ * Throws `ApiError` 422 `VALIDATION_FAILED` with `details.issues[]` pointing at individual rules
+ * (`rules[2].condition.children[0].value`), which `ApiError.issues` exposes for the form.
+ */
+export function updateSoundboard(
+  body: SoundboardWriteRequest,
+  signal?: AbortSignal,
+): Promise<Soundboard> {
+  return requestJson<Soundboard>({ method: "PUT", path: "/soundboard", body, signal });
 }
 
 /* ------------------------------------------------------------------ */

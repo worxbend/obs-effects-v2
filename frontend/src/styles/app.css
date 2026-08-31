@@ -1294,3 +1294,168 @@ body.renderer {
   color: var(--warn);
   flex-shrink: 0;
 }
+
+/* ---------------------------------------------------------------- */
+/* The soundboard query builder (Settings page)                      */
+/* ---------------------------------------------------------------- */
+
+/* One rule: a header row above its nested condition tree. */
+.sb-rule {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px;
+  background: var(--bg-raised);
+}
+
+.sb-rule-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* The label input gets the spare width; the sound picker a sensible share. */
+.sb-rule-head input[type="text"] {
+  flex: 2 1 160px;
+  width: auto;
+}
+
+.sb-rule-head select {
+  flex: 1 1 140px;
+  width: auto;
+}
+
+.sb-rule-head .checkbox-row {
+  margin: 0;
+  flex-shrink: 0;
+}
+
+/* One group of conditions — nested groups indent with a coloured spine,
+   the visual for "this is one bracket of the boolean expression". */
+.sb-group {
+  margin-top: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+}
+
+.sb-group .sb-group {
+  margin-left: 14px;
+  border-left-color: var(--accent);
+}
+
+/* A negated group reads as an exclusion, so its spine warns. */
+.sb-group-negated {
+  border-left-color: var(--danger);
+}
+
+.sb-group .sb-group.sb-group-negated {
+  border-left-color: var(--danger);
+}
+
+.sb-group-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.sb-group-head select {
+  width: auto;
+}
+
+.sb-group-word {
+  color: var(--text-dim);
+  font-size: 13px;
+}
+
+.sb-group-remove {
+  margin-left: auto;
+}
+
+.sb-group-foot {
+  margin-top: 8px;
+}
+
+.sb-children {
+  display: grid;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.sb-condition-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sb-condition-row select {
+  flex: 0 1 170px;
+  width: auto;
+}
+
+.sb-condition-row input[type="text"] {
+  flex: 1 1 160px;
+  width: auto;
+}
+
+/* Toggle chips: the NOT switch on groups and the has-emote / has-emoji
+   probes on the test box. "On" borrows the accent so state is unmissable. */
+.sb-chip.sb-chip-on {
+  background: var(--accent);
+  border-color: var(--accent-strong);
+  color: var(--accent-ink);
+}
+
+/* The per-rule verdict from the live test box. */
+.sb-badge {
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-strong);
+  color: var(--text-faint);
+  flex-shrink: 0;
+}
+
+.sb-badge-match {
+  border-color: var(--ok);
+  color: var(--ok);
+}
+
+.sb-test {
+  margin-top: var(--gap);
+  padding-top: var(--gap);
+  border-top: 1px solid var(--border);
+}
+
+.sb-test-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.sb-test-row input[type="text"] {
+  flex: 2 1 200px;
+  width: auto;
+}
+
+.sb-test-row select {
+  flex: 0 1 120px;
+  width: auto;
+}
+
+/* The fallback list of validation issues a save came back with. */
+.sb-issues {
+  margin: 10px 0 0;
+  padding-left: 20px;
+  font-size: 12px;
+  color: var(--danger);
+}
+
+.sb-issues code {
+  font-family: var(--mono);
+}

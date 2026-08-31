@@ -346,6 +346,128 @@ the *description* of the file; the bytes themselves come from `GET /api/sounds/{
 
 ---
 
+### 2.10 `Soundboard` *(added in Phase 5, condition trees in Phase 5.1)*
+
+The soundboard: an admin-configurable, **ordered** list of rules, each mapping a *condition tree*
+over chat messages to a stored sound (§2.9), read by the `soundboard` overlay effect. It is edited
+and stored as one document — order is part of the data, because the first matching rule wins.
+
+One rule:
+
+```jsonc
+{
+  "id": "0badcafe",       // server-assigned, 8 hex chars, stable across edits when the client sends it back
+  "label": "Drum roll",   // 1–64 chars, trimmed, display name
+  "condition": { /* a condition tree, see below */ },
+  "sound": "drum",        // sound NAME (§2.9), not id, 1–64 chars; existence NOT enforced
+  "enabled": true
+}
+```
+
+The whole board, as both endpoints below send and receive it:
+
+```jsonc
+{ "rules": [ /* rules as above; max 100, ordered; first match wins */ ] }
+```
+
+- **`sound` is a name, not an id**, for the same reason effect parameters reference sounds by name:
+  a name survives a delete-and-reupload while an id does not. Whether a sound of that name exists is
+  deliberately not enforced — rules may be written before the files they point at are uploaded, and
+  the overlay treats a missing sound as silence, not as an error.
+- **`id` is server-assigned.** A rule sent without one (or with a value that is not 8 lowercase hex
+  characters) gets a fresh id, which the response reports; a rule sent with its stored id keeps it,
+  so the overlay can key per-rule state (a cooldown, say) by an id that survives reordering and
+  relabelling. Two rules claiming the same id in one request are a 422 (`rules[i].id`).
+
+#### The condition tree
+
+A rule's `condition` is a recursive tagged union, discriminated by `type`. A *group* combines child
+conditions; every other type is a *leaf* testing one property of a chat message:
+
+```jsonc
+// A group: matches when its children combine truthily under `op`, inverted when `negate` is true.
+{ "type": "group", "op": "and",     // "and" | "or"
+  "negate": false,                  // NOT(the combined result); optional in requests, defaults to false
+  "children": [ /* 1–20 conditions, groups included — this is the recursion */ ] }
+
+// Leaves — each carries exactly one `value` string:
+{ "type": "command",  "value": "!drum" }     // first whitespace-delimited token == value, case-insensitive
+{ "type": "contains", "value": "hype" }      // case-insensitive substring of the full text
+{ "type": "regex",    "value": "\\bhype\\b" } // JS `new RegExp(value, "iu")` tested against the full text
+{ "type": "emote",    "value": "" }          // "" = message has ANY Twitch emote; else an emote NAMED value
+{ "type": "emoji",    "value": "" }          // "" = message has ANY unicode emoji; else that exact emoji grapheme
+{ "type": "event",    "value": "chat" }      // "chat" | "sub" | "gift_sub" | "cheer" | "raid"
+{ "type": "user",     "value": "worxbend" }  // sender username OR displayName == value, case-insensitive
+```
+
+Bounds, enforced at save time: groups nest at most **5** levels deep (counting the root group as
+level 1) and have **1–20** children — an empty group is forbidden, an empty `and` would vacuously
+match everything and an empty `or` nothing; one rule's whole tree holds at most **50** nodes,
+groups and leaves together. Leaf values: `command`, `contains` and `user` are 1–200 characters,
+with no whitespace inside a `command` (it is a single first-word token); `regex` is 1–200
+characters and must compile; `emote` and `emoji` are 0–200 characters, where the empty string is
+meaningful ("any"); `event` must be one of the five words above. Leaves have no `negate` — to
+negate one, wrap it in a one-child group. One negation mechanism, on groups only, keeps both the
+model and the query-builder UI simple.
+
+#### Matching semantics
+
+The overlay effect and this document use identical wording on purpose — the effect is the thing
+that actually evaluates these trees, in the browser, against the frontend `ChatMessage` (its full
+`text`, `parts`, `event`, `username` and `displayName`). The backend never evaluates a condition;
+it only stores and validates them:
+
+- **command**: the message's first whitespace-delimited token, compared case-insensitively and
+  exactly to `value` (stored as typed, recommend a leading `!`).
+- **contains**: `value` is a case-insensitive substring of the full message text.
+- **regex**: JavaScript `new RegExp(value, "iu")` tested against the full message text. The backend
+  validates with `java.util.regex.Pattern.compile` at save time for early feedback only; a pattern
+  that later fails to compile in the browser makes that leaf evaluate **false** (reported once via
+  `console.warn`), never the whole rule crash.
+- **emote** / **emoji**: tested against the message's image `parts` — an *emote* part originates
+  from a Twitch emote, an *emoji* part from Twemoji (a unicode emoji). An empty `value` matches any
+  part of that kind; a non-empty `value` compares the emote's name (case-sensitively — Twitch emote
+  names are) or the emoji's original grapheme.
+- **event**: the message's event kind equals `value`. A `chat` leaf matches ordinary messages;
+  `sub`, `gift_sub`, `cheer` and `raid` match those Twitch events, whose `text` the other leaves
+  still see.
+- **user**: the sender's `username` *or* `displayName` equals `value`, case-insensitively.
+- **group**: `and` requires every child to match, `or` at least one; `negate: true` inverts the
+  combined result, after combining.
+- Rules are evaluated in stored order over enabled rules only; the first rule whose tree matches
+  wins.
+
+#### `GET /api/soundboard` *(public)*
+
+`200` with the stored board — `{ "rules": [] }` until someone saves one. Public for the standing
+reason: the `soundboard` overlay effect runs in an OBS browser source, which cannot sign in, and
+what this exposes is command words and sound names — the same sensitivity tier as the sounds
+themselves. Listed in the table in §4.
+
+#### `PUT /api/soundboard` *(protected)*
+
+Replaces the whole board. Send every rule, in order, keeping the `id` of rules that already
+existed and omitting it (or sending anything invalid) for new ones. `200` with the stored board,
+fresh ids included. Validation failures are reported together in one **422** `VALIDATION_FAILED`
+whose issue `field`s use dotted paths into the request — into the tree too:
+`rules[3].condition.children[0].value` points at the first child of rule 3's root group. Reported
+problems: more than 100 rules; a `label` or `sound` empty after trimming or over 64 characters; an
+unknown condition `type` or group `op` (the message names the accepted words); a group without
+children, with more than 20, or nested deeper than 5 levels; a tree of more than 50 nodes
+(reported on `rules[i].condition`); a leaf `value` outside its bounds above, a `command` containing
+whitespace, a `regex` failing to compile (the message carries the compiler's description), an
+`event` outside the five words; a duplicated rule id. Nothing is written unless the whole request
+is valid.
+
+Stored in the `settings` collection as its own document, `_id: "soundboard"`, beside the OBS audio
+and Twitch documents (§6) and for the same one-writer-per-document reason. A rule stored by the
+flat Phase 5 shape — `trigger`/`pattern` fields instead of `condition` — is migrated on read: a
+`command` trigger becomes a `{ "type": "command" }` leaf and a `regex` trigger a
+`{ "type": "regex" }` leaf, which is exactly what those triggers meant. Writing always writes the
+tree shape, so the first save after an upgrade completes the migration.
+
+---
+
 ## 3. Error envelope
 
 Every non-2xx response has exactly this body:
@@ -434,6 +556,7 @@ it public means adding a row here with the reason it cannot be protected.**
 | `GET /api/audio/levels/events` | **An OBS browser source cannot log in**, and every audio-reactive effect reads this. It carries loudness numbers and OBS input names — never the obs-websocket URL, and never its password, which is exactly why the WebSocket client lives in the backend and not in the page. |
 | `GET /api/chat/ws` | **An OBS browser source cannot log in**, and every chat overlay reads this. It carries public Twitch chat content and connection-state words — never the channel's tokens and never the client secret, which stay on the server for exactly the same reason as the obs-websocket password. |
 | `GET /api/sounds/{id}/audio` | **An OBS browser source cannot log in**, and the chat overlay effect plays these. It carries a stored notification sound — the least sensitive thing this server holds — and never any credential. This mirrors the audio-levels precedent above. Only the *download* is public: listing, uploading and deleting sounds are protected. |
+| `GET /api/soundboard` | **An OBS browser source cannot log in**, and the `soundboard` overlay effect reads the rules to know what to listen for. It carries command words and sound names — the same sensitivity tier as the sounds those names point at. Only the *read* is public: writing the board is protected. |
 | `GET /docs`, `GET /docs/docs.yaml` | The generated API documentation. It describes shapes, not data, and it is outside `/api`. Mentioned here so the list is exhaustive. |
 
 Everything else is protected: `GET /api/effects`, `POST /api/effects/sync`, all of

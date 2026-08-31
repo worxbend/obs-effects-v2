@@ -171,6 +171,17 @@ trait SettingsRepository {
       refreshToken: Option[String] = None,
       botLogin: Option[String] = None
   ): Unit
+
+  /** The stored soundboard, or [[obseffects.domain.Soundboard.Empty]] if nothing is stored yet — a fresh installation
+    * has rules the moment someone writes some, and an empty list until then, so no caller has to invent what
+    * "unconfigured" means.
+    */
+  def loadSoundboard(): Soundboard
+
+  /** Writes the soundboard, creating the document if this is the first save. Stored as its own document beside the OBS
+    * audio and Twitch ones, for the same one-writer-per-document reason those two are separate.
+    */
+  def saveSoundboard(soundboard: Soundboard): Soundboard
 }
 
 /** Reading and writing the recorded chat history.

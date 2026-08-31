@@ -250,9 +250,39 @@ object Endpoints {
           "cached forever, because the bytes under one id are immutable."
       )
 
+  /** The soundboard: the ordered rules mapping chat commands and message regexes to stored sounds.
+    *
+    * Public, for the standing reason: the `soundboard` overlay effect runs in an OBS browser source, which cannot sign
+    * in, and it has to read the rules to know what to listen for. What it exposes is command words and sound names —
+    * content on the same sensitivity tier as the sounds themselves. See the table in `docs/CONTRACT.md` §4.
+    */
+  val getSoundboard: PublicEndpoint[Unit, AppError, SoundboardDto, Any] =
+    base.get
+      .in("soundboard")
+      .out(jsonBody[SoundboardDto])
+      .summary("The soundboard rules — the read the soundboard overlay effect makes")
+      .description(
+        "Public: an OBS browser source cannot sign in. Rules are ordered; the overlay evaluates enabled ones top to " +
+          "bottom against each chat message and the first match wins."
+      )
+
   // -------------------------------------------------------------------------------------------
   // Protected endpoints — every one of these can also answer 401 UNAUTHORIZED
   // -------------------------------------------------------------------------------------------
+
+  /** Writing the soundboard is a whole-document PUT rather than per-rule endpoints because order is part of the data —
+    * first match wins — and a list whose order matters is easiest to keep consistent when every save carries all of it.
+    */
+  val updateSoundboard: Endpoint[Option[String], SoundboardRequestDto, AppError, SoundboardDto, Any] =
+    secureBase.put
+      .in("soundboard")
+      .in(jsonBody[SoundboardRequestDto])
+      .out(jsonBody[SoundboardDto])
+      .summary("Replace the whole soundboard")
+      .description(
+        "Send every rule, in order, keeping the `id` of rules that already existed; a rule without an id is assigned " +
+          "a fresh one, which the response reports. At most 100 rules."
+      )
 
   val listSounds: Endpoint[Option[String], Unit, AppError, SoundListDto, Any] =
     secureBase.get
@@ -518,6 +548,8 @@ object Endpoints {
       listSounds,
       uploadSound,
       deleteSound,
-      soundAudio
+      soundAudio,
+      getSoundboard,
+      updateSoundboard
     )
 }

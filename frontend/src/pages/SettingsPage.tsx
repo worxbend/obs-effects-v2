@@ -10,14 +10,17 @@ import {
 } from "solid-js";
 import type { JSX } from "@solidjs/web";
 import {
+  ApiError,
   audioLevelsUrl,
   chatWsUrl,
   deleteSound,
   describeError,
   getObsAudioSettings,
+  getSoundboard,
   getTwitchSettings,
   listSounds,
   soundAudioUrl,
+  updateSoundboard,
   submitTwitchTokens,
   updateObsAudioSettings,
   updateTwitchSettings,
@@ -26,16 +29,26 @@ import {
 import type {
   AudioLevels,
   ChatMessage,
+  ChatPart,
   ChatWsFrame,
   ObsAudioSettingsRequest,
   ObsAudioView,
   ObsConnectionState,
   SoundInfo,
+  Soundboard,
+  SoundboardCondition,
+  SoundboardEventValue,
+  SoundboardGroupCondition,
+  SoundboardLeafCondition,
+  SoundboardLeafType,
+  SoundboardRuleWrite,
   TwitchConnectionState,
   TwitchConnectionStatus,
   TwitchSettingsRequest,
   TwitchView,
+  ValidationIssue,
 } from "~/types/contract";
+import { compileSoundboard, matchRule } from "~/effects/sdk/soundboard";
 import { Banner } from "~/components/Banner";
 
 /**
@@ -82,6 +95,7 @@ export default function SettingsPage(): JSX.Element {
       <TwitchCard />
       <ChatPreviewCard />
       <SoundsCard />
+      <SoundboardCard />
     </>
   );
 }
@@ -1069,6 +1083,864 @@ function SoundList(props: { sounds: SoundInfo[]; onChanged: () => void }): JSX.E
       </Show>
       <Banner kind="error" message={error()} />
     </>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* The soundboard                                                      */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The chat-triggered soundboard: an ordered list of rules, each mapping a *condition tree* over
+ * incoming chat messages to a stored sound. The Soundboard effect reads the saved list (publicly,
+ * so an OBS browser source can) and plays the matched clip while bursting the message's emotes.
+ *
+ * The editor below is a nested query builder: every rule owns a tree of And/Or groups whose rows
+ * test one thing about a message (its first word, a substring, a regex, an emote, an emoji, its
+ * event kind, its sender). A live test box at the bottom runs the *same* evaluator the overlay
+ * effect uses (`effects/sdk/soundboard.ts`), so "match" here means "would play there".
+ *
+ * Same shape as the cards above: a loader keyed on a reload token, a `keyed` editor seeded once
+ * from the load, re-run after every save so the form shows the server-assigned rule ids.
+ */
+function SoundboardCard(): JSX.Element {
+  /** Bumped after every save so the loader below re-reads the stored rules. */
+  const [reloadToken, setReloadToken] = createSignal(0);
+
+  const loaded = createMemo(async (): Promise<[Soundboard, SoundInfo[]]> => {
+    reloadToken();
+    // The sound listing rides along so the sound picker can offer real names instead of a blind
+    // text box. The two are one load because the editor needs both before it can render.
+    return Promise.all([getSoundboard(), listSounds()]);
+  });
+
+  return (
+    <section class="card">
+      <div class="card-title">
+        <h2>Soundboard</h2>
+      </div>
+      <p>
+        Rules for the Soundboard effect: when a chat message matches a rule's conditions, the
+        chosen sound plays on the overlay. Rules are checked top to bottom over enabled rules only,
+        and the first match wins — order the specific ones above the broad ones.
+      </p>
+      <Errored
+        fallback={(error: unknown) => <Banner kind="error" message={describeError(error)} />}
+      >
+        <Loading fallback={<p class="muted">Loading soundboard…</p>}>
+          <Show when={loaded()} keyed>
+            {([board, sounds]: [Soundboard, SoundInfo[]]) => (
+              <SoundboardEditor
+                board={board}
+                sounds={sounds}
+                onSaved={() => setReloadToken((n) => n + 1)}
+              />
+            )}
+          </Show>
+        </Loading>
+      </Errored>
+    </section>
+  );
+}
+
+/* --- Condition-tree helpers, pure and local to the builder ------------------------------- */
+
+/** The condition-tree limits the backend enforces; the UI stops at them rather than saving into
+ * a guaranteed validation error. */
+const MAX_GROUP_CHILDREN = 20;
+const MAX_TREE_DEPTH = 5;
+
+const SOUNDBOARD_EVENTS: SoundboardEventValue[] = ["chat", "sub", "gift_sub", "cheer", "raid"];
+
+const LEAF_TYPES: SoundboardLeafType[] = [
+  "command",
+  "contains",
+  "regex",
+  "emote",
+  "emoji",
+  "event",
+  "user",
+];
+
+const LEAF_TYPE_LABELS: Record<SoundboardLeafType, string> = {
+  command: "Command",
+  contains: "Contains text",
+  regex: "Regex",
+  emote: "Has emote",
+  emoji: "Has emoji",
+  event: "Event type",
+  user: "User",
+};
+
+/** Example values, one per leaf kind. Emote and emoji say "(any …)" because for those two an
+ * empty value is meaningful — it matches a message carrying *any* emote or emoji. */
+const LEAF_PLACEHOLDERS: Record<SoundboardLeafType, string> = {
+  command: "!drum",
+  contains: "hype",
+  regex: "\\bhype\\b",
+  emote: "(any emote)",
+  emoji: "(any emoji)",
+  event: "",
+  user: "worxbend",
+};
+
+function emptyLeaf(): SoundboardLeafCondition {
+  return { type: "command", value: "" };
+}
+
+/** A fresh group with one blank condition — an empty group cannot be saved, so a new one starts
+ * with the row the operator is about to fill in anyway. */
+function emptyGroup(): SoundboardGroupCondition {
+  return { type: "group", op: "and", negate: false, children: [emptyLeaf()] };
+}
+
+/**
+ * The rule's root condition, normalised to a group. The wire model allows a bare leaf at the
+ * root, but the builder always renders an And/Or header — and a one-child "and" group means
+ * exactly the same thing as its lone child, so wrapping changes nothing the matcher can see.
+ */
+function asGroup(condition: SoundboardCondition | undefined): SoundboardGroupCondition {
+  if (condition === undefined) return emptyGroup();
+  if (condition.type === "group") return condition;
+  return { type: "group", op: "and", negate: false, children: [condition] };
+}
+
+/**
+ * Returns a new tree with the node at `path` (child indexes from the root) replaced by `fn`'s
+ * result; `null` from `fn` removes the node. Everything on the way is copied, nothing is
+ * mutated — the signal holding the root sees a fresh object and re-renders.
+ */
+function updateConditionAt(
+  node: SoundboardCondition,
+  path: number[],
+  fn: (node: SoundboardCondition) => SoundboardCondition | null,
+): SoundboardCondition | null {
+  if (path.length === 0) return fn(node);
+  if (node.type !== "group") return node; // A path cannot descend into a leaf.
+  const head = path[0];
+  const rest = path.slice(1);
+  const children: SoundboardCondition[] = [];
+  node.children.forEach((child, index) => {
+    if (index !== head) {
+      children.push(child);
+      return;
+    }
+    const next = updateConditionAt(child, rest, fn);
+    if (next !== null) children.push(next);
+  });
+  return { ...node, children };
+}
+
+/**
+ * The soundboard editor — an Attio-style nested query builder.
+ *
+ * Every list whose rows contain text inputs is rendered with an *unkeyed* `<For keyed={false}>`: the state
+ * updates immutably (each keystroke produces a new rule/condition object), and a keyed `<For>`
+ * would treat the new object as a new row, remount it, and drop the input's focus mid-word.
+ * The unkeyed form keys by position, so the same DOM input stays put and only its value updates.
+ */
+function SoundboardEditor(props: {
+  board: Soundboard;
+  sounds: SoundInfo[];
+  onSaved: () => void;
+}): JSX.Element {
+  // Seeded once, owned by the operator's editing afterwards — same pattern and same `keyed`
+  // justification as `ObsAudioForm` above. Rules keep their server ids so a save preserves them,
+  // which is what keeps the running effect's per-rule cooldowns stable across edits. Root
+  // conditions are normalised to groups so every rule renders an And/Or header.
+  const initial = untrack(() => props.board.rules);
+
+  const [rules, setRules] = createSignal<SoundboardRuleWrite[]>(
+    initial.map((rule) => ({ ...rule, condition: asGroup(rule.condition) })),
+  );
+  /** Positions of the rules whose condition builder is folded away. Positional on purpose — it
+   * follows the visual rows the operator collapsed, and move/remove adjust it below. */
+  const [collapsed, setCollapsed] = createSignal<ReadonlySet<number>>(new Set<number>());
+  const [saving, setSaving] = createSignal(false);
+  const [error, setError] = createSignal<string | null>(null);
+  const [issues, setIssues] = createSignal<ValidationIssue[]>([]);
+  const [saved, setSaved] = createSignal(false);
+
+  /** Replaces one field of one rule, immutably. */
+  const patch = (index: number, changes: Partial<SoundboardRuleWrite>): void => {
+    setRules((list) => list.map((rule, i) => (i === index ? { ...rule, ...changes } : rule)));
+  };
+
+  /** Rewrites one node of one rule's condition tree (`fn` returning `null` removes the node).
+   * The root has no remove button, so `null` can never bubble all the way up. */
+  const patchCondition = (
+    index: number,
+    path: number[],
+    fn: (node: SoundboardCondition) => SoundboardCondition | null,
+  ): void => {
+    setRules((list) =>
+      list.map((rule, i) => {
+        if (i !== index) return rule;
+        const next = updateConditionAt(asGroup(rule.condition), path, fn);
+        return next === null ? rule : { ...rule, condition: next };
+      }),
+    );
+  };
+
+  const toggleCollapsed = (index: number): void => {
+    setCollapsed((set) => {
+      const next = new Set(set);
+      if (!next.delete(index)) next.add(index);
+      return next;
+    });
+  };
+
+  const remove = (index: number): void => {
+    setRules((list) => list.filter((_, i) => i !== index));
+    // Collapsed positions above the removed rule shift up by one.
+    setCollapsed((set) => {
+      const next = new Set<number>();
+      for (const i of set) {
+        if (i < index) next.add(i);
+        else if (i > index) next.add(i - 1);
+      }
+      return next;
+    });
+  };
+
+  /** Swaps a rule with its neighbour. Order is meaning here — first match wins — so the two
+   * buttons are the editor for it. The collapsed marker travels with the rule. */
+  const move = (index: number, delta: -1 | 1): void => {
+    const target = index + delta;
+    setRules((list) => {
+      if (target < 0 || target >= list.length) return list;
+      const next = list.slice();
+      const a = next[index];
+      const b = next[target];
+      if (a === undefined || b === undefined) return list;
+      next[index] = b;
+      next[target] = a;
+      return next;
+    });
+    setCollapsed((set) => {
+      if (target < 0 || target >= rules().length) return set;
+      const hadA = set.has(index);
+      const hadB = set.has(target);
+      if (hadA === hadB) return set;
+      const next = new Set(set);
+      if (hadA) {
+        next.delete(index);
+        next.add(target);
+      } else {
+        next.delete(target);
+        next.add(index);
+      }
+      return next;
+    });
+  };
+
+  const add = (): void => {
+    // No `id`: the server assigns one on save. Enabled by default — a rule someone writes is a
+    // rule they want live; the checkbox is for switching one off without deleting it.
+    setRules((list) => [...list, { label: "", condition: emptyGroup(), sound: "", enabled: true }]);
+  };
+
+  /*
+   * One audio element for every ▶ button, reused: pressing a second preview stops the first
+   * instead of layering over it, and nothing leaks when the card unmounts.
+   */
+  const preview = new Audio();
+  onCleanup(() => {
+    preview.pause();
+    preview.removeAttribute("src");
+    preview.load();
+  });
+
+  const playPreview = (soundName: string): void => {
+    if (soundName.trim() === "") return;
+    preview.src = soundAudioUrl(soundName.trim());
+    preview.currentTime = 0;
+    // A missing sound or a blocked autoplay is not worth a banner — the button did nothing, which
+    // is itself the answer, and the rule may name a clip that is not uploaded yet.
+    void preview.play().catch(() => undefined);
+  };
+
+  /** The message a save's validation error attached to this exact dotted field, if any. */
+  const issueFor = (field: string): string | null =>
+    issues().find((issue) => issue.field === field)?.message ?? null;
+
+  /* --- The live test box: the shared evaluator run against a synthetic message ---------- */
+
+  const [testText, setTestText] = createSignal("");
+  const [testEvent, setTestEvent] = createSignal<SoundboardEventValue>("chat");
+  const [testEmote, setTestEmote] = createSignal(false);
+  const [testEmoji, setTestEmoji] = createSignal(false);
+
+  /** Whether the test box holds anything worth evaluating. No input, no badges — an all-blank
+   * probe matching a "contains ''" rule would be noise, not information. */
+  const testActive = (): boolean =>
+    testText().trim() !== "" || testEmote() || testEmoji() || testEvent() !== "chat";
+
+  /** A synthetic ChatMessage shaped like what the chat bus delivers, fed to the shared matcher. */
+  const testMessage = createMemo((): ChatMessage => {
+    const parts: ChatPart[] = [];
+    if (testText() !== "") parts.push({ type: "text", text: testText() });
+    if (testEmote()) {
+      parts.push({
+        type: "image",
+        name: "TestEmote",
+        // A Twitch-CDN-shaped URL: the matcher tells emotes and emoji apart by URL origin.
+        url: "https://static-cdn.jtvnw.net/emoticons/v2/0/default/dark/2.0",
+      });
+    }
+    if (testEmoji()) {
+      parts.push({
+        type: "image",
+        name: "🎉",
+        url: "https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f389.png",
+      });
+    }
+    return {
+      id: "test",
+      at: 0,
+      channel: "test",
+      username: "testuser",
+      displayName: "TestUser",
+      color: "#ffffff",
+      seed: 0,
+      event: testEvent(),
+      text: testText(),
+      parts,
+      data: {},
+    };
+  });
+
+  /** Every rule compiled on its own, enabled or not, so each one can show a badge. This is the
+   * SAME `compileSoundboard`/`matchRule` the overlay effect runs — that is the whole point. */
+  const prepared = createMemo(() =>
+    rules().map(
+      (rule, i) =>
+        compileSoundboard({
+          rules: [{ ...rule, id: rule.id ?? `unsaved-${i}`, enabled: true }],
+        })[0] ?? null,
+    ),
+  );
+
+  const testResultFor = (index: number): boolean | null => {
+    if (!testActive()) return null;
+    const rule = prepared()[index];
+    if (rule === undefined || rule === null) return null;
+    return matchRule(rule, testMessage());
+  };
+
+  /** Which rule would actually fire: the first *enabled* match, mirroring the overlay. */
+  const firingIndex = createMemo((): number => {
+    if (!testActive()) return -1;
+    const msg = testMessage();
+    const list = rules();
+    for (let i = 0; i < list.length; i++) {
+      if (list[i]?.enabled !== true) continue;
+      const rule = prepared()[i];
+      if (rule !== undefined && rule !== null && matchRule(rule, msg)) return i;
+    }
+    return -1;
+  });
+
+  async function save(event: SubmitEvent): Promise<void> {
+    event.preventDefault();
+    setSaving(true);
+    setError(null);
+    setSaved(false);
+    try {
+      await updateSoundboard({ rules: rules() });
+      setIssues([]);
+      setSaved(true);
+      props.onSaved();
+    } catch (cause) {
+      // Field-level issues light up next to the offending row; anything that cannot be placed
+      // (or a non-validation failure) still lands in the list and banner below.
+      setIssues(cause instanceof ApiError ? cause.issues : []);
+      setError(describeError(cause));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <form onSubmit={(event) => void save(event)}>
+      <Show when={rules().length === 0}>
+        <p class="muted">No rules yet — add one below.</p>
+      </Show>
+
+      <For each={rules()} keyed={false}>
+        {(rule, index) => (
+          <SoundboardRuleEditor
+            rule={rule}
+            index={index}
+            count={() => rules().length}
+            sounds={props.sounds}
+            collapsed={() => collapsed().has(index)}
+            testResult={() => testResultFor(index)}
+            fires={() => firingIndex() === index}
+            issueFor={issueFor}
+            onToggleCollapsed={() => toggleCollapsed(index)}
+            onPatch={(changes) => patch(index, changes)}
+            onCondition={(path, fn) => patchCondition(index, path, fn)}
+            onMove={(delta) => move(index, delta)}
+            onRemove={() => remove(index)}
+            onPreview={playPreview}
+          />
+        )}
+      </For>
+
+      <div class="btn-row">
+        <button type="button" class="btn" onClick={add} disabled={rules().length >= 100}>
+          Add rule
+        </button>
+        <button type="submit" class="btn btn-primary" disabled={saving()}>
+          {saving() ? "Saving…" : "Save soundboard"}
+        </button>
+        <Show when={saved()}>
+          <span class="muted">Saved.</span>
+        </Show>
+      </div>
+      <p class="field-help">
+        Each rule fires when its conditions hold for a message: <em>Command</em> compares the first
+        word case-insensitively ("!drum" as chat would type it), <em>Contains text</em> looks for a
+        case-insensitive substring, <em>Regex</em> is a JavaScript regular expression over the
+        whole text, <em>Has emote</em>/<em>Has emoji</em> match any (or one named) emote or emoji,
+        and groups nest with And/Or and NOT. Running overlays pick up a save within a minute.
+      </p>
+
+      <div class="field sb-test">
+        <label class="field-label" for="sb-test-text">
+          Try a message against the rules
+        </label>
+        <div class="sb-test-row">
+          <input
+            id="sb-test-text"
+            type="text"
+            value={testText()}
+            spellcheck={false}
+            onInput={(event) => setTestText(event.currentTarget.value)}
+            placeholder="type a test message…"
+          />
+          <select
+            value={testEvent()}
+            onChange={(event) => {
+              const raw = event.currentTarget.value;
+              setTestEvent(
+                (SOUNDBOARD_EVENTS as string[]).includes(raw)
+                  ? (raw as SoundboardEventValue)
+                  : "chat",
+              );
+            }}
+            aria-label="Test event kind"
+          >
+            <For each={SOUNDBOARD_EVENTS}>{(kind) => <option value={kind}>{kind}</option>}</For>
+          </select>
+          <button
+            type="button"
+            class={["btn", "btn-sm", "sb-chip", { "sb-chip-on": testEmote() }]}
+            onClick={() => setTestEmote((on) => !on)}
+          >
+            has emote
+          </button>
+          <button
+            type="button"
+            class={["btn", "btn-sm", "sb-chip", { "sb-chip-on": testEmoji() }]}
+            onClick={() => setTestEmoji((on) => !on)}
+          >
+            has emoji
+          </button>
+        </div>
+        <p class="field-help">
+          Evaluated with the exact matcher the overlay runs, so a "match" badge on a rule above
+          means the overlay would react — and "plays" marks the one that wins (first enabled
+          match). The chips stand in for a message carrying <em>some</em> emote or emoji;
+          conditions naming a specific one only match real messages that carry it. The test sender
+          is "TestUser".
+        </p>
+      </div>
+
+      <Show when={issues().length > 0}>
+        {/* The fallback list: every issue verbatim, including any whose dotted path did not line
+            up with a rendered row (for example after rows were edited since the failed save). */}
+        <ul class="sb-issues">
+          <For each={issues()}>
+            {(issue) => (
+              <li>
+                <code>{issue.field}</code> — {issue.message}
+              </li>
+            )}
+          </For>
+        </ul>
+      </Show>
+      <Banner kind="error" message={error()} />
+    </form>
+  );
+}
+
+/** One rule: a header row (label, sound, preview, enabled, order, collapse, delete, test badge)
+ * above its recursive condition builder. */
+function SoundboardRuleEditor(props: {
+  rule: () => SoundboardRuleWrite;
+  index: number;
+  count: () => number;
+  sounds: SoundInfo[];
+  collapsed: () => boolean;
+  /** `null` while the test box is blank, otherwise whether the test message matches this rule. */
+  testResult: () => boolean | null;
+  /** Whether this rule is the one that would actually play (first enabled match). */
+  fires: () => boolean;
+  issueFor: (field: string) => string | null;
+  onToggleCollapsed: () => void;
+  onPatch: (changes: Partial<SoundboardRuleWrite>) => void;
+  onCondition: (
+    path: number[],
+    fn: (node: SoundboardCondition) => SoundboardCondition | null,
+  ) => void;
+  onMove: (delta: -1 | 1) => void;
+  onRemove: () => void;
+  onPreview: (soundName: string) => void;
+}): JSX.Element {
+  /** Whether the rule references a sound the listing does not know. Such a rule saves fine — the
+   * contract does not enforce existence — but the picker falls back to a text box for it. */
+  const isKnownSound = (name: string): boolean =>
+    name === "" || props.sounds.some((sound) => sound.name === name);
+
+  /** Whether the sound is typed by hand instead of picked from the listing. Decided once, from
+   * whether the saved value is a listed sound — never re-derived while the operator types, so
+   * the text box cannot be swapped out (and lose focus) mid-word just because the typed prefix
+   * happens to equal a listed name. The button next to the picker flips the mode explicitly. */
+  const [soundFreeText, setSoundFreeText] = createSignal(
+    untrack(() => !isKnownSound(props.rule().sound)),
+  );
+
+  const field = (suffix: string): string => `rules[${props.index}].${suffix}`;
+  const rootGroup = (): SoundboardGroupCondition => asGroup(props.rule().condition);
+
+  return (
+    <div class="field sb-rule">
+      <div class="sb-rule-head">
+        <button
+          type="button"
+          class="btn btn-sm"
+          onClick={() => props.onToggleCollapsed()}
+          title={props.collapsed() ? "Expand the conditions" : "Collapse the conditions"}
+        >
+          {props.collapsed() ? "▸" : "▾"}
+        </button>
+        <input
+          type="text"
+          value={props.rule().label}
+          spellcheck={false}
+          onInput={(event) => props.onPatch({ label: event.currentTarget.value })}
+          placeholder="Label, e.g. Drum roll"
+          aria-label="Rule label"
+        />
+        <Show
+          when={!soundFreeText()}
+          fallback={
+            <input
+              type="text"
+              value={props.rule().sound}
+              spellcheck={false}
+              onInput={(event) => props.onPatch({ sound: event.currentTarget.value })}
+              placeholder="Sound name"
+              aria-label="Sound name (typed by hand)"
+            />
+          }
+        >
+          <select
+            value={props.rule().sound}
+            onChange={(event) => props.onPatch({ sound: event.currentTarget.value })}
+            aria-label="Sound"
+          >
+            <option value="">— pick a sound —</option>
+            <For each={props.sounds}>{(sound) => <option value={sound.name}>{sound.name}</option>}</For>
+          </select>
+        </Show>
+        <button
+          type="button"
+          class="btn btn-sm"
+          onClick={() => setSoundFreeText(!soundFreeText())}
+          title={
+            soundFreeText()
+              ? "Pick the sound from the listing instead"
+              : "Type a sound name by hand (for a sound not in the listing)"
+          }
+        >
+          {soundFreeText() ? "List" : "Type"}
+        </button>
+        <button
+          type="button"
+          class="btn btn-sm"
+          onClick={() => props.onPreview(props.rule().sound)}
+          disabled={props.rule().sound.trim() === ""}
+          title="Play this sound"
+        >
+          ▶
+        </button>
+        <label class="checkbox-row">
+          <input
+            type="checkbox"
+            checked={props.rule().enabled}
+            onChange={(event) => props.onPatch({ enabled: event.currentTarget.checked })}
+          />
+          <span>Enabled</span>
+        </label>
+        <Show when={props.testResult() !== null}>
+          <span class={["sb-badge", { "sb-badge-match": props.testResult() === true }]}>
+            {props.testResult() === true ? (props.fires() ? "match · plays" : "match") : "no match"}
+          </span>
+        </Show>
+        <button
+          type="button"
+          class="btn btn-sm"
+          onClick={() => props.onMove(-1)}
+          disabled={props.index === 0}
+          title="Move up (rules are checked top to bottom)"
+        >
+          ↑
+        </button>
+        <button
+          type="button"
+          class="btn btn-sm"
+          onClick={() => props.onMove(1)}
+          disabled={props.index === props.count() - 1}
+          title="Move down"
+        >
+          ↓
+        </button>
+        <button type="button" class="btn btn-sm" onClick={() => props.onRemove()}>
+          Remove
+        </button>
+      </div>
+
+      <Show when={props.issueFor(field("label"))}>
+        {(message) => <p class="field-error">{message()}</p>}
+      </Show>
+      <Show when={props.issueFor(field("sound"))}>
+        {(message) => <p class="field-error">{message()}</p>}
+      </Show>
+
+      <Show when={!props.collapsed()}>
+        <SoundboardGroupEditor
+          group={rootGroup}
+          depth={1}
+          path={[]}
+          fieldPath={field("condition")}
+          issueFor={props.issueFor}
+          update={props.onCondition}
+          onRemove={null}
+        />
+      </Show>
+    </div>
+  );
+}
+
+/**
+ * One group of the condition tree: the "If all/any of the following are true" header with its
+ * And/Or dropdown and NOT toggle, the child rows (conditions and nested groups, via an unkeyed `<For>` —
+ * see `SoundboardEditor`'s comment), and the add buttons. Renders itself recursively for
+ * subgroups, each one indented a level deeper.
+ */
+function SoundboardGroupEditor(props: {
+  group: () => SoundboardGroupCondition;
+  /** 1 for the rule's root group; subgroups stop appearing at {@link MAX_TREE_DEPTH}. */
+  depth: number;
+  /** Child indexes from the root down to this group — the address `update` rewrites at. */
+  path: number[];
+  /** Dotted path of this group in the save request, e.g. "rules[2].condition.children[0]". */
+  fieldPath: string;
+  update: (path: number[], fn: (node: SoundboardCondition) => SoundboardCondition | null) => void;
+  issueFor: (field: string) => string | null;
+  /** `null` for the root group, which cannot be removed. */
+  onRemove: (() => void) | null;
+}): JSX.Element {
+  const setSelf = (changes: Partial<SoundboardGroupCondition>): void => {
+    props.update(props.path, (node) => (node.type === "group" ? { ...node, ...changes } : node));
+  };
+
+  const addChild = (child: SoundboardCondition): void => {
+    props.update(props.path, (node) =>
+      node.type === "group" ? { ...node, children: [...node.children, child] } : node,
+    );
+  };
+
+  const full = (): boolean => props.group().children.length >= MAX_GROUP_CHILDREN;
+
+  return (
+    <div class={["sb-group", { "sb-group-negated": props.group().negate }]}>
+      <div class="sb-group-head">
+        <span class="sb-group-word">If</span>
+        <button
+          type="button"
+          class={["btn", "btn-sm", "sb-chip", { "sb-chip-on": props.group().negate }]}
+          onClick={() => setSelf({ negate: !props.group().negate })}
+          title="Invert this group: match when its combined result is false"
+        >
+          NOT
+        </button>
+        <select
+          value={props.group().op}
+          onChange={(event) => setSelf({ op: event.currentTarget.value === "or" ? "or" : "and" })}
+          aria-label="Combine the conditions with"
+        >
+          <option value="and">all</option>
+          <option value="or">any</option>
+        </select>
+        <span class="sb-group-word">of the following are true</span>
+        <Show when={props.onRemove !== null}>
+          <button
+            type="button"
+            class="btn btn-sm sb-group-remove"
+            onClick={() => props.onRemove?.()}
+          >
+            Remove group
+          </button>
+        </Show>
+      </div>
+
+      <Show when={props.issueFor(`${props.fieldPath}.children`)}>
+        {(message) => <p class="field-error">{message()}</p>}
+      </Show>
+
+      <div class="sb-children">
+        <For each={props.group().children} keyed={false}>
+          {(child, childIndex) => {
+            const childPath = [...props.path, childIndex];
+            const childField = `${props.fieldPath}.children[${childIndex}]`;
+            // A group must never end up with zero children: the backend rejects an empty
+            // `children` array, while the shared evaluator would treat it as matching
+            // everything — so the last remaining child of a group cannot be removed.
+            const lastChild = (): boolean => props.group().children.length <= 1;
+            return (
+              <Show
+                when={child().type === "group"}
+                fallback={
+                  <SoundboardConditionRow
+                    condition={() => child() as SoundboardLeafCondition}
+                    field={childField}
+                    issueFor={props.issueFor}
+                    onChange={(leaf) => props.update(childPath, () => leaf)}
+                    onRemove={() => props.update(childPath, () => null)}
+                    removable={() => !lastChild()}
+                  />
+                }
+              >
+                <SoundboardGroupEditor
+                  group={() => child() as SoundboardGroupCondition}
+                  depth={props.depth + 1}
+                  path={childPath}
+                  fieldPath={childField}
+                  update={props.update}
+                  issueFor={props.issueFor}
+                  onRemove={lastChild() ? null : () => props.update(childPath, () => null)}
+                />
+              </Show>
+            );
+          }}
+        </For>
+      </div>
+
+      <div class="btn-row sb-group-foot">
+        <button type="button" class="btn btn-sm" onClick={() => addChild(emptyLeaf())} disabled={full()}>
+          + Add condition
+        </button>
+        {/* Hidden (not disabled) at the depth cap: at level 5 a subgroup is not a thing that can
+            exist, so there is nothing to explain with a greyed-out button. */}
+        <Show when={props.depth < MAX_TREE_DEPTH}>
+          <button
+            type="button"
+            class="btn btn-sm"
+            onClick={() => addChild(emptyGroup())}
+            disabled={full()}
+          >
+            + Add subgroup
+          </button>
+        </Show>
+      </div>
+    </div>
+  );
+}
+
+/** One leaf row: a type dropdown and the right value editor for that type — a select of the five
+ * event kinds for "event", a text box for everything else. */
+function SoundboardConditionRow(props: {
+  condition: () => SoundboardLeafCondition;
+  /** Dotted path of this condition in the save request, for placing validation errors. */
+  field: string;
+  issueFor: (field: string) => string | null;
+  onChange: (leaf: SoundboardLeafCondition) => void;
+  onRemove: () => void;
+  /** `false` for a group's last remaining condition, which must stay — see the caller's comment. */
+  removable: () => boolean;
+}): JSX.Element {
+  const retype = (raw: string): void => {
+    const type = (LEAF_TYPES as string[]).includes(raw) ? (raw as SoundboardLeafType) : "command";
+    // The typed value survives a kind switch (retyping "!drum" because the dropdown moved would
+    // be hostile), except into "event", whose value must be one of the five kinds.
+    const kept = props.condition().value;
+    const value =
+      type === "event" ? ((SOUNDBOARD_EVENTS as string[]).includes(kept) ? kept : "chat") : kept;
+    props.onChange({ type, value });
+  };
+
+  const rowError = (): string | null =>
+    props.issueFor(`${props.field}.value`) ??
+    props.issueFor(`${props.field}.type`) ??
+    props.issueFor(props.field);
+
+  return (
+    <div class="sb-condition">
+      <div class="sb-condition-row">
+        <select
+          value={props.condition().type}
+          onChange={(event) => retype(event.currentTarget.value)}
+          aria-label="Condition kind"
+        >
+          <For each={LEAF_TYPES}>
+            {(type) => <option value={type}>{LEAF_TYPE_LABELS[type]}</option>}
+          </For>
+        </select>
+        <Show
+          when={props.condition().type === "event"}
+          fallback={
+            <input
+              type="text"
+              value={props.condition().value}
+              spellcheck={false}
+              onInput={(event) =>
+                props.onChange({ ...props.condition(), value: event.currentTarget.value })
+              }
+              placeholder={LEAF_PLACEHOLDERS[props.condition().type]}
+              aria-label="Condition value"
+            />
+          }
+        >
+          <select
+            value={props.condition().value}
+            onChange={(event) =>
+              props.onChange({ ...props.condition(), value: event.currentTarget.value })
+            }
+            aria-label="Event kind"
+          >
+            <For each={SOUNDBOARD_EVENTS}>{(kind) => <option value={kind}>{kind}</option>}</For>
+          </select>
+        </Show>
+        <button
+          type="button"
+          class="btn btn-sm"
+          onClick={() => props.onRemove()}
+          disabled={!props.removable()}
+          title={
+            props.removable()
+              ? "Remove condition"
+              : "A group needs at least one condition — remove the whole group instead"
+          }
+        >
+          ✕
+        </button>
+      </div>
+      <Show when={rowError()}>{(message) => <p class="field-error">{message()}</p>}</Show>
+    </div>
   );
 }
 

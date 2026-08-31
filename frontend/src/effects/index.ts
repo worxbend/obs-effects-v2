@@ -82,6 +82,7 @@ import mrRobotCrt from "./pixi/mr-robot-crt";
 import grungeFilm from "./pixi/grunge-film";
 import piedPiperNet from "./pixi/pied-piper-net";
 import chatSound from "./pixi/chat-sound";
+import soundboard from "./pixi/soundboard";
 
 /**
  * The effect inventory.
@@ -174,6 +175,7 @@ export const effects: EffectModule[] = [
   grungeFilm,
   piedPiperNet,
   chatSound,
+  soundboard,
 ];
 
 export {
@@ -251,4 +253,5 @@ export {
   grungeFilm,
   piedPiperNet,
   chatSound,
+  soundboard,
 };

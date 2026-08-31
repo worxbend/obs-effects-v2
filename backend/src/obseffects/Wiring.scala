@@ -118,6 +118,7 @@ class Wiring(config: AppConfig, val authMode: AuthMode) extends AutoCloseable {
   lazy val presetService: PresetService = wire[PresetService]
   lazy val adminService: AdminService = wire[AdminService]
   lazy val soundService: SoundService = wire[SoundService]
+  lazy val soundboardService: SoundboardService = wire[SoundboardService]
 
   lazy val routeEventStream: RouteEventStream = wire[RouteEventStream]
 
@@ -143,6 +144,7 @@ class Wiring(config: AppConfig, val authMode: AuthMode) extends AutoCloseable {
       twitchService,
       chatStream,
       soundService,
+      soundboardService,
       clock,
       config.sessionCookieSecure
     )

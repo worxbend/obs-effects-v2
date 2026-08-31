@@ -303,6 +303,101 @@ private[infrastructure] object BsonCodecs {
       botLogin = Option(document.getString("botLogin")).filter(_.nonEmpty)
     )
 
+  /** The soundboard document: the whole ordered rule list, stored beside the other settings documents.
+    */
+  def soundboardToDocument(soundboard: Soundboard): Document =
+    new Document().append("rules", soundboard.rules.map(soundboardRuleToDocument).asJava)
+
+  def soundboardRuleToDocument(rule: SoundboardRule): Document =
+    new Document()
+      .append("id", rule.id)
+      .append("label", rule.label)
+      .append("condition", soundboardConditionToDocument(rule.condition))
+      .append("sound", rule.sound)
+      .append("enabled", java.lang.Boolean.valueOf(rule.enabled))
+
+  /** One node of a rule's condition tree, stored as a document mirroring the JSON wire shape exactly — a `type`
+    * discriminator plus the fields that type has — so a stored board reads the same whether one looks at Mongo or at
+    * `GET /api/soundboard`.
+    */
+  def soundboardConditionToDocument(condition: SoundboardCondition): Document = condition match {
+    case SoundboardCondition.Group(op, negate, children) =>
+      new Document()
+        .append("type", "group")
+        .append("op", op.wireName)
+        .append("negate", java.lang.Boolean.valueOf(negate))
+        .append("children", children.map(soundboardConditionToDocument).asJava)
+    case SoundboardCondition.Command(value)  => leafConditionDocument("command", value)
+    case SoundboardCondition.Contains(value) => leafConditionDocument("contains", value)
+    case SoundboardCondition.Regex(value)    => leafConditionDocument("regex", value)
+    case SoundboardCondition.Emote(value)    => leafConditionDocument("emote", value)
+    case SoundboardCondition.Emoji(value)    => leafConditionDocument("emoji", value)
+    case SoundboardCondition.Event(value)    => leafConditionDocument("event", value)
+    case SoundboardCondition.User(value)     => leafConditionDocument("user", value)
+  }
+
+  private def leafConditionDocument(`type`: String, value: String): Document =
+    new Document().append("type", `type`).append("value", value)
+
+  /** Reads the soundboard back with the same "a settings document must never stop the server booting" leniency as the
+    * OBS audio and Twitch documents: missing strings fall back to empty, and a rule whose condition cannot be
+    * understood — a node `type` written by some future build, say — is dropped rather than guessed at, because firing a
+    * sound on the wrong condition is worse than not firing it.
+    */
+  def soundboardFromDocument(document: Document): Soundboard =
+    Soundboard(readDocumentList(document.get("rules")).flatMap(soundboardRuleFromDocument))
+
+  def soundboardRuleFromDocument(document: Document): Option[SoundboardRule] =
+    soundboardRuleCondition(document).map { condition =>
+      SoundboardRule(
+        id = Option(document.getString("id")).getOrElse(""),
+        label = Option(document.getString("label")).getOrElse(""),
+        condition = condition,
+        sound = Option(document.getString("sound")).getOrElse(""),
+        enabled = document.getBoolean("enabled", false)
+      )
+    }
+
+  /** Where a stored rule's condition comes from: the v2 `condition` tree when present, and otherwise the v1 flat
+    * `trigger`/`pattern` pair, migrated on read — a v1 `command` rule becomes a `Command` leaf and a v1 `regex` rule a
+    * `Regex` leaf, which is exactly what those triggers meant. Writing always writes v2, so the first save after an
+    * upgrade completes the migration; nothing rewrites documents behind the operator's back.
+    */
+  private def soundboardRuleCondition(document: Document): Option[SoundboardCondition] =
+    document.get("condition") match {
+      case condition: Document => soundboardConditionFromDocument(condition)
+      case _                   =>
+        (Option(document.getString("trigger")), Option(document.getString("pattern")).getOrElse("")) match {
+          case (Some("command"), pattern) => Some(SoundboardCondition.Command(pattern))
+          case (Some("regex"), pattern)   => Some(SoundboardCondition.Regex(pattern))
+          case _                          => None
+        }
+    }
+
+  def soundboardConditionFromDocument(document: Document): Option[SoundboardCondition] = {
+    def value = Option(document.getString("value")).getOrElse("")
+    Option(document.getString("type")).flatMap {
+      case "group" =>
+        // A group needs a recognisable op and at least one readable child to mean anything — and EVERY child must
+        // read, all or nothing. Keeping only the readable children would silently weaken the group: an `and` missing
+        // one condition fires on messages the stored rule never meant to match. So one unreadable child drops the
+        // node (and with it the rule), the standing "dropped rather than guessed at" policy applied at every level.
+        val children = readDocumentList(document.get("children")).map(soundboardConditionFromDocument)
+        Option(document.getString("op"))
+          .flatMap(GroupOp.fromWire)
+          .filter(_ => children.nonEmpty && children.forall(_.isDefined))
+          .map(op => SoundboardCondition.Group(op, document.getBoolean("negate", false), children.flatten))
+      case "command"  => Some(SoundboardCondition.Command(value))
+      case "contains" => Some(SoundboardCondition.Contains(value))
+      case "regex"    => Some(SoundboardCondition.Regex(value))
+      case "emote"    => Some(SoundboardCondition.Emote(value))
+      case "emoji"    => Some(SoundboardCondition.Emoji(value))
+      case "event"    => Some(SoundboardCondition.Event(value))
+      case "user"     => Some(SoundboardCondition.User(value))
+      case _          => None
+    }
+  }
+
   // -------------------------------------------------------------------------------------------
   // Chat messages — collection `chatMessages`, `_id` is the message id string (Twitch's, or ours)
   // -------------------------------------------------------------------------------------------

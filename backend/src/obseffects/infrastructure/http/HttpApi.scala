@@ -11,6 +11,7 @@ import obseffects.application.{
   SessionService,
   SettingsService,
   SoundService,
+  SoundboardService,
   TwitchService
 }
 import obseffects.infrastructure.http.Wire.{ObsAudioViewDto, TwitchViewDto}
@@ -57,6 +58,7 @@ class HttpApi(
     twitch: TwitchService,
     chatStream: ChatStream,
     sounds: SoundService,
+    soundboard: SoundboardService,
     clock: Clock,
     cookieSecure: Boolean
 ) {
@@ -134,7 +136,10 @@ class HttpApi(
     // cannot sign in.
     Endpoints.soundAudio.handle { idOrName =>
       sounds.audio(idOrName).map((sound, bytes) => (bytes, sound.contentType))
-    }
+    },
+    // Always a `Right`: an unconfigured soundboard is not an error, it is an empty rule list, so the overlay effect
+    // that reads it never needs a failure branch — the same reasoning as the streams above.
+    Endpoints.getSoundboard.handle(_ => Right(Wire.toDto(soundboard.get())))
   )
 
   private val protectedEndpoints: List[ServerEndpoint[OxStreams & WebSockets, Identity]] = List(
@@ -213,7 +218,10 @@ class HttpApi(
           (dto, s"/api/sounds/${dto.id}")
         }
       },
-    Endpoints.deleteSound.handleSecurity(requireOperator).handle(_ => id => sounds.delete(id))
+    Endpoints.deleteSound.handleSecurity(requireOperator).handle(_ => id => sounds.delete(id)),
+    Endpoints.updateSoundboard
+      .handleSecurity(requireOperator)
+      .handle(_ => request => soundboard.save(Wire.toRaw(request)).map(Wire.toDto))
   )
 
   /** The interactive documentation page at `/docs`, generated from the endpoint descriptions — it cannot drift out of

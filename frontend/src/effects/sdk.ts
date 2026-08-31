@@ -56,6 +56,7 @@ export * from "./sdk/three";
 export * from "./sdk/pixi";
 export * from "./sdk/audio";
 export * from "./sdk/chat";
+export * from "./sdk/soundboard";
 export * from "./sdk/video";
 export * from "./sdk/text";
 export * from "./sdk/envelopes";

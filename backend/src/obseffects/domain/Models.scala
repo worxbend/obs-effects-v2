@@ -374,3 +374,121 @@ final case class SoundInput(
     builtin: Boolean,
     contentType: String
 )
+
+// -------------------------------------------------------------------------------------------
+// Soundboard
+// -------------------------------------------------------------------------------------------
+
+/** How the children of a condition group are combined: `And` means every child must match, `Or` means at least one
+  * must.
+  */
+enum GroupOp(val wireName: String) {
+  case And extends GroupOp("and")
+  case Or extends GroupOp("or")
+}
+
+object GroupOp {
+
+  def fromWire(raw: String): Option[GroupOp] = GroupOp.values.find(_.wireName == raw)
+
+  val allNames: List[String] = GroupOp.values.map(_.wireName).toList
+}
+
+/** One node of a soundboard rule's condition tree.
+  *
+  * A rule's trigger is a *recursive* tree: leaves test one property of a chat message, and a
+  * [[SoundboardCondition.Group]] combines its children with and/or, optionally negated. The backend only stores and
+  * validates the tree — the `soundboard` overlay effect, running in the browser, is what evaluates it against live
+  * chat, so every leaf's semantics are written for the frontend's `ChatMessage` shape:
+  *
+  *   - `Command` — the message's first whitespace-delimited token equals the value, case-insensitively (the classic
+  *     `!drum` shape).
+  *   - `Contains` — the value is a case-insensitive substring of the full message text.
+  *   - `Regex` — the browser's `new RegExp(value, "iu")` tests the full message text. The backend checks at save time
+  *     that the pattern compiles, for early feedback only.
+  *   - `Emote` — the message carries a Twitch emote; an empty value means *any* emote, a non-empty one names a specific
+  *     emote (compared case-sensitively, because Twitch emote names are).
+  *   - `Emoji` — the message carries a unicode emoji; an empty value means *any* emoji, a non-empty one is the exact
+  *     emoji grapheme to look for.
+  *   - `Event` — the message's event kind is the value, one of [[SoundboardCondition.EventNames]].
+  *   - `User` — the sender's username or display name equals the value, case-insensitively.
+  *
+  * Leaves carry no `negate` flag on purpose: to negate a leaf, wrap it in a one-child group. One negation mechanism is
+  * easier to explain and to render in the query-builder UI than two.
+  */
+enum SoundboardCondition {
+  case Group(op: GroupOp, negate: Boolean, children: List[SoundboardCondition])
+  case Command(value: String)
+  case Contains(value: String)
+  case Regex(value: String)
+  case Emote(value: String)
+  case Emoji(value: String)
+  case Event(value: String)
+  case User(value: String)
+}
+
+object SoundboardCondition {
+
+  /** The event kinds a chat message can carry, exactly as the chat wire model spells them. */
+  val EventNames: List[String] = List("chat", "sub", "gift_sub", "cheer", "raid")
+
+  /** The wire `type` words of every node shape, for validation messages naming the accepted values. */
+  val TypeNames: List[String] = List("group", "command", "contains", "regex", "emote", "emoji", "event", "user")
+}
+
+/** One condition node as it arrives from the API, before validation: the `type` and everything a node of *any* type
+  * could carry, all optional except the discriminator, so an unknown `type` or a group missing its children reaches the
+  * validator and becomes a 422 naming the field, not a 400.
+  */
+final case class RawSoundboardCondition(
+    `type`: String,
+    op: Option[String],
+    negate: Option[Boolean],
+    children: Option[List[RawSoundboardCondition]],
+    value: Option[String]
+)
+
+/** One soundboard rule: "when a chat message matches `condition`, play the sound called `sound`".
+  *
+  * `id` is server-assigned — 8 hexadecimal characters — and stable across edits: the admin UI sends stored ids back
+  * when saving, so the overlay effect can keep per-rule state (a cooldown timer, say) keyed by an id that survives
+  * reordering and relabelling.
+  *
+  * `sound` is a sound *name*, not a database id, for the same reason effect parameters reference sounds by name: a name
+  * survives a delete-and-reupload while an id does not. Whether a sound of that name actually exists is deliberately
+  * not enforced — an operator may write rules before uploading the files they point at, and the overlay treats a
+  * missing sound as silence rather than an error.
+  */
+final case class SoundboardRule(
+    id: String,
+    label: String,
+    condition: SoundboardCondition,
+    sound: String,
+    enabled: Boolean
+)
+
+/** The whole soundboard: an *ordered* list of rules. Order matters — the overlay evaluates enabled rules top to bottom
+  * and the first match wins, so an operator can put a specific rule above a catch-all one.
+  */
+final case class Soundboard(rules: List[SoundboardRule])
+
+object Soundboard {
+
+  /** What a fresh installation has: no rules. Also what `loadSoundboard` answers when nothing is stored yet. */
+  val Empty: Soundboard = Soundboard(Nil)
+}
+
+/** One rule as it arrives from the API, before validation. `id` is optional — absent for a rule the admin just added,
+  * present (and preserved) for one that already existed — and the condition tree stays in its raw shape for the
+  * standing malformed-versus-invalid reason documented on the other Raw shapes above.
+  */
+final case class RawSoundboardRule(
+    id: Option[String],
+    label: String,
+    condition: RawSoundboardCondition,
+    sound: String,
+    enabled: Boolean
+)
+
+/** The whole soundboard as it arrives from `PUT /api/soundboard`, before validation. */
+final case class RawSoundboard(rules: List[RawSoundboardRule])

@@ -688,6 +688,104 @@ export interface SoundListResponse {
   sounds: SoundInfo[];
 }
 
+/* ------------------------------------------------------------------ */
+/* Soundboard                                                          */
+/* ------------------------------------------------------------------ */
+
+/** How a condition group combines its children: every child must match, or any one of them. */
+export type SoundboardGroupOp = "and" | "or";
+
+/** The five kinds of chat event a soundboard `event` condition can pick out. */
+export type SoundboardEventValue = "chat" | "sub" | "gift_sub" | "cheer" | "raid";
+
+/** The condition kinds that carry a single string `value` (everything except `"group"`). */
+export type SoundboardLeafType =
+  | "command"
+  | "contains"
+  | "regex"
+  | "emote"
+  | "emoji"
+  | "event"
+  | "user";
+
+/**
+ * A branch of a rule's condition tree: children combined with And/Or, optionally negated.
+ *
+ * `negate: true` means NOT(the combined result) — it applies *after* the children are combined.
+ * Only groups can be negated; to negate a single leaf, wrap it in a one-child group. A group must
+ * have 1..20 children, and the whole tree may be at most 5 levels deep counting the root.
+ */
+export interface SoundboardGroupCondition {
+  type: "group";
+  op: SoundboardGroupOp;
+  negate: boolean;
+  children: SoundboardCondition[];
+}
+
+/**
+ * A leaf of a rule's condition tree — one concrete test against the incoming chat message.
+ *
+ * - `"command"` — the message's first whitespace-delimited token equals `value`,
+ *   case-insensitively (a leading "!" is the convention). No whitespace inside `value`.
+ * - `"contains"` — `value` is a case-insensitive substring of the full message text.
+ * - `"regex"` — `new RegExp(value, "iu")` tests true against the full message text.
+ * - `"emote"` — the message carries a Twitch emote; an empty `value` means *any* emote, otherwise
+ *   an emote whose name equals `value` exactly (Twitch emote names are case-sensitive).
+ * - `"emoji"` — the message carries a Unicode emoji; an empty `value` means *any* emoji, otherwise
+ *   that exact emoji grapheme.
+ * - `"event"` — the message's event kind equals `value` (one of {@link SoundboardEventValue}).
+ * - `"user"` — the sender's username OR display name equals `value`, case-insensitively.
+ */
+export interface SoundboardLeafCondition {
+  type: SoundboardLeafType;
+  /** 1..200 characters, except emote/emoji where the empty string means "any". */
+  value: string;
+}
+
+/**
+ * One node of a rule's condition tree — a JSON tagged union on `type`. The tree is what the
+ * Soundboard effect evaluates in the browser against each live {@link ChatMessage}; the backend
+ * only stores and validates it.
+ */
+export type SoundboardCondition = SoundboardGroupCondition | SoundboardLeafCondition;
+
+/**
+ * One rule of the soundboard: "when chat matches this condition tree, play that sound".
+ *
+ * Rules are evaluated in stored order over enabled rules only, and the first match wins. The
+ * referenced sound is a *name* (see {@link SoundInfo.name}), not an id, and its existence is not
+ * enforced — a rule can be written before its clip is uploaded, and a deleted clip degrades to a
+ * silent rule rather than a broken save.
+ */
+export interface SoundboardRule {
+  /** Server-assigned, 8 lowercase hex characters. Stable across edits when the client sends it back. */
+  id: string;
+  /** Display name, 1..64 characters after trimming. */
+  label: string;
+  /** The condition tree the message must satisfy. At most 50 conditions, at most 5 levels deep. */
+  condition: SoundboardCondition;
+  /** The sound's NAME (not id), 1..64 characters. Existence is not enforced. */
+  sound: string;
+  enabled: boolean;
+}
+
+/**
+ * A rule as sent in `PUT /api/soundboard`: the same shape, but `id` is optional — omit it (or send
+ * an invalid one) and the server assigns a fresh id; send a stored rule's id back and the rule
+ * keeps it, which is what keeps per-rule state (the effect's cooldowns) stable across edits.
+ */
+export type SoundboardRuleWrite = Omit<SoundboardRule, "id"> & { id?: string };
+
+/** The whole soundboard: at most 100 ordered rules. First match wins. */
+export interface Soundboard {
+  rules: SoundboardRule[];
+}
+
+/** Body of `PUT /api/soundboard` — the whole rule list, replaced wholesale. */
+export interface SoundboardWriteRequest {
+  rules: SoundboardRuleWrite[];
+}
+
 /** Regular expression a route slug and an effect id must match. */
 export const SLUG_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
 
