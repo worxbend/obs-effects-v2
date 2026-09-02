@@ -138,6 +138,7 @@ class Wiring(config: AppConfig, val authMode: AuthMode) extends AutoCloseable {
   lazy val adminService: AdminService = wire[AdminService]
   lazy val soundService: SoundService = wire[SoundService]
   lazy val soundboardService: SoundboardService = wire[SoundboardService]
+  lazy val legacyEffectIds: LegacyEffectIds = wire[LegacyEffectIds]
 
   lazy val routeEventStream: RouteEventStream = wire[RouteEventStream]
 

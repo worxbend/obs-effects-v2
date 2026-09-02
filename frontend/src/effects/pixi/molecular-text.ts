@@ -4,8 +4,8 @@ import { bool, colorHex, int, num, str } from "../paramUtils";
 import { createPixiStage, defineEffect, onFrame, useFont } from "../sdk";
 
 /**
- * Worxbend Molecular
- * ==================
+ * Molecular Text
+ * ==============
  *
  * A word rendered as a molecular lattice: the lettering is rasterised into a grid of particles,
  * each one tethered to its home pixel by a spring, cohering with and repelling its neighbours the
@@ -25,7 +25,8 @@ import { createPixiStage, defineEffect, onFrame, useFont } from "../sdk";
  *   `step = dt * 60` and friction is raised to that power — the physics settles at the same rate
  *   whatever the frame rate.
  * - The old page fixed the text at "WORXBEND" in 320px bold Silkscreen over a Catppuccin
- *   crust-to-mantle gradient. All of those are parameters now, with the originals as defaults, and
+ *   crust-to-mantle gradient. All of those are parameters now — the font, size and colours keep the
+ *   originals as defaults while the text defaults to a neutral placeholder — and
  *   the text auto-shrinks so a longer word still fits the frame.
  * - The original never waited for the Silkscreen font, which meant the very first rasterisation
  *   could sample a fallback typeface and place every particle wrongly. `useFont` closes that gap.
@@ -83,15 +84,15 @@ interface BgParticle {
   depth: number;
 }
 
-const worxbendMolecular = defineEffect({
+const molecularText = defineEffect({
   descriptor: {
-    id: "worxbend-molecular",
-    name: "Worxbend Molecular",
+    id: "molecular-text",
+    name: "Molecular Text",
     description:
       "A word as a rippling molecular lattice — particles tethered into the lettering, joined by a faint membrane, over a slow vortex of blurred bokeh particles.",
     engine: "pixi",
     category: "background",
-    tags: ["text", "particles", "molecular", "membrane", "catppuccin", "branding"],
+    tags: ["text", "particles", "molecular", "membrane", "catppuccin"],
     previewNotes:
       "Set Text to your own wording. The membrane lines between neighbouring particles are what give it the liquid look — Cohesion Reach controls how far they connect. Uses the bundled Silkscreen font. Turn Background off for a transparent overlay.",
     params: [
@@ -99,7 +100,7 @@ const worxbendMolecular = defineEffect({
         key: "text",
         label: "Text",
         kind: "text",
-        default: "WORXBEND",
+        default: "YOUR TEXT",
         description:
           "The word to spell out. It is auto-shrunk to fit inside the frame width if it would overflow.",
       },
@@ -118,8 +119,7 @@ const worxbendMolecular = defineEffect({
         min: 60,
         max: 640,
         step: 10,
-        description:
-          "Height of the lettering in pixels, before any auto-shrink to fit the frame.",
+        description: "Height of the lettering in pixels, before any auto-shrink to fit the frame.",
       },
       {
         key: "density",
@@ -247,8 +247,7 @@ const worxbendMolecular = defineEffect({
         min: 0,
         max: 0.2,
         step: 0.005,
-        description:
-          "How strongly the background particles curve around the centre of the frame.",
+        description: "How strongly the background particles curve around the centre of the frame.",
       },
       {
         key: "driftSpeed",
@@ -336,7 +335,7 @@ const worxbendMolecular = defineEffect({
     // between the two layers is the whole depth illusion.
     bgBlurLayer.filters = [new PIXI.BlurFilter({ strength: 4 })];
 
-    let text = str(ctx.params, "text", "WORXBEND");
+    let text = str(ctx.params, "text", "YOUR TEXT");
     let density = int(ctx.params, "density", 10, 4, 30);
     let returnForce = num(ctx.params, "returnForce", 0.05, 0, 0.3);
     let friction = num(ctx.params, "friction", 0.93, 0.7, 0.99);
@@ -584,7 +583,7 @@ const worxbendMolecular = defineEffect({
         const colorsBefore = [colorPrimary, colorAccent, colorBokehA, colorBokehB].join("|");
         const gradientBefore = [bgColorTop, bgColorBottom].join("|");
 
-        text = str(p, "text", "WORXBEND");
+        text = str(p, "text", "YOUR TEXT");
         fontFamily = str(p, "fontFamily", "Silkscreen, sans-serif");
         fontSize = int(p, "fontSize", 320, 60, 640);
         density = int(p, "density", 10, 4, 30);
@@ -630,4 +629,4 @@ const worxbendMolecular = defineEffect({
   },
 });
 
-export default worxbendMolecular;
+export default molecularText;

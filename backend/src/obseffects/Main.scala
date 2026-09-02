@@ -47,6 +47,11 @@ object Main {
     // already stored is skipped — so restarts and multiple instances are fine.
     wiring.soundService.seedBuiltins()
 
+    // Same phase again: routes and presets that still point at an effect id this build has renamed are rewritten to
+    // the new id, so an OBS source configured before the rename keeps drawing. Idempotent for the same reason.
+    val migrated = wiring.legacyEffectIds.migrate()
+    if (migrated > 0) println(s"Migrated $migrated stored route(s)/preset(s) to renamed effect ids")
+
     println(s"Starting obs-effects backend on port ${config.httpPort}")
     println(s"  MongoDB:       ${config.mongoUri} (database ${config.mongoDatabase})")
     println(s"  API base:      http://localhost:${config.httpPort}/api")

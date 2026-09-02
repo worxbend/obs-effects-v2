@@ -4,7 +4,7 @@ import { bool, colorHex, int, num, str } from "../paramUtils";
 import { createPixiStage, defineEffect, onFrame, useFont } from "../sdk";
 
 /**
- * Worxbend Text
+ * Particle Text
  * =============
  *
  * A word spelled out in particles that fly in from scattered positions, settle into the lettering,
@@ -111,15 +111,15 @@ interface Comet {
   isAttractor: boolean;
 }
 
-const worxbendText = defineEffect({
+const particleText = defineEffect({
   descriptor: {
-    id: "worxbend-text",
-    name: "Worxbend Text",
+    id: "particle-text",
+    name: "Particle Text",
     description:
       "A word in particles that settle into shape and are then pulled apart by comets crossing the frame, with a shifting plexus of connecting lines.",
     engine: "pixi",
     category: "background",
-    tags: ["text", "particles", "plexus", "comets", "catppuccin", "branding"],
+    tags: ["text", "particles", "plexus", "comets", "catppuccin"],
     previewNotes:
       "Set Text to your own wording. The comets are what make it interesting — each is randomly an attractor or a repeller, so the word is pulled apart differently every time one crosses. Uses the bundled Silkscreen font.",
     params: [
@@ -127,7 +127,7 @@ const worxbendText = defineEffect({
         key: "text",
         label: "Text",
         kind: "text",
-        default: "WORXBEND",
+        default: "YOUR TEXT",
         description:
           "The word to spell out. It is auto-shrunk to fit three-quarters of the frame width.",
       },
@@ -265,7 +265,7 @@ const worxbendText = defineEffect({
     const plexusLayer = stage.stage.addChild(new PIXI.Graphics());
     const particleLayer = stage.stage.addChild(new PIXI.Graphics());
 
-    let text = str(ctx.params, "text", "WORXBEND");
+    let text = str(ctx.params, "text", "YOUR TEXT");
     let density = int(ctx.params, "density", 8, 3, 24);
     let cometCount = int(ctx.params, "comets", 2, 0, 12);
     let cometStrength = num(ctx.params, "cometStrength", 0.8, 0, 4);
@@ -589,7 +589,7 @@ const worxbendText = defineEffect({
       setParams(p: Record<string, unknown>): void {
         const before = [text, fontFamily, density, shapeCount, moteCount, cometCount].join("|");
 
-        text = str(p, "text", "WORXBEND");
+        text = str(p, "text", "YOUR TEXT");
         fontFamily = str(p, "fontFamily", "Silkscreen, sans-serif");
         density = int(p, "density", 8, 3, 24);
         cometCount = int(p, "comets", 2, 0, 12);
@@ -612,4 +612,4 @@ const worxbendText = defineEffect({
   },
 });
 
-export default worxbendText;
+export default particleText;

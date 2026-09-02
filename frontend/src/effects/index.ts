@@ -49,8 +49,8 @@ import animatedLines from "./pixi/animated-lines";
 import catMesh from "./pixi/cat-mesh";
 import logo from "./pixi/logo";
 import startingSoonFluid from "./pixi/starting-soon-fluid";
-import worxbend3dText from "./three/worxbend-3d-text";
-import worxbendText from "./pixi/worxbend-text";
+import jellyText3d from "./three/jelly-text-3d";
+import particleText from "./pixi/particle-text";
 import emberPentagramOverlay from "./pixi/ember-pentagram-overlay";
 import proceduralLogo from "./pixi/procedural-logo";
 import mainWebCamBorder from "./pixi/main-web-cam-border";
@@ -58,8 +58,8 @@ import screenCaptureBorder from "./pixi/screen-capture-border";
 import floatingDust from "./pixi/floating-dust";
 import rainOnGlass from "./three/rain-on-glass";
 import waveSimulation from "./pixi/wave-simulation";
-import worxbendMolecular from "./pixi/worxbend-molecular";
-import worxbendFluid from "./pixi/worxbend-fluid";
+import molecularText from "./pixi/molecular-text";
+import fluidText from "./pixi/fluid-text";
 import topography from "./pixi/topography";
 
 // Original effects written for this project (not ports).
@@ -147,8 +147,8 @@ export const effects: EffectModule[] = [
   catMesh,
   logo,
   startingSoonFluid,
-  worxbend3dText,
-  worxbendText,
+  jellyText3d,
+  particleText,
   emberPentagramOverlay,
   proceduralLogo,
   mainWebCamBorder,
@@ -156,8 +156,8 @@ export const effects: EffectModule[] = [
   floatingDust,
   rainOnGlass,
   waveSimulation,
-  worxbendMolecular,
-  worxbendFluid,
+  molecularText,
+  fluidText,
   topography,
   circularCamPulse,
   fluidRingCam,
@@ -225,8 +225,8 @@ export {
   catMesh,
   logo,
   startingSoonFluid,
-  worxbend3dText,
-  worxbendText,
+  jellyText3d,
+  particleText,
   emberPentagramOverlay,
   proceduralLogo,
   mainWebCamBorder,
@@ -234,8 +234,8 @@ export {
   floatingDust,
   rainOnGlass,
   waveSimulation,
-  worxbendMolecular,
-  worxbendFluid,
+  molecularText,
+  fluidText,
   topography,
   circularCamPulse,
   fluidRingCam,

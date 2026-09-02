@@ -4,8 +4,8 @@ import { bool, colorHex, int, num, str } from "../paramUtils";
 import { createPixiStage, defineEffect, onFrame, useFont } from "../sdk";
 
 /**
- * Worxbend Fluid
- * ==============
+ * Fluid Text
+ * ==========
  *
  * A word rendered as a dense field of particles submerged in liquid. Interfering sine waves roll
  * across the lettering, swelling and displacing the particles; where the waves cross, the particles
@@ -108,15 +108,15 @@ interface Vortex {
   radius: number;
 }
 
-const worxbendFluid = defineEffect({
+const fluidText = defineEffect({
   descriptor: {
-    id: "worxbend-fluid",
-    name: "Worxbend Fluid",
+    id: "fluid-text",
+    name: "Fluid Text",
     description:
       "A word in particles submerged in liquid — interfering waves roll across the lettering, shimmering where they cross, while vortices stir a drifting background cloud.",
     engine: "pixi",
     category: "background",
-    tags: ["text", "particles", "fluid", "waves", "catppuccin", "branding", "background"],
+    tags: ["text", "particles", "fluid", "waves", "catppuccin", "background"],
     previewNotes:
       "Set Text to your own wording. The shimmer patches sweeping across the lettering are wave interference — Overshoot and Shimmer Colour control how hard they hit. Text Density is the main performance control. Uses the bundled Silkscreen font.",
     params: [
@@ -124,7 +124,7 @@ const worxbendFluid = defineEffect({
         key: "text",
         label: "Text",
         kind: "text",
-        default: "WORXBEND",
+        default: "YOUR TEXT",
         description: "The word to spell out in particles.",
       },
       {
@@ -296,7 +296,7 @@ const worxbendFluid = defineEffect({
     const cohesionLayer = stage.stage.addChild(new PIXI.Graphics());
     const textLayer = stage.stage.addChild(new PIXI.Graphics());
 
-    let text = str(ctx.params, "text", "WORXBEND");
+    let text = str(ctx.params, "text", "YOUR TEXT");
     let textStep = int(ctx.params, "textDensity", TEXT_PARTICLE_STEP, 3, 24);
     let returnStrength = num(ctx.params, "returnStrength", RETURN_STRENGTH, 0.005, 0.2);
     let damping = num(ctx.params, "damping", DAMPING, 0.8, 0.99);
@@ -603,7 +603,7 @@ const worxbendFluid = defineEffect({
         const rebuildBefore = [text, fontFamily, fontSize, textStep, bgCount].join("|");
         const gradientBefore = [backgroundTop, backgroundBottom].join("|");
 
-        text = str(p, "text", "WORXBEND");
+        text = str(p, "text", "YOUR TEXT");
         fontFamily = str(p, "fontFamily", "Silkscreen, sans-serif");
         fontSize = num(p, "fontSize", 320, 40, 600);
         textStep = int(p, "textDensity", TEXT_PARTICLE_STEP, 3, 24);
@@ -634,4 +634,4 @@ const worxbendFluid = defineEffect({
   },
 });
 
-export default worxbendFluid;
+export default fluidText;

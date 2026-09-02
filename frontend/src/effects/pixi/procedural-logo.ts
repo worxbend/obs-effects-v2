@@ -39,7 +39,7 @@ import { createPixiStage, defineEffect, onFrame } from "../sdk";
  *
  * Left out are the text subsystems — the original spelled a word across the mark in five overlapping
  * particle, matrix, mesh and atmosphere layers — along with the toxic ooze and bold pattern layers.
- * Those are a substantial effect in their own right, and `worxbend-text` in this build already does
+ * Those are a substantial effect in their own right, and `particle-text` in this build already does
  * the particle-lettering idea properly. This file says so rather than quietly shipping two-thirds of
  * something and calling it a port.
  */

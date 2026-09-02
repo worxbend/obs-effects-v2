@@ -235,8 +235,10 @@ of them can be turned into any other from its parameters.
 | `animated-lines` | Animated Lines | pixi.js | A pentagram sigil that draws itself, holds a title, then erases. A starting-soon screen. |
 | `starting-soon-fluid` | Starting Soon Fluid | pixi.js | Words in particles suspended in liquid, pushed aside by a drifting cloud. |
 | `logo` | Logo | pixi.js | Your logo pulsing to a real ECG heartbeat, with aura, orbiting dots and a LIVE badge. |
-| `worxbend-3d-text` | Worxbend 3D Text | three.js | Extruded glossy lettering wobbling like set jelly under orbiting lights. |
-| `worxbend-text` | Worxbend Text | pixi.js | A word in particles, pulled apart by comets that attract or repel, with a plexus of lines. |
+| `jelly-text-3d` | Jelly 3D Text | three.js | Any text as extruded glossy lettering wobbling like set jelly under orbiting lights. |
+| `particle-text` | Particle Text | pixi.js | Any text in particles, pulled apart by comets that attract or repel, with a plexus of lines. |
+| `fluid-text` | Fluid Text | pixi.js | Any text as particles submerged in liquid, rippled and shimmering, over a vortex-stirred cloud. |
+| `molecular-text` | Molecular Text | pixi.js | Any text as a molecular lattice held together by surface tension, over drifting bokeh. |
 | `procedural-logo` | Procedural Logo | pixi.js | A generated mark: ink stains with merged outlines, gyro rings and orbiting blobs on a heartbeat. |
 | `ember-pentagram-overlay` | Ember Pentagram Overlay | pixi.js | A pentagram in thousands of embers, with waves travelling through the figure. |
 | `main-web-cam-border` | Main Web Cam Border | pixi.js | A circular camera frame of eight rippling rings, with sparks and lightning. Audio-reactive. |

@@ -6,8 +6,8 @@ import { colorHex, num, str } from "../paramUtils";
 import { createThreeStage, defineEffect, onFrame } from "../sdk";
 
 /**
- * Worxbend 3D Text
- * ================
+ * Jelly 3D Text
+ * =============
  *
  * Extruded, bevelled 3D lettering in glossy blood red, hovering and rocking gently while a
  * spring-mass simulation ripples waves through the geometry — the letters wobble like set jelly.
@@ -54,15 +54,15 @@ const STIFFNESS = 0.048;
 /** Velocity retained per step. Higher is more viscous and less bouncy. */
 const DAMPING = 0.905;
 
-const worxbend3dText = defineEffect({
+const jellyText3d = defineEffect({
   descriptor: {
-    id: "worxbend-3d-text",
-    name: "Worxbend 3D Text",
+    id: "jelly-text-3d",
+    name: "Jelly 3D Text",
     description:
       "Extruded, bevelled 3D lettering in glossy blood red, hovering and rocking while a spring simulation ripples waves through it like set jelly.",
     engine: "three",
     category: "overlay",
-    tags: ["text", "3d", "jelly", "logo", "branding", "red"],
+    tags: ["text", "3d", "jelly", "red"],
     previewNotes:
       "Transparent background, so it sits over a scene. Set Text to your own wording — keep it short, since the geometry is rebuilt from scratch and long strings are expensive. Wobble at 0 gives a still, glossy solid.",
     params: [
@@ -70,7 +70,7 @@ const worxbend3dText = defineEffect({
         key: "text",
         label: "Text",
         kind: "text",
-        default: "WORXBEND",
+        default: "YOUR TEXT",
         description:
           "The lettering. Rebuilt as 3D geometry whenever it changes, so keep it to a word or two.",
       },
@@ -189,7 +189,7 @@ const worxbend3dText = defineEffect({
 
     if (font === null) {
       console.error(
-        `[worxbend-3d-text] Could not load the typeface from ${FONT_URL}; nothing will be drawn.`,
+        `[jelly-text-3d] Could not load the typeface from ${FONT_URL}; nothing will be drawn.`,
       );
       return { setParams(): void {} };
     }
@@ -224,7 +224,7 @@ const worxbend3dText = defineEffect({
       }),
     );
 
-    let text = str(ctx.params, "text", "WORXBEND");
+    let text = str(ctx.params, "text", "YOUR TEXT");
     let size = num(ctx.params, "size", 1.58, 0.3, 4);
     let depth = num(ctx.params, "depth", 0.55, 0.05, 2);
     let wobble = num(ctx.params, "wobble", 1, 0, 4);
@@ -366,7 +366,7 @@ const worxbend3dText = defineEffect({
       setParams(p: Record<string, unknown>): void {
         const before = [text, size, depth].join("|");
 
-        text = str(p, "text", "WORXBEND");
+        text = str(p, "text", "YOUR TEXT");
         size = num(p, "size", 1.58, 0.3, 4);
         depth = num(p, "depth", 0.55, 0.05, 2);
         wobble = num(p, "wobble", 1, 0, 4);
@@ -386,4 +386,4 @@ const worxbend3dText = defineEffect({
   },
 });
 
-export default worxbend3dText;
+export default jellyText3d;
