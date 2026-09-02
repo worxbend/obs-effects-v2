@@ -3,6 +3,8 @@ package obseffects.application
 import obseffects.domain.{TwitchSettings, ValidationIssue}
 import org.slf4j.{Logger, LoggerFactory}
 
+import scala.util.matching.Regex
+
 /** Whether the Twitch moderation dashboard can do anything at all, and what it is looking at when it can.
   *
   * One object answers both halves on purpose. "Available" is never a bare `false` a page has to explain for itself:
@@ -222,7 +224,7 @@ final class TwitchAdminService(
   /** One entry of a batch as the loop below sees it: the name to put in the report, and the id to act on when there is
     * one. `userId` is `None` only for a login Twitch did not recognise.
     */
-  private final case class BulkTarget(label: String, userId: Option[String])
+  private final case class BulkTarget(label: String, userId: Option[String], malformed: Boolean = false)
 
   /** The shared body of every bulk operation: work out each entry's (label, id) pair, then act on each one
     * independently.
@@ -254,7 +256,8 @@ final class TwitchAdminService(
             case None =>
               // Nothing was sent to Twitch for this one, so it is not an error of the request — it is this user's
               // outcome, and the batch continues.
-              (collected :+ BulkOutcome(entry.label, ok = false, Some("no such Twitch account")), issued)
+              val why = if (entry.malformed) "not a valid Twitch login" else "no such Twitch account"
+              (collected :+ BulkOutcome(entry.label, ok = false, Some(why)), issued)
             case Some(userId) =>
               // Twitch rate-limits moderation calls per channel. A short fixed pause between requests keeps a
               // hundred-user batch comfortably inside that limit; sending them as fast as the network allows would
@@ -276,15 +279,26 @@ final class TwitchAdminService(
   private def resolveLogins(
       session: TwitchAdminService.Session,
       logins: List[String]
-  ): Either[AppError, List[BulkTarget]] =
-    if (logins.isEmpty) Right(Nil)
-    else
-      session.call(token => helix.resolveUsers(session.clientId, token, logins)) match {
-        case Left(failure) => Left(requestFailure(failure))
-        case Right(users)  =>
-          val byLogin = users.map(user => user.login.toLowerCase -> user).toMap
-          Right(logins.map(login => BulkTarget(login, byLogin.get(login.toLowerCase).map(_.id))))
+  ): Either[AppError, List[BulkTarget]] = {
+    // Only the well-formed names go to Twitch. The users endpoint answers 400 for the *whole* request when any one
+    // `login` value is not a login at all (a pasted URL, `user.name`, a display name with a space or an emoji), and
+    // that would turn one stray line in a hundred into "nothing was attempted". A malformed entry is instead recorded
+    // as that entry's outcome, exactly as an unknown login is, and the rest of the batch goes ahead.
+    val wellFormed = logins.filter(TwitchAdminService.isValidLogin)
+    val resolved: Either[AppError, Map[String, TwitchUser]] =
+      if (wellFormed.isEmpty) Right(Map.empty)
+      else
+        session.call(token => helix.resolveUsers(session.clientId, token, wellFormed)) match {
+          case Left(failure) => Left(requestFailure(failure))
+          case Right(users)  => Right(users.map(user => user.login.toLowerCase -> user).toMap)
+        }
+    resolved.map { byLogin =>
+      logins.map { login =>
+        if (TwitchAdminService.isValidLogin(login)) BulkTarget(login, byLogin.get(login.toLowerCase).map(_.id))
+        else BulkTarget(login, None, malformed = true)
       }
+    }
+  }
 
   private def outcomeOf(login: String, result: Either[HelixFailure, Unit]): BulkOutcome = result match {
     case Right(_)                         => BulkOutcome(login, ok = true, None)
@@ -527,6 +541,13 @@ object TwitchAdminService {
     * number that keeps a batch to exactly one resolution call.
     */
   val MaxBulkUsers = 100
+
+  /** The shape of a Twitch login: letters, digits and underscores, up to 25 of them. Twitch's users endpoint refuses
+    * the entire request when any one `login` value breaks this rule, so a bulk request checks each name here first.
+    */
+  private val LoginPattern: Regex = "[A-Za-z0-9_]{1,25}".r
+
+  def isValidLogin(login: String): Boolean = LoginPattern.matches(login)
 
   val MinTimeoutSeconds = 1
 

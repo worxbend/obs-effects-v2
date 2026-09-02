@@ -559,7 +559,11 @@ eight of a hundred bans landing is the useful outcome, not an aborted request. E
 attempted independently, every outcome is collected in the order the request listed them, and a
 partial success is a **200** whose counts tell the story — never an error. `message` carries
 Twitch's own words when Twitch refused (already banned, not currently banned), because that
-sentence is the answer to "why did this one not work?".
+sentence is the answer to "why did this one not work?". Two failures are decided before Twitch
+is asked: a name Twitch does not know answers `no such Twitch account`, and a name that is not
+a Twitch login at all (anything other than 1–25 letters, digits and underscores — a pasted URL,
+say) answers `not a valid Twitch login`. Twitch would refuse the *whole* lookup over one such
+entry, so the server keeps it out of the lookup and reports it on its own line instead.
 
 #### `TwitchUnbanTarget` — unbanning an account that is already identified
 

@@ -8,12 +8,7 @@ import {
   unbanTwitchUsers,
 } from "~/api/client";
 import { Banner } from "~/components/Banner";
-import type {
-  BulkResult,
-  TwitchAdminStatus,
-  TwitchBan,
-  TwitchUnbanTarget,
-} from "~/types/contract";
+import type { BulkResult, TwitchAdminStatus, TwitchBan, TwitchUnbanTarget } from "~/types/contract";
 
 /**
  * `/admin/twitch` — moderating the connected Twitch channel: what the connection can do, the
@@ -314,6 +309,9 @@ function BanListCard(props: { list: BanListState }): JSX.Element {
   /** The user id of the row whose single "Unban" button is working, or `null`. */
   const [unbanningId, setUnbanningId] = createSignal<string | null>(null);
   const [bulkBusy, setBulkBusy] = createSignal(false);
+  // Lifting bans is not reversible from this page: the reasons and durations are gone once Twitch
+  // forgets them. So the bulk button asks first, the same way the bulk ban form does.
+  const [confirmingUnban, setConfirmingUnban] = createSignal(false);
   const [result, setResult] = createSignal<BulkResult | null>(null);
   const [error, setError] = createSignal<string | null>(null);
 
@@ -417,6 +415,7 @@ function BanListCard(props: { list: BanListState }): JSX.Element {
 
   const unbanSelected = async (): Promise<void> => {
     setBulkBusy(true);
+    setConfirmingUnban(false);
     try {
       await unban(selectedVisible().map((ban) => ({ userId: ban.userId, login: ban.login })));
     } finally {
@@ -459,11 +458,39 @@ function BanListCard(props: { list: BanListState }): JSX.Element {
           type="button"
           class="btn btn-sm"
           disabled={selectedVisible().length === 0 || bulkBusy()}
-          onClick={() => void unbanSelected()}
+          onClick={() => {
+            setError(null);
+            setConfirmingUnban(true);
+          }}
         >
           {bulkBusy() ? "Unbanning…" : `Unban selected (${selectedVisible().length})`}
         </button>
       </div>
+
+      <Show when={confirmingUnban() && selectedVisible().length > 0}>
+        <div class="confirm-row">
+          <span>
+            Unban {selectedVisible().length} account{selectedVisible().length === 1 ? "" : "s"}?
+            Their ban reasons are not kept, so this cannot be undone from here.
+          </span>
+          <button
+            type="button"
+            class="btn btn-sm"
+            disabled={bulkBusy()}
+            onClick={() => setConfirmingUnban(false)}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            class="btn btn-sm btn-danger"
+            disabled={bulkBusy()}
+            onClick={() => void unbanSelected()}
+          >
+            {bulkBusy() ? "Working…" : "Yes, unban them"}
+          </button>
+        </div>
+      </Show>
 
       <Banner kind="error" message={props.list.error()} />
       <Banner kind="error" message={error()} />
@@ -611,10 +638,14 @@ function BulkActionsCard(props: { onCompleted: () => void }): JSX.Element {
   const [reason, setReason] = createSignal("");
   const [confirming, setConfirming] = createSignal(false);
   const [busy, setBusy] = createSignal(false);
-  const [result, setResult] = createSignal<BulkResult | null>(null);
+  // The verb travels with the result rather than being read off the select later: a "12 timed out"
+  // report must not silently become "12 banned" the moment the operator switches the select to
+  // set up the next job.
+  const [result, setResult] = createSignal<{ outcome: BulkResult; verb: string } | null>(null);
   const [error, setError] = createSignal<string | null>(null);
 
   const logins = createMemo(() => parseLogins(text()));
+  const malformed = createMemo(() => logins().filter((login) => !isValidLogin(login)));
   const tooMany = createMemo(() => logins().length > MAX_BULK_USERS);
 
   /** The duration is only *valid* when it is going to be sent, which is only for a timeout. */
@@ -638,7 +669,7 @@ function BulkActionsCard(props: { onCompleted: () => void }): JSX.Element {
         durationSeconds: action() === "timeout" ? duration() : null,
         reason: reason().trim() === "" ? null : reason().trim(),
       });
-      setResult(outcome);
+      setResult({ outcome, verb: action() === "ban" ? "banned" : "timed out" });
       setConfirming(false);
       // Even a wholly failed batch is worth reloading for: the list may have moved for other
       // reasons while the operator was typing.
@@ -675,6 +706,14 @@ function BulkActionsCard(props: { onCompleted: () => void }): JSX.Element {
           {logins().length} account{logins().length === 1 ? "" : "s"} parsed
           {tooMany() ? ` — at most ${MAX_BULK_USERS} per request.` : "."}
         </p>
+        <Show when={malformed().length > 0}>
+          <p class="field-help field-error">
+            {malformed().length} of them {malformed().length === 1 ? "is" : "are"} not a Twitch
+            login (letters, digits and underscores only) and will be reported as failed:{" "}
+            {malformed().slice(0, 5).join(", ")}
+            {malformed().length > 5 ? ", …" : ""}
+          </p>
+        </Show>
       </div>
 
       <div class="field">
@@ -748,7 +787,7 @@ function BulkActionsCard(props: { onCompleted: () => void }): JSX.Element {
       </div>
 
       <Banner kind="error" message={error()} />
-      <BulkResultReport result={result()} verb={action() === "ban" ? "banned" : "timed out"} />
+      <BulkResultReport result={result()?.outcome ?? null} verb={result()?.verb ?? ""} />
 
       {/*
         The confirmation is an inline row rather than `window.confirm`, matching the delete
@@ -877,6 +916,15 @@ function parseLogins(raw: string): string[] {
     result.push(login);
   }
   return result;
+}
+
+/**
+ * Whether a string has the shape of a Twitch login: 1 to 25 letters, digits or underscores. The
+ * backend reports anything else as that entry's failure without asking Twitch, so the form can
+ * warn about it before the button is pressed.
+ */
+function isValidLogin(login: string): boolean {
+  return /^[A-Za-z0-9_]{1,25}$/.test(login);
 }
 
 /** Shows "2026-08-23 14:07" in the viewer's own time zone instead of a raw ISO string. */

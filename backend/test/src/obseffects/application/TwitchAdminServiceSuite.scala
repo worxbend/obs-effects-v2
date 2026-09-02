@@ -316,6 +316,36 @@ class TwitchAdminServiceSuite extends FunSuite {
     }
   }
 
+  test("a malformed login is that entry's failure, and the well-formed rest still resolve and act") {
+    val (admin, _, helix) = service()
+
+    val result = admin.banMany(
+      List("https://twitch.tv/alice", "alice", "user.name", "bob", "too_long_for_a_twitch_login_x"),
+      durationSeconds = None,
+      reason = None
+    )
+
+    result match {
+      case Right(bulk) =>
+        assertEquals(bulk.outcomes.map(_.ok), List(false, true, false, true, false))
+        assertEquals(bulk.outcomes.head.message, Some("not a valid Twitch login"))
+        assertEquals(bulk.succeeded, 2)
+        assertEquals(bulk.failed, 3)
+      case other => fail(s"expected a partial success, got $other")
+    }
+    // Only the names Twitch could possibly know were sent to it.
+    assertEquals(helix.calls.head, "resolve[access-1] alice,bob")
+  }
+
+  test("a batch made only of malformed logins never asks Twitch anything") {
+    val (admin, _, helix) = service()
+
+    val result = admin.banMany(List("user.name", "https://twitch.tv/x"), durationSeconds = None, reason = None)
+
+    assertEquals(result.map(_.outcomes.map(_.ok)), Right(List(false, false)))
+    assertEquals(helix.calls, Nil)
+  }
+
   test("a login Twitch does not know costs no request at all") {
     val (admin, _, helix) = service()
 
