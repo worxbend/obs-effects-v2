@@ -84,6 +84,22 @@ import piedPiperNet from "./pixi/pied-piper-net";
 import chatSound from "./pixi/chat-sound";
 import soundboard from "./pixi/soundboard";
 
+// A batch of new effects designed around stream *moments* rather than around a brand: quiet
+// generative backdrops, chat- and audio-reactive pieces, and a countdown. Each one is documented
+// in its own file header.
+import truchetLoom from "./three/truchet-loom";
+import pigmentMix from "./three/pigment-mix";
+import contourPortrait from "./three/contour-portrait";
+import contourChorus from "./three/contour-chorus";
+import frothLattice from "./three/froth-lattice";
+import iridescentFilm from "./three/iridescent-film";
+import roomTone from "./pixi/room-tone";
+import sympatheticStrings from "./pixi/sympathetic-strings";
+import meridianCountdown from "./pixi/meridian-countdown";
+import showOfHands from "./pixi/show-of-hands";
+import emoteStandings from "./pixi/emote-standings";
+import arrivalSeam from "./pixi/arrival-seam";
+
 /**
  * The effect inventory.
  *
@@ -176,6 +192,19 @@ export const effects: EffectModule[] = [
   piedPiperNet,
   chatSound,
   soundboard,
+
+  truchetLoom,
+  pigmentMix,
+  contourPortrait,
+  contourChorus,
+  frothLattice,
+  iridescentFilm,
+  roomTone,
+  sympatheticStrings,
+  meridianCountdown,
+  showOfHands,
+  emoteStandings,
+  arrivalSeam,
 ];
 
 export {
@@ -254,4 +283,16 @@ export {
   piedPiperNet,
   chatSound,
   soundboard,
+  truchetLoom,
+  pigmentMix,
+  contourPortrait,
+  contourChorus,
+  frothLattice,
+  iridescentFilm,
+  roomTone,
+  sympatheticStrings,
+  meridianCountdown,
+  showOfHands,
+  emoteStandings,
+  arrivalSeam,
 };

@@ -55,7 +55,7 @@ Three words are used throughout the code and the documentation. They are worth l
 - **Effect** — one visual effect *implementation*: a TypeScript file in the frontend that draws
   something with [three.js](https://threejs.org/) (3D) or [pixi.js](https://pixijs.com/) (2D).
   Every effect ships a **descriptor**: its id, its human-readable name, and the list of parameters
-  ("knobs") it accepts. Six effects are included out of the box.
+  ("knobs") it accepts. Dozens of effects are included out of the box.
 - **Route** — a mapping you create in the admin UI: a **slug** you choose (`main-camera`,
   `intro-screen`, …) pointing at one effect id plus the parameter values to run it with. The slug is
   the part of the OBS URL after `/e/`.
@@ -273,6 +273,36 @@ of them can be turned into any other from its parameters.
 > **loudness, not frequencies** — there is no frequency analysis anywhere in the obs-websocket
 > protocol. Band heights are shaped from one real loudness value, so the overall movement is real and
 > which bar is tallest is not. See [Connecting to OBS audio](#connecting-to-obs-audio).
+
+### Stream-moment effects
+
+The effects above grew out of a look — a brand, a glitch, a waveform. This batch was designed the
+other way round, starting from a *moment* in a stream that had no overlay for it: the quiet minutes
+before you go live, the stretch where you are talking and nothing should be competing for attention,
+the instant a viewer arrives, the last sixty seconds of a countdown. They lean on restraint — most
+of them are almost still until something actually happens — and every visual constant is a
+parameter, so the same file can be tuned from barely-there to loud.
+
+| Effect id | Name | Engine | Reacts to | What it draws |
+|---|---|---|---|---|
+| `truchet-loom` | Quiet Loom | three.js | chat, audio | A still blueprint lattice of quarter-circle arcs that reshuffles itself in ring-shaped waves — one wave per chat message, spreading from a point fixed to that viewer. |
+| `pigment-mix` | Pigment Mix | three.js | audio (per input) | Pools of watercolour blooming on paper, one colour per named OBS audio input, mixed *subtractively* so overlapping sources go muddy like real paint rather than brighter. |
+| `contour-portrait` | Contour Portrait | three.js | camera, audio | Your webcam redrawn as a topographic map of itself: hairline iso-brightness contours at a constant one-pixel weight, dissolving to nothing at the edges so the drawing floats with no box around it. |
+| `contour-chorus` | Contour Chorus | three.js | camera, chat, audio | Only the glowing edge of the live camera image — a light-pen tracing of your silhouette that thickens with your voice, while every chat message sends a ring across the frame that makes the outline flare. |
+| `froth-lattice` | Froth Lattice | three.js | — | A sheet of soap-froth cells in hairline-thin luminous edges that slide, merge and re-partition, like frost forming on glass at one-hundredth speed. |
+| `iridescent-film` | Iridescent Film | three.js | — | A soap film drifting across the frame, its colours cycling through magenta, gold and cyan exactly where it is thinnest — real thin-film interference, not a hue rotation. |
+| `room-tone` | Room Tone | pixi.js | chat, audio | A hairline chart of the last two minutes of the room — chat rate and loudness folded into one signal — scrolling in a corner, with a soft gradient beneath and a lit point at the leading edge. |
+| `sympathetic-strings` | Sympathetic Strings | pixi.js | chat, audio | A row of taut hairlines that a chat message plucks into a real travelling wave, reflecting off two bridges, while your voice sets every string humming faintly in sympathy. |
+| `meridian-countdown` | Meridian Countdown | pixi.js | clock, audio | A large, thin countdown on a hairline arc: only the digits that change move, the tracking tightens in the last seconds instead of turning red, and the line empties upward at zero. |
+| `show-of-hands` | Show of Hands | pixi.js | chat | A chat poll whose tally is a physical heap: each vote drops in as a token tinted with the voter's chat colour, falls, bounces and settles into a hexagonally-packed pile at the base of its column. |
+| `emote-standings` | Emote Standings | pixi.js | chat | A live league table of the emotes chat is using, ranked by a decaying score. Rows open and close as emotes come and go, and an overtake animates as a visible swap rather than a redraw. |
+| `arrival-seam` | Arrival Seam | pixi.js | chat events | A hairline of light across the frame that opens like a slit in a curtain when someone subscribes, cheers, gifts or raids, wipes the arriving viewer's name into being, holds while you react, and seals shut. |
+
+Every one of these draws something reasonable before it has real data — a simulated audio feed, an
+empty chat, a webcam that has not been granted yet — so an OBS source is never blank while you are
+still wiring things up.
+
+---
 
 ### Audio-reactive effects
 
