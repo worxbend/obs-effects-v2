@@ -111,6 +111,76 @@ export function makePreset(partial) {
 }
 
 /**
+ * Writes one event in the SSE wire format: an optional `retry:` line, the event name, one
+ * `data:` line, then the blank line that ends the event.
+ */
+function writeEvent(subscriber, name, payload, withRetry = false) {
+  const lines = withRetry ? ["retry: 3000"] : [];
+  lines.push(`event: ${name}`, `data: ${JSON.stringify(payload)}`, "", "");
+  subscriber.res.write(lines.join("\n"));
+  subscriber.sent += 1;
+}
+
+function sendJson(res, status, body) {
+  const text = JSON.stringify(body);
+  res.writeHead(status, {
+    // No charset parameter, matching the resolution recorded in the contract's §2.4.
+    "Content-Type": "application/json",
+    "Content-Length": Buffer.byteLength(text),
+  });
+  res.end(text);
+}
+
+function sendError(res, status, code, message, details) {
+  sendJson(res, status, { error: details ? { code, message, details } : { code, message } });
+}
+
+/** Answers `204 No Content`. */
+function sendNoContent(res) {
+  res.writeHead(204);
+  res.end();
+}
+
+function readBody(req) {
+  return new Promise((resolvePromise, rejectPromise) => {
+    const chunks = [];
+    req.on("data", (chunk) => chunks.push(chunk));
+    req.on("end", () => {
+      const text = Buffer.concat(chunks).toString("utf8");
+      if (text === "") {
+        resolvePromise({});
+        return;
+      }
+      try {
+        resolvePromise(JSON.parse(text));
+      } catch (error) {
+        rejectPromise(error);
+      }
+    });
+    req.on("error", rejectPromise);
+  });
+}
+
+/**
+ * Looks a request up in a route table and returns the handler to call with the request context,
+ * or `undefined` when the table has nothing for it.
+ *
+ * A table has `exact`, a map from `"METHOD /path"` to a handler, and `patterns`, a list of
+ * `{ pattern, methods }` whose regular expression captures one path parameter; that parameter is
+ * URI-decoded and passed to the handler as its second argument.
+ */
+function findHandler(table, method, pathname) {
+  const exact = table.exact.get(`${method} ${pathname}`);
+  if (exact) return exact;
+  for (const { pattern, methods } of table.patterns) {
+    const match = pattern.exec(pathname);
+    const handler = match && Object.hasOwn(methods, method) ? methods[method] : undefined;
+    if (handler) return (context) => handler(context, decodeURIComponent(match[1]));
+  }
+  return undefined;
+}
+
+/**
  * Starts the stub and resolves once it is listening.
  *
  * @param {object} options
@@ -190,20 +260,6 @@ export async function startStub({ port, distDir }) {
   /* ---------------------------------------------------------------- */
   /* Server-Sent Events                                                */
   /* ---------------------------------------------------------------- */
-
-  /**
-   * Writes one event in the SSE wire format: an optional `retry:` line, the event name, one
-   * `data:` line, then the blank line that ends the event.
-   */
-  function writeEvent(subscriber, name, payload, withRetry = false) {
-    const lines = [];
-    if (withRetry) lines.push("retry: 3000");
-    lines.push(`event: ${name}`);
-    lines.push(`data: ${JSON.stringify(payload)}`);
-    lines.push("", "");
-    subscriber.res.write(lines.join("\n"));
-    subscriber.sent += 1;
-  }
 
   /** The event a subscriber to `slug` should receive right now: the route, or `absent`. */
   function currentEvent(slug) {
@@ -335,42 +391,8 @@ export async function startStub({ port, distDir }) {
   }
 
   /* ---------------------------------------------------------------- */
-  /* Plain JSON helpers                                                */
+  /* Session                                                           */
   /* ---------------------------------------------------------------- */
-
-  function sendJson(res, status, body) {
-    const text = JSON.stringify(body);
-    res.writeHead(status, {
-      // No charset parameter, matching the resolution recorded in the contract's §2.4.
-      "Content-Type": "application/json",
-      "Content-Length": Buffer.byteLength(text),
-    });
-    res.end(text);
-  }
-
-  function sendError(res, status, code, message, details) {
-    sendJson(res, status, { error: details ? { code, message, details } : { code, message } });
-  }
-
-  function readBody(req) {
-    return new Promise((resolvePromise, rejectPromise) => {
-      const chunks = [];
-      req.on("data", (chunk) => chunks.push(chunk));
-      req.on("end", () => {
-        const text = Buffer.concat(chunks).toString("utf8");
-        if (text === "") {
-          resolvePromise({});
-          return;
-        }
-        try {
-          resolvePromise(JSON.parse(text));
-        } catch (error) {
-          rejectPromise(error);
-        }
-      });
-      req.on("error", rejectPromise);
-    });
-  }
 
   /**
    * True when this request may proceed.
@@ -426,276 +448,292 @@ export async function startStub({ port, distDir }) {
   /* Routing                                                           */
   /* ---------------------------------------------------------------- */
 
+  /* ---- public: the three auth endpoints, health, and what an OBS browser source reads ---- */
+
+  async function login({ req, res }) {
+    const body = await readBody(req);
+    if (typeof body.password !== "string" || body.password === "") {
+      sendError(res, 400, "BAD_REQUEST", "The password must be 1 to 1024 characters.");
+      return;
+    }
+    if (body.password !== state.password) {
+      sendError(res, 401, "UNAUTHORIZED", "Incorrect password.");
+      return;
+    }
+    state.session.authenticated = true;
+    sendJson(res, 200, sessionInfo());
+  }
+
+  function logout({ res }) {
+    state.session.authenticated = false;
+    sendNoContent(res);
+  }
+
+  function health({ res }) {
+    sendJson(res, 200, {
+      status: "ok",
+      mongo: "up",
+      effects: state.effects.length,
+      routes: state.routes.size,
+    });
+  }
+
+  function streamBySlug({ req, res }, slug) {
+    bump(`SSE ${slug}`);
+    openStream(req, res, slug);
+  }
+
+  function pollBySlug({ res }, slug) {
+    bump(`POLL ${slug}`);
+    const route = state.routes.get(slug);
+    if (!route) {
+      sendError(res, 404, "NOT_FOUND", `No route exists with the slug "${slug}".`);
+      return;
+    }
+    sendJson(res, 200, route);
+  }
+
+  /*
+   * The public audio level stream.
+   *
+   * Audio-reactive effects open this the moment they mount, so every check that loads `audio-bars`
+   * reaches it. It is served as a stream that sends one measurement of silence and then a
+   * heartbeat every few seconds: silence rather than a signal because the SDK's fallback is what
+   * an unconfigured installation actually shows, and a check that only ever saw a lively stub
+   * would never exercise it.
+   *
+   * `audioLevels` in `state` lets a check push a real measurement in and watch an effect react.
+   */
+  function audioLevels({ req, res }) {
+    bump("SSE audio-levels");
+    openAudioStream(req, res);
+  }
+
+  const publicRoutes = {
+    exact: new Map([
+      ["GET /api/auth/session", ({ res }) => sendJson(res, 200, sessionInfo())],
+      ["POST /api/auth/login", login],
+      ["POST /api/auth/logout", logout],
+      ["GET /api/health", health],
+      ["GET /api/audio/levels/events", audioLevels],
+    ]),
+    patterns: [
+      { pattern: /^\/api\/routes\/by-slug\/([^/]+)\/events$/, methods: { GET: streamBySlug } },
+      { pattern: /^\/api\/routes\/by-slug\/([^/]+)$/, methods: { GET: pollBySlug } },
+    ],
+  };
+
+  /* ---- everything below needs a session ---- */
+
+  async function syncEffects({ req, res }) {
+    const body = await readBody(req);
+    const before = state.effects.length;
+    state.effects = Array.isArray(body.effects) ? body.effects : [];
+    sendJson(res, 200, {
+      upserted: state.effects.length,
+      removed: Math.max(0, before - state.effects.length),
+      total: state.effects.length,
+    });
+  }
+
+  function listRoutes({ res }) {
+    sendJson(
+      res,
+      200,
+      [...state.routes.values()].sort((a, b) => a.slug.localeCompare(b.slug)),
+    );
+  }
+
+  function findRouteById(id) {
+    return [...state.routes.values()].find((route) => route.id === id);
+  }
+
+  function getRoute({ res }, id) {
+    const existing = findRouteById(id);
+    if (!existing) {
+      sendError(res, 404, "NOT_FOUND", `No route exists with the id "${id}".`);
+      return;
+    }
+    sendJson(res, 200, existing);
+  }
+
+  async function updateRoute({ req, res }, id) {
+    const existing = findRouteById(id);
+    const body = await readBody(req);
+    if (!existing) {
+      sendError(res, 404, "NOT_FOUND", `No route exists with the id "${id}".`);
+      return;
+    }
+    state.routes.delete(existing.slug);
+    const updated = makeRoute({ ...existing, ...body, updatedAt: nowIso() });
+    state.routes.set(updated.slug, updated);
+    publish(updated.slug);
+    sendJson(res, 200, updated);
+  }
+
+  function deleteRoute({ res }, id) {
+    const existing = findRouteById(id);
+    if (existing) {
+      state.routes.delete(existing.slug);
+      publish(existing.slug);
+    }
+    sendNoContent(res);
+  }
+
+  async function createRoute({ req, res }) {
+    const body = await readBody(req);
+    if (state.routes.has(body.slug)) {
+      sendError(res, 409, "SLUG_CONFLICT", `The slug "${body.slug}" is already in use.`);
+      return;
+    }
+    const created = makeRoute(body);
+    state.routes.set(created.slug, created);
+    publish(created.slug);
+    sendJson(res, 201, created);
+  }
+
+  function listPresets({ res, url }) {
+    const wanted = url.searchParams.get("effectId");
+    const all = [...state.presets.values()];
+    sendJson(res, 200, wanted ? all.filter((p) => p.effectId === wanted) : all);
+  }
+
+  async function createPreset({ req, res }) {
+    const body = await readBody(req);
+    const clash = [...state.presets.values()].some(
+      (p) =>
+        p.effectId === body.effectId && p.name.toLowerCase() === String(body.name).toLowerCase(),
+    );
+    if (clash) {
+      sendError(res, 409, "NAME_CONFLICT", `A preset called "${body.name}" already exists.`);
+      return;
+    }
+    const created = makePreset(body);
+    state.presets.set(created.id, created);
+    sendJson(res, 201, created);
+  }
+
+  function getPreset({ res }, id) {
+    const existing = state.presets.get(id);
+    if (!existing) {
+      sendError(res, 404, "NOT_FOUND", `No preset exists with the id "${id}".`);
+      return;
+    }
+    sendJson(res, 200, existing);
+  }
+
+  async function updatePreset({ req, res }, id) {
+    const existing = state.presets.get(id);
+    if (!existing) {
+      sendError(res, 404, "NOT_FOUND", `No preset exists with the id "${id}".`);
+      return;
+    }
+    const body = await readBody(req);
+    const updated = { ...existing, ...body, updatedAt: nowIso() };
+    state.presets.set(id, updated);
+    sendJson(res, 200, updated);
+  }
+
+  function deletePreset({ res }, id) {
+    state.presets.delete(id);
+    sendNoContent(res);
+  }
+
+  function exportBackup({ res }) {
+    res.writeHead(200, {
+      "Content-Type": "application/json",
+      "Content-Disposition": 'attachment; filename="obs-effects-backup.json"',
+    });
+    res.end(
+      JSON.stringify({
+        schemaVersion: 1,
+        exportedAt: nowIso(),
+        routes: [...state.routes.values()],
+        presets: [...state.presets.values()],
+      }),
+    );
+  }
+
+  async function importBackup({ req, res }) {
+    const body = await readBody(req);
+    const routes = Array.isArray(body.routes) ? body.routes : [];
+    const presets = Array.isArray(body.presets) ? body.presets : [];
+    let routesDeleted = 0;
+    let presetsDeleted = 0;
+    if (body.mode === "replace") {
+      routesDeleted = state.routes.size;
+      presetsDeleted = state.presets.size;
+      state.routes.clear();
+      state.presets.clear();
+    }
+    let routesCreated = 0;
+    let routesUpdated = 0;
+    for (const route of routes) {
+      if (state.routes.has(route.slug)) routesUpdated += 1;
+      else routesCreated += 1;
+      const stored = makeRoute(route);
+      state.routes.set(stored.slug, stored);
+      publish(stored.slug);
+    }
+    let presetsCreated = 0;
+    for (const preset of presets) {
+      const stored = makePreset(preset);
+      state.presets.set(stored.id, stored);
+      presetsCreated += 1;
+    }
+    sendJson(res, 200, {
+      routesCreated,
+      routesUpdated,
+      routesDeleted,
+      presetsCreated,
+      presetsUpdated: 0,
+      presetsDeleted,
+    });
+  }
+
+  const protectedRoutes = {
+    exact: new Map([
+      ["GET /api/effects", ({ res }) => sendJson(res, 200, state.effects)],
+      ["POST /api/effects/sync", syncEffects],
+      ["GET /api/routes", listRoutes],
+      ["POST /api/routes", createRoute],
+      ["GET /api/presets", listPresets],
+      ["POST /api/presets", createPreset],
+      ["GET /api/admin/export", exportBackup],
+      ["POST /api/admin/import", importBackup],
+    ]),
+    patterns: [
+      {
+        pattern: /^\/api\/routes\/([^/]+)$/,
+        methods: { GET: getRoute, PUT: updateRoute, DELETE: deleteRoute },
+      },
+      {
+        pattern: /^\/api\/presets\/([^/]+)$/,
+        methods: { GET: getPreset, PUT: updatePreset, DELETE: deletePreset },
+      },
+    ],
+  };
+
   async function handleApi(req, res, pathname, url) {
     const method = req.method ?? "GET";
     const key = `${method} ${pathname}`;
     bump(key);
+    const context = { req, res, url };
 
-    /* ---- public: the three auth endpoints ---- */
-
-    if (key === "GET /api/auth/session") {
-      sendJson(res, 200, sessionInfo());
+    const publicHandler = findHandler(publicRoutes, method, pathname);
+    if (publicHandler) {
+      await publicHandler(context);
       return;
     }
-
-    if (key === "POST /api/auth/login") {
-      const body = await readBody(req);
-      if (typeof body.password !== "string" || body.password === "") {
-        sendError(res, 400, "BAD_REQUEST", "The password must be 1 to 1024 characters.");
-        return;
-      }
-      if (body.password !== state.password) {
-        sendError(res, 401, "UNAUTHORIZED", "Incorrect password.");
-        return;
-      }
-      state.session.authenticated = true;
-      sendJson(res, 200, sessionInfo());
-      return;
-    }
-
-    if (key === "POST /api/auth/logout") {
-      state.session.authenticated = false;
-      res.writeHead(204);
-      res.end();
-      return;
-    }
-
-    /* ---- public: health ---- */
-
-    if (key === "GET /api/health") {
-      sendJson(res, 200, {
-        status: "ok",
-        mongo: "up",
-        effects: state.effects.length,
-        routes: state.routes.size,
-      });
-      return;
-    }
-
-    /* ---- public: what an OBS browser source reads ---- */
-
-    const bySlug = /^\/api\/routes\/by-slug\/([^/]+)(\/events)?$/.exec(pathname);
-    if (bySlug && method === "GET") {
-      const slug = decodeURIComponent(bySlug[1]);
-      if (bySlug[2]) {
-        bump(`SSE ${slug}`);
-        openStream(req, res, slug);
-        return;
-      }
-      bump(`POLL ${slug}`);
-      const route = state.routes.get(slug);
-      if (!route) {
-        sendError(res, 404, "NOT_FOUND", `No route exists with the slug "${slug}".`);
-        return;
-      }
-      sendJson(res, 200, route);
-      return;
-    }
-
-    /*
-     * The public audio level stream.
-     *
-     * Audio-reactive effects open this the moment they mount, so every check that loads `audio-bars`
-     * reaches it. It is served as a stream that sends one measurement of silence and then a
-     * heartbeat every few seconds: silence rather than a signal because the SDK's fallback is what
-     * an unconfigured installation actually shows, and a check that only ever saw a lively stub
-     * would never exercise it.
-     *
-     * `audioLevels` in `state` lets a check push a real measurement in and watch an effect react.
-     */
-    if (key === "GET /api/audio/levels/events") {
-      bump("SSE audio-levels");
-      openAudioStream(req, res);
-      return;
-    }
-
-    /* ---- everything below needs a session ---- */
 
     if (!authorised()) {
       sendError(res, 401, "UNAUTHORIZED", "Sign in to use the admin API.");
       return;
     }
 
-    if (key === "GET /api/effects") {
-      sendJson(res, 200, state.effects);
-      return;
-    }
-
-    if (key === "POST /api/effects/sync") {
-      const body = await readBody(req);
-      const before = state.effects.length;
-      state.effects = Array.isArray(body.effects) ? body.effects : [];
-      sendJson(res, 200, {
-        upserted: state.effects.length,
-        removed: Math.max(0, before - state.effects.length),
-        total: state.effects.length,
-      });
-      return;
-    }
-
-    if (key === "GET /api/routes") {
-      sendJson(
-        res,
-        200,
-        [...state.routes.values()].sort((a, b) => a.slug.localeCompare(b.slug)),
-      );
-      return;
-    }
-
-    const byId = /^\/api\/routes\/([^/]+)$/.exec(pathname);
-    if (byId) {
-      const id = decodeURIComponent(byId[1]);
-      const existing = [...state.routes.values()].find((route) => route.id === id);
-      if (method === "GET") {
-        if (!existing) {
-          sendError(res, 404, "NOT_FOUND", `No route exists with the id "${id}".`);
-          return;
-        }
-        sendJson(res, 200, existing);
-        return;
-      }
-      if (method === "PUT") {
-        const body = await readBody(req);
-        if (!existing) {
-          sendError(res, 404, "NOT_FOUND", `No route exists with the id "${id}".`);
-          return;
-        }
-        state.routes.delete(existing.slug);
-        const updated = makeRoute({ ...existing, ...body, updatedAt: nowIso() });
-        state.routes.set(updated.slug, updated);
-        publish(updated.slug);
-        sendJson(res, 200, updated);
-        return;
-      }
-      if (method === "DELETE") {
-        if (existing) {
-          state.routes.delete(existing.slug);
-          publish(existing.slug);
-        }
-        res.writeHead(204);
-        res.end();
-        return;
-      }
-    }
-
-    if (key === "POST /api/routes") {
-      const body = await readBody(req);
-      if (state.routes.has(body.slug)) {
-        sendError(res, 409, "SLUG_CONFLICT", `The slug "${body.slug}" is already in use.`);
-        return;
-      }
-      const created = makeRoute(body);
-      state.routes.set(created.slug, created);
-      publish(created.slug);
-      sendJson(res, 201, created);
-      return;
-    }
-
-    if (key === "GET /api/presets") {
-      const wanted = url.searchParams.get("effectId");
-      const all = [...state.presets.values()];
-      sendJson(res, 200, wanted ? all.filter((p) => p.effectId === wanted) : all);
-      return;
-    }
-
-    if (key === "POST /api/presets") {
-      const body = await readBody(req);
-      const clash = [...state.presets.values()].some(
-        (p) =>
-          p.effectId === body.effectId && p.name.toLowerCase() === String(body.name).toLowerCase(),
-      );
-      if (clash) {
-        sendError(res, 409, "NAME_CONFLICT", `A preset called "${body.name}" already exists.`);
-        return;
-      }
-      const created = makePreset(body);
-      state.presets.set(created.id, created);
-      sendJson(res, 201, created);
-      return;
-    }
-
-    const presetById = /^\/api\/presets\/([^/]+)$/.exec(pathname);
-    if (presetById) {
-      const id = decodeURIComponent(presetById[1]);
-      const existing = state.presets.get(id);
-      if (method === "PUT") {
-        if (!existing) {
-          sendError(res, 404, "NOT_FOUND", `No preset exists with the id "${id}".`);
-          return;
-        }
-        const body = await readBody(req);
-        const updated = { ...existing, ...body, updatedAt: nowIso() };
-        state.presets.set(id, updated);
-        sendJson(res, 200, updated);
-        return;
-      }
-      if (method === "DELETE") {
-        state.presets.delete(id);
-        res.writeHead(204);
-        res.end();
-        return;
-      }
-      if (method === "GET") {
-        if (!existing) {
-          sendError(res, 404, "NOT_FOUND", `No preset exists with the id "${id}".`);
-          return;
-        }
-        sendJson(res, 200, existing);
-        return;
-      }
-    }
-
-    if (key === "GET /api/admin/export") {
-      res.writeHead(200, {
-        "Content-Type": "application/json",
-        "Content-Disposition": 'attachment; filename="obs-effects-backup.json"',
-      });
-      res.end(
-        JSON.stringify({
-          schemaVersion: 1,
-          exportedAt: nowIso(),
-          routes: [...state.routes.values()],
-          presets: [...state.presets.values()],
-        }),
-      );
-      return;
-    }
-
-    if (key === "POST /api/admin/import") {
-      const body = await readBody(req);
-      const routes = Array.isArray(body.routes) ? body.routes : [];
-      const presets = Array.isArray(body.presets) ? body.presets : [];
-      let routesDeleted = 0;
-      let presetsDeleted = 0;
-      if (body.mode === "replace") {
-        routesDeleted = state.routes.size;
-        presetsDeleted = state.presets.size;
-        state.routes.clear();
-        state.presets.clear();
-      }
-      let routesCreated = 0;
-      let routesUpdated = 0;
-      for (const route of routes) {
-        if (state.routes.has(route.slug)) routesUpdated += 1;
-        else routesCreated += 1;
-        const stored = makeRoute(route);
-        state.routes.set(stored.slug, stored);
-        publish(stored.slug);
-      }
-      let presetsCreated = 0;
-      for (const preset of presets) {
-        const stored = makePreset(preset);
-        state.presets.set(stored.id, stored);
-        presetsCreated += 1;
-      }
-      sendJson(res, 200, {
-        routesCreated,
-        routesUpdated,
-        routesDeleted,
-        presetsCreated,
-        presetsUpdated: 0,
-        presetsDeleted,
-      });
+    const protectedHandler = findHandler(protectedRoutes, method, pathname);
+    if (protectedHandler) {
+      await protectedHandler(context);
       return;
     }
 

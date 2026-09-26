@@ -128,7 +128,9 @@ const CHECKS = [
 function parseArgs(argv) {
   const flags = new Set(argv.filter((a) => a.startsWith("--") && !a.includes("=")));
   const only = argv.find((a) => a.startsWith("--only="))?.slice("--only=".length);
-  const targets = flags.has("--both") ? ["prod", "dev"] : flags.has("--dev") ? ["dev"] : ["prod"];
+  let targets = ["prod"];
+  if (flags.has("--both")) targets = ["prod", "dev"];
+  else if (flags.has("--dev")) targets = ["dev"];
   return { targets, slow: flags.has("--slow"), only };
 }
 
@@ -202,11 +204,43 @@ async function runTarget({ target, baseUrl, stub, browser, slow, only }) {
     const added = results.entries.slice(before);
     const failed = added.filter((entry) => !entry.passed).length;
     const seconds = ((Date.now() - startedAt) / 1000).toFixed(1);
-    process.stdout.write(
-      `${failed === 0 ? "ok" : `${failed} FAILED`} (${added.length} assertions, ${seconds}s)\n`,
-    );
+    const status = failed === 0 ? "ok" : `${failed} FAILED`;
+    process.stdout.write(`${status} (${added.length} assertions, ${seconds}s)\n`);
   }
   return results;
+}
+
+/**
+ * A development target that cannot reach the API is a misconfigured container, not a failing
+ * application. Say which it is before spending ten minutes on checks that will all fail for the
+ * same reason.
+ */
+async function assertDevProxyReachesStub(baseUrl) {
+  const probe = await fetch(`${baseUrl}/api/health`).catch(() => null);
+  if (!probe?.ok) {
+    throw new Error(
+      `The Vite dev server at ${baseUrl} could not proxy /api to the stub backend. ` +
+        "Run the container with `--add-host backend:127.0.0.1` — see the note at the top " +
+        "of tools/verify/run.mjs.",
+    );
+  }
+}
+
+/** Prints every assertion, the totals, and the failures again; sets a failing exit code if any. */
+function printSummary(all) {
+  console.log("\n──────────────────────────────────────────────────────────────");
+  for (const entry of all.entries) {
+    const detail = entry.detail ? `\n        ${entry.detail}` : "";
+    console.log(`${entry.passed ? "PASS" : "FAIL"}  ${entry.label}${detail}`);
+  }
+  console.log("──────────────────────────────────────────────────────────────");
+  console.log(`${all.passedCount}/${all.entries.length} assertions passed.`);
+
+  if (all.failures.length > 0) {
+    console.log(`\n${all.failures.length} FAILED:`);
+    for (const entry of all.failures) console.log(`  ✗ ${entry.label} — ${entry.detail}`);
+    process.exitCode = 1;
+  }
 }
 
 async function main() {
@@ -236,17 +270,7 @@ async function main() {
       } else {
         dev ??= await startDevServer();
         baseUrl = dev.baseUrl;
-        // A development target that cannot reach the API is a misconfigured container, not a
-        // failing application. Say which it is before spending ten minutes on checks that will all
-        // fail for the same reason.
-        const probe = await fetch(`${baseUrl}/api/health`).catch(() => null);
-        if (!probe?.ok) {
-          throw new Error(
-            `The Vite dev server at ${baseUrl} could not proxy /api to the stub backend. ` +
-              "Run the container with `--add-host backend:127.0.0.1` — see the note at the top " +
-              "of tools/verify/run.mjs.",
-          );
-        }
+        await assertDevProxyReachesStub(baseUrl);
       }
 
       console.log(`\n${target === "prod" ? "Production bundle" : "Vite dev server"} — ${baseUrl}`);
@@ -259,20 +283,7 @@ async function main() {
     await stub.close();
   }
 
-  console.log("\n──────────────────────────────────────────────────────────────");
-  for (const entry of all.entries) {
-    console.log(
-      `${entry.passed ? "PASS" : "FAIL"}  ${entry.label}${entry.detail ? `\n        ${entry.detail}` : ""}`,
-    );
-  }
-  console.log("──────────────────────────────────────────────────────────────");
-  console.log(`${all.passedCount}/${all.entries.length} assertions passed.`);
-
-  if (all.failures.length > 0) {
-    console.log(`\n${all.failures.length} FAILED:`);
-    for (const entry of all.failures) console.log(`  ✗ ${entry.label} — ${entry.detail}`);
-    process.exitCode = 1;
-  }
+  printSummary(all);
 }
 
 await main();

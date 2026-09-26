@@ -32,16 +32,10 @@ const SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const CHANNELS = { 0: 1, 2: 3, 4: 2, 6: 4 };
 
 /**
- * Decodes a PNG buffer into `{ width, height, channels, data }`.
- *
- * `data` is one byte per channel per pixel, row-major, with no padding — so pixel (x, y) starts at
- * `(y * width + x) * channels`.
+ * Walks the chunk list and returns the parsed `IHDR` header (or `null` if there is none) and the
+ * `IDAT` payloads, in order.
  */
-export function decodePng(buffer) {
-  if (!buffer.subarray(0, 8).equals(SIGNATURE)) {
-    throw new Error("Not a PNG: the file does not start with the PNG signature.");
-  }
-
+function readChunks(buffer) {
   let offset = 8;
   let header = null;
   const pixelChunks = [];
@@ -69,6 +63,11 @@ export function decodePng(buffer) {
     }
   }
 
+  return { header, pixelChunks };
+}
+
+/** Rejects anything this reader does not support, and returns the channel count per pixel. */
+function channelsFor(header) {
   if (!header) throw new Error("Not a usable PNG: it has no IHDR chunk.");
   if (header.bitDepth !== 8) {
     throw new Error(`Unsupported PNG bit depth ${header.bitDepth}; this reader handles 8 only.`);
@@ -79,6 +78,54 @@ export function decodePng(buffer) {
 
   const channels = CHANNELS[header.colorType];
   if (!channels) throw new Error(`Unsupported PNG colour type ${header.colorType}.`);
+  return channels;
+}
+
+/** "Paeth": pick whichever of the three neighbours predicts the value best. */
+function paeth(a, b, c) {
+  const p = a + b - c;
+  const pa = Math.abs(p - a);
+  const pb = Math.abs(p - b);
+  const pc = Math.abs(p - c);
+  if (pa <= pb && pa <= pc) return a;
+  if (pb <= pc) return b;
+  return c;
+}
+
+/**
+ * Reverses one filtered byte, given the byte to the left (`a`), the byte above (`b`) and the byte
+ * above-left (`c`). The result is not yet truncated to a byte.
+ */
+function unfilterByte(filter, value, a, b, c, y) {
+  switch (filter) {
+    case 0:
+      return value;
+    case 1:
+      return value + a;
+    case 2:
+      return value + b;
+    case 3:
+      return value + ((a + b) >> 1);
+    case 4:
+      return value + paeth(a, b, c);
+    default:
+      throw new Error(`Unknown PNG row filter ${filter} on row ${y}.`);
+  }
+}
+
+/**
+ * Decodes a PNG buffer into `{ width, height, channels, data }`.
+ *
+ * `data` is one byte per channel per pixel, row-major, with no padding — so pixel (x, y) starts at
+ * `(y * width + x) * channels`.
+ */
+export function decodePng(buffer) {
+  if (!buffer.subarray(0, 8).equals(SIGNATURE)) {
+    throw new Error("Not a PNG: the file does not start with the PNG signature.");
+  }
+
+  const { header, pixelChunks } = readChunks(buffer);
+  const channels = channelsFor(header);
 
   const raw = inflateSync(Buffer.concat(pixelChunks));
   const { width, height } = header;
@@ -102,33 +149,7 @@ export function decodePng(buffer) {
       const a = x >= channels ? out[target + x - channels] : 0;
       const b = y > 0 ? out[target - stride + x] : 0;
       const c = x >= channels && y > 0 ? out[target - stride + x - channels] : 0;
-      let restored;
-      switch (filter) {
-        case 0:
-          restored = value;
-          break;
-        case 1:
-          restored = value + a;
-          break;
-        case 2:
-          restored = value + b;
-          break;
-        case 3:
-          restored = value + ((a + b) >> 1);
-          break;
-        case 4: {
-          // "Paeth": pick whichever of the three neighbours predicts the value best.
-          const p = a + b - c;
-          const pa = Math.abs(p - a);
-          const pb = Math.abs(p - b);
-          const pc = Math.abs(p - c);
-          restored = value + (pa <= pb && pa <= pc ? a : pb <= pc ? b : c);
-          break;
-        }
-        default:
-          throw new Error(`Unknown PNG row filter ${filter} on row ${y}.`);
-      }
-      out[target + x] = restored & 0xff;
+      out[target + x] = unfilterByte(filter, value, a, b, c, y) & 0xff;
     }
   }
 

@@ -25,6 +25,8 @@ const POLL_INTERVAL_MS = 5000;
  */
 export async function checkStreamSuppressesPoll({ stub, baseUrl, browser, results, target }) {
   const slug = "sse-probe";
+  const pollLabel = `POLL ${slug}`;
+  const streamLabel = `SSE ${slug}`;
   stub.state.streamMode = "normal";
   stub.saveRoute({ slug, effectId: "plasma-shader", enabled: true, params: {} });
 
@@ -54,12 +56,12 @@ export async function checkStreamSuppressesPoll({ stub, baseUrl, browser, result
       pollsWhileStreaming === 0,
       `[${target}] the poll is dormant while the stream delivers`,
       `${pollsWhileStreaming} polls in 13s (${Math.floor(13_000 / POLL_INTERVAL_MS)} were due if it had kept running); ` +
-        `${stub.count(`POLL ${slug}`)} polls in total since load, ${stub.count(`SSE ${slug}`)} stream connections`,
+        `${stub.count(pollLabel)} polls in total since load, ${stub.count(streamLabel)} stream connections`,
     );
     results.ok(
       stub.count(`POLL ${slug}`) === 1,
       `[${target}] exactly one ordinary GET is made, for the first frame`,
-      `total polls: ${stub.count(`POLL ${slug}`)}`,
+      `total polls: ${stub.count(pollLabel)}`,
     );
 
     /* ---- kill the stream: the poll must come back ---- */
@@ -113,7 +115,7 @@ export async function checkStreamSuppressesPoll({ stub, baseUrl, browser, result
     results.ok(
       pollsWhileStreamingAgain === 0,
       `[${target}] the poll stops again once the stream recovers`,
-      `${pollsWhileStreamingAgain} polls in 12s of restored streaming; total stream connections ${stub.count(`SSE ${slug}`)}`,
+      `${pollsWhileStreamingAgain} polls in 12s of restored streaming; total stream connections ${stub.count(streamLabel)}`,
     );
 
     /* ---- leaving the page must close the stream ---- */
@@ -129,7 +131,7 @@ export async function checkStreamSuppressesPoll({ stub, baseUrl, browser, result
     results.ok(
       stub.count(`POLL ${slug}`) === pollsAfterLeaving,
       `[${target}] navigating away stops the poll and closes the stream`,
-      `open streams: ${stub.openStreams()}; polls after leaving: ${stub.count(`POLL ${slug}`) - pollsAfterLeaving}`,
+      `open streams: ${stub.openStreams()}; polls after leaving: ${stub.count(pollLabel) - pollsAfterLeaving}`,
     );
 
     results.ok(
@@ -310,11 +312,12 @@ export async function checkSilentStreamWatchdog({ stub, baseUrl, browser, result
 
     await sleep(35_000);
     const connections = stub.count(`SSE ${slug}`);
+    const pollLabel = `POLL ${slug}`;
 
     results.ok(
       connections >= 2,
       `[${target}] the 45s silence watchdog replaces the dead stream`,
-      `${connections} stream connections opened in ~55s, ${stub.count(`POLL ${slug}`)} polls`,
+      `${connections} stream connections opened in ~55s, ${stub.count(pollLabel)} polls`,
     );
   } catch (error) {
     results.broke(`[${target}] silent-stream watchdog`, error);
@@ -481,14 +484,14 @@ export async function checkStaleErrorIsReplaced({ stub, baseUrl, browser, result
       async () =>
         page.evaluate(() => {
           const box = document.querySelector(".renderer-error");
-          return box && box.textContent.includes("on fire") ? box.textContent : null;
+          return box?.textContent.includes("on fire") ? box.textContent : null;
         }),
       { timeout: 20_000, what: "the server error to reach the screen" },
     );
     results.ok(
       serverMessage !== null,
       `[${target}] a backend failure is reported on screen`,
-      serverMessage.replace(/\s+/g, " ").slice(0, 90),
+      serverMessage.replaceAll(/\s+/g, " ").slice(0, 90),
     );
 
     // The failure goes away: the slug is simply not configured, which is what it was all along.
@@ -497,14 +500,14 @@ export async function checkStaleErrorIsReplaced({ stub, baseUrl, browser, result
       async () =>
         page.evaluate(() => {
           const box = document.querySelector(".renderer-error");
-          return box && box.textContent.includes("No route is configured") ? box.textContent : null;
+          return box?.textContent.includes("No route is configured") ? box.textContent : null;
         }),
       { timeout: 20_000, what: "the message to go back to describing the real state" },
     );
     results.ok(
       absentMessage !== null,
       `[${target}] the message goes back to the truth once the failure passes`,
-      absentMessage.replace(/\s+/g, " ").slice(0, 90),
+      absentMessage.replaceAll(/\s+/g, " ").slice(0, 90),
     );
   } catch (error) {
     results.broke(`[${target}] a stale error message is replaced`, error);
@@ -543,20 +546,22 @@ export async function checkNoEventSourceFallsBackToPolling({
       { timeout: 20_000, what: "the effect to mount without an event stream" },
     );
     await sleep(12_000);
+    const streamLabel = `SSE ${slug}`;
+    const pollLabel = `POLL ${slug}`;
 
     results.ok(
       canvasId !== null,
       `[${target}] the page still works with no EventSource in the runtime`,
     );
     results.ok(
-      stub.count(`SSE ${slug}`) === 0,
+      stub.count(streamLabel) === 0,
       `[${target}] no stream is attempted when the runtime has no EventSource`,
-      `${stub.count(`SSE ${slug}`)} stream connections`,
+      `${stub.count(streamLabel)} stream connections`,
     );
     results.ok(
-      stub.count(`POLL ${slug}`) >= 3,
+      stub.count(pollLabel) >= 3,
       `[${target}] the poll carries the page on its own`,
-      `${stub.count(`POLL ${slug}`)} polls in ~12s`,
+      `${stub.count(pollLabel)} polls in ~12s`,
     );
     results.ok(
       recorder.consoleWarnings.some((line) => line.includes("no EventSource")),
@@ -589,7 +594,7 @@ export async function checkAbsentSlug({ stub, baseUrl, browser, results, target 
     results.ok(
       message.includes("nothing-here"),
       `[${target}] an unknown slug explains itself on screen`,
-      message.replace(/\s+/g, " ").slice(0, 120),
+      message.replaceAll(/\s+/g, " ").slice(0, 120),
     );
 
     // And creating the route fixes the page with no reload — the event stream's job.

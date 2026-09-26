@@ -11,9 +11,10 @@
  * `stage.render()` paints nothing, and a parameter read in `setup` but not re-read in `setParams`
  * is a slider that silently does nothing.
  *
- * So this generator does not emit a stub full of `TODO`. It emits a complete, running, parameterised
- * effect — a drifting fractal-noise field for `three`, a ring of pulsing bokeh dots for `pixi` —
- * that passes `pnpm verify` the moment it is written. You then change the picture, not the plumbing.
+ * So this generator does not emit a stub full of placeholders to fill in. It emits a complete,
+ * running, parameterised effect — a drifting fractal-noise field for `three`, a ring of pulsing
+ * bokeh dots for `pixi` — that passes `pnpm verify` the moment it is written. You then change the
+ * picture, not the plumbing.
  *
  * ## How to run it
  *
@@ -101,12 +102,13 @@ async function exists(path) {
  * rather than asked for separately.
  */
 function camelCase(id) {
-  return id.replace(/-([a-z0-9])/g, (_, character) => character.toUpperCase());
+  return id.replaceAll(/-([a-z0-9])/g, (_, character) => character.toUpperCase());
 }
 
 /** Escapes a string for embedding in double-quoted generated TypeScript. */
 function quoted(text) {
-  return `"${text.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+  const escaped = text.replaceAll("\\", String.raw`\\`).replaceAll('"', String.raw`\"`);
+  return `"${escaped}"`;
 }
 
 /**
@@ -532,7 +534,7 @@ function registerInIndex(source, { camel, engine, id }) {
   const importLine = `import ${camel} from "./${engine}/${id}";\n`;
   const imports = [...source.matchAll(/^import .+ from "\.\/(three|pixi)\/.+";$/gm)];
   const lastImport = imports.at(-1);
-  if (!lastImport || lastImport.index === undefined) {
+  if (lastImport?.index === undefined) {
     throw new Error(
       "Could not find the block of effect imports in src/effects/index.ts. It no longer looks " +
         'like a run of `import x from "./three/y";` lines, so this generator cannot place a new ' +
@@ -559,8 +561,8 @@ function registerInIndex(source, { camel, engine, id }) {
    * otherwise perfect generated file. So the width is checked here and the statement is written in
    * whichever of the two shapes Prettier would have chosen.
    */
-  const exportMatch = updated.match(/export \{([\s\S]*?)\};\n?$/);
-  if (!exportMatch) {
+  const exportMatch = /export \{([\s\S]*?)\};\n?$/.exec(updated);
+  if (exportMatch?.index === undefined) {
     throw new Error(
       "Could not find the trailing `export { ... };` statement in src/effects/index.ts.",
     );
@@ -573,10 +575,8 @@ function registerInIndex(source, { camel, engine, id }) {
     camel,
   ];
   const oneLine = `export { ${names.join(", ")} };\n`;
-  const rewritten =
-    oneLine.length - 1 <= 100
-      ? oneLine
-      : `export {\n${names.map((name) => `  ${name},\n`).join("")}};\n`;
+  const multiLineNames = names.map((name) => `  ${name},\n`).join("");
+  const rewritten = oneLine.length - 1 <= 100 ? oneLine : `export {\n${multiLineNames}};\n`;
 
   return updated.slice(0, exportMatch.index) + rewritten;
 }
@@ -642,7 +642,9 @@ async function main() {
   );
 }
 
-main().catch((error) => {
+try {
+  await main();
+} catch (error) {
   console.error(String(error?.stack ?? error));
   process.exit(1);
-});
+}

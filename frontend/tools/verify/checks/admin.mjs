@@ -58,7 +58,7 @@ export async function checkSignInFlow({ stub, baseUrl, browser, results, target 
     results.ok(
       message.includes("Incorrect password") && page.url().includes("/admin/login"),
       `[${target}] a wrong password reports itself without navigating`,
-      `${message.replace(/\s+/g, " ").trim()} — url ${page.url().replace(baseUrl, "")}`,
+      `${message.replaceAll(/\s+/g, " ").trim()} — url ${page.url().replace(baseUrl, "")}`,
     );
 
     /* ---- the right password returns to the remembered page ---- */
