@@ -1,7 +1,7 @@
 import * as PIXI from "pixi.js";
 
 import { bool, colorHex, int, num } from "../paramUtils";
-import { createEnvelopes, createPixiStage, defineEffect, onFrame, useAudio } from "../sdk";
+import { createEnvelopes, createPixiStage, defineEffect, onFrame, random, useAudio } from "../sdk";
 
 /**
  * Main Web Cam Border
@@ -184,6 +184,11 @@ const GLOW_PASSES: Record<BreatheMode, { width: number; alpha: number }[]> = {
     { width: 1, alpha: 0.9 },
   ],
 };
+
+/** A random ring colour, so sparkles, sparks and bolts always match the rings they come from. */
+function randomWaveColor(fallback: string): string {
+  return WAVE_CONFIGS[Math.floor(random() * WAVE_CONFIGS.length)]?.color ?? fallback;
+}
 
 interface Sparkle {
   angle: number;
@@ -374,15 +379,15 @@ const mainWebCamBorder = defineEffect({
       particles = [];
       for (let i = 0; i < particleCount; i += 1) {
         particles.push({
-          angle: Math.random() * Math.PI * 2,
-          speed: (0.1 + Math.random() * 0.35) * (Math.random() > 0.5 ? 1 : -1),
-          radiusOffset: (Math.random() - 0.5) * 60,
-          size: 1 + Math.random() * 2.5,
-          driftPhase: Math.random() * Math.PI * 2,
-          driftSpeed: 0.4 + Math.random() * 1.2,
-          driftAmplitude: 4 + Math.random() * 14,
-          color: WAVE_CONFIGS[Math.floor(Math.random() * WAVE_CONFIGS.length)]?.color ?? "#00ff41",
-          alpha: 0.3 + Math.random() * 0.5,
+          angle: random() * Math.PI * 2,
+          speed: (0.1 + random() * 0.35) * (random() > 0.5 ? 1 : -1),
+          radiusOffset: (random() - 0.5) * 60,
+          size: 1 + random() * 2.5,
+          driftPhase: random() * Math.PI * 2,
+          driftSpeed: 0.4 + random() * 1.2,
+          driftAmplitude: 4 + random() * 14,
+          color: randomWaveColor("#00ff41"),
+          alpha: 0.3 + random() * 0.5,
         });
       }
     };
@@ -405,7 +410,7 @@ const mainWebCamBorder = defineEffect({
     ): void => {
       for (let i = 0; i <= WAVE_STEPS; i += 1) {
         const angle = (i / WAVE_STEPS) * Math.PI * 2;
-        const wobble = jitter > 0 ? (Math.random() - 0.5) * jitter : 0;
+        const wobble = jitter > 0 ? (random() - 0.5) * jitter : 0;
         const r = radius + Math.sin(angle * waveCount + phase) * amplitude + wobble;
         const x = cx + Math.cos(angle) * r;
         const y = cy + Math.sin(angle) * r;
@@ -413,6 +418,222 @@ const mainWebCamBorder = defineEffect({
         else waveLayer.lineTo(x, y);
       }
       waveLayer.closePath();
+    };
+
+    /** Advances one ring's two drifts and strokes its three glow passes. */
+    const drawWaveRing = (
+      i: number,
+      config: WaveConfig,
+      dt: number,
+      cx: number,
+      cy: number,
+      ringRadius: number,
+      activity: number,
+    ): void => {
+      // Two slow independent drifts per ring, alternating direction, so no ring ever settles.
+      speedDrift[i] = (speedDrift[i] ?? 0) + dt * (0.008 + i * 0.0005) * (i % 2 === 0 ? 1 : -1);
+      ampDrift[i] = (ampDrift[i] ?? 0) + dt * (0.019 + i * 0.002);
+
+      const speedMod = 1 + 0.28 * Math.sin(speedDrift[i] ?? 0);
+      const ampEnvelope = 0.45 + 0.55 * Math.abs(Math.sin(ampDrift[i] ?? 0));
+      const ambient = 0.55 + activity * 0.45;
+
+      const phase = time * config.speed * speedMod + config.phaseOffset;
+      const amplitude = config.baseAmplitude * ampEnvelope * ambient * amplitudeScale;
+      const radius = ringRadius * config.radiusScale;
+
+      const passes = GLOW_PASSES[config.breatheMode];
+      const width = config.lineWidth * (0.92 + ambient * 0.1);
+      // Only `electric` jitters its vertices — that is what makes it crackle where the others flow.
+      const jitter = config.breatheMode === "electric" ? amplitude * 0.08 * ambient : 0;
+
+      for (let p = 0; p < passes.length; p += 1) {
+        const pass = passes[p];
+        if (pass === undefined) continue;
+        // The sharp core is always drawn; the two soft passes behind it scale with Glow.
+        const isCore = p === passes.length - 1;
+        const passWidth = isCore ? width : width * pass.width * glowScale;
+        if (passWidth <= 0) continue;
+        buildWavePath(cx, cy, radius, config.waveCount, amplitude, phase, jitter * (p + 1) * 0.3);
+        waveLayer.stroke({ color: config.color, alpha: pass.alpha, width: passWidth });
+      }
+    };
+
+    /** Moves and draws the motes circling the frame, reseeding them when the count changes. */
+    const drawParticles = (
+      dt: number,
+      cx: number,
+      cy: number,
+      baseRadius: number,
+      breathe: number,
+      activity: number,
+    ): void => {
+      particleLayer.clear();
+      if (particles.length !== particleCount) seedParticles();
+      for (const particle of particles) {
+        particle.angle += particle.speed * dt * (1 + activity);
+        const drift =
+          Math.sin(time * particle.driftSpeed + particle.driftPhase) * particle.driftAmplitude;
+        const r = (baseRadius + particle.radiusOffset + drift) * breathe;
+        particleLayer
+          .circle(
+            cx + Math.cos(particle.angle) * r,
+            cy + Math.sin(particle.angle) * r,
+            particle.size,
+          )
+          .fill({ color: particle.color, alpha: particle.alpha });
+      }
+    };
+
+    /** Spawns sparkles on the rim at an audio-driven rate, then fades and draws them. */
+    const updateSparkles = (
+      dt: number,
+      cx: number,
+      cy: number,
+      baseRadius: number,
+      breathe: number,
+      activity: number,
+    ): void => {
+      sparkleAccum += dt;
+      if (sparkleAccum >= 0.28 / (0.3 + activity * 0.9)) {
+        sparkleAccum = 0;
+        sparkles.push({
+          angle: random() * Math.PI * 2,
+          radius: baseRadius + (random() - 0.5) * 40,
+          size: 1.5 + random() * 3,
+          alpha: 1,
+          decay: 1.2 + random() * 1.4,
+          color: randomWaveColor("#ffffff"),
+        });
+        if (sparkles.length > 60) sparkles.shift();
+      }
+      for (let i = sparkles.length - 1; i >= 0; i -= 1) {
+        const sparkle = sparkles[i];
+        if (sparkle === undefined) continue;
+        sparkle.alpha -= sparkle.decay * dt;
+        if (sparkle.alpha <= 0) {
+          sparkles.splice(i, 1);
+          continue;
+        }
+        const r = sparkle.radius * breathe;
+        const x = cx + Math.cos(sparkle.angle) * r;
+        const y = cy + Math.sin(sparkle.angle) * r;
+        effectLayer
+          .circle(x, y, sparkle.size * 2.5)
+          .fill({ color: sparkle.color, alpha: sparkle.alpha * 0.15 });
+        effectLayer.circle(x, y, sparkle.size).fill({ color: sparkle.color, alpha: sparkle.alpha });
+      }
+    };
+
+    /** Throws a burst of three embers outward from one random point on the rim. */
+    const spawnSparkBurst = (cx: number, cy: number, baseRadius: number): void => {
+      const angle = random() * Math.PI * 2;
+      const outward = 40 + random() * 160;
+      for (let i = 0; i < 3; i += 1) {
+        const spread = angle + (random() - 0.5) * 0.6;
+        sparks.push({
+          x: cx + Math.cos(angle) * baseRadius,
+          y: cy + Math.sin(angle) * baseRadius,
+          vx: Math.cos(spread) * outward,
+          vy: Math.sin(spread) * outward,
+          life: 1,
+          decay: 1.5 + random(),
+          color: randomWaveColor("#ffffff"),
+        });
+      }
+      while (sparks.length > 120) sparks.shift();
+    };
+
+    /** Spawns spark bursts at an audio-driven rate, then moves, fades and draws the embers. */
+    const updateSparks = (
+      dt: number,
+      cx: number,
+      cy: number,
+      baseRadius: number,
+      activity: number,
+    ): void => {
+      sparkAccum += dt;
+      if (sparkAccum >= 0.15 / (0.4 + activity * 0.7)) {
+        sparkAccum = 0;
+        spawnSparkBurst(cx, cy, baseRadius);
+      }
+      for (let i = sparks.length - 1; i >= 0; i -= 1) {
+        const spark = sparks[i];
+        if (spark === undefined) continue;
+        spark.x += spark.vx * dt;
+        spark.y += spark.vy * dt;
+        spark.life -= spark.decay * dt;
+        if (spark.life <= 0) {
+          sparks.splice(i, 1);
+          continue;
+        }
+        effectLayer
+          .circle(spark.x, spark.y, 1.5 * spark.life)
+          .fill({ color: spark.color, alpha: spark.life });
+      }
+    };
+
+    /**
+     * A jagged chord across the ring: two random points on the rim, joined by a path that wanders
+     * off the straight line between them.
+     */
+    const spawnBolt = (cx: number, cy: number, baseRadius: number): void => {
+      const a0 = random() * Math.PI * 2;
+      const a1 = a0 + Math.PI * (0.4 + random() * 0.8);
+      const x0 = cx + Math.cos(a0) * baseRadius;
+      const y0 = cy + Math.sin(a0) * baseRadius;
+      const x1 = cx + Math.cos(a1) * baseRadius;
+      const y1 = cy + Math.sin(a1) * baseRadius;
+      const points: number[] = [];
+      const steps = 12;
+      for (let i = 0; i <= steps; i += 1) {
+        const t = i / steps;
+        // The deviation is largest in the middle and zero at both ends, so the arc stays
+        // anchored to the rim.
+        const wander = Math.sin(t * Math.PI) * 40;
+        points.push(
+          x0 + (x1 - x0) * t + (random() - 0.5) * wander,
+          y0 + (y1 - y0) * t + (random() - 0.5) * wander,
+        );
+      }
+      bolts.push({
+        points,
+        alpha: 1,
+        decay: 3 + random() * 3,
+        color: randomWaveColor("#ffffff"),
+      });
+      while (bolts.length > 8) bolts.shift();
+    };
+
+    /** Fires lightning at an audio-driven, jittered interval, then fades and draws the bolts. */
+    const updateLightning = (
+      dt: number,
+      cx: number,
+      cy: number,
+      baseRadius: number,
+      activity: number,
+    ): void => {
+      lightningAccum += dt;
+      if (lightningAccum >= 5 * (1.5 - activity * 0.7) * (0.7 + random() * 0.6)) {
+        lightningAccum = 0;
+        spawnBolt(cx, cy, baseRadius);
+      }
+      for (let i = bolts.length - 1; i >= 0; i -= 1) {
+        const bolt = bolts[i];
+        if (bolt === undefined) continue;
+        bolt.alpha -= bolt.decay * dt;
+        if (bolt.alpha <= 0) {
+          bolts.splice(i, 1);
+          continue;
+        }
+        // Two passes: a wide soft one and a sharp core, the same glow trick the rings use.
+        effectLayer
+          .poly(bolt.points, false)
+          .stroke({ color: bolt.color, alpha: bolt.alpha * 0.2, width: 6 });
+        effectLayer
+          .poly(bolt.points, false)
+          .stroke({ color: bolt.color, alpha: bolt.alpha, width: 1.5 });
+      }
     };
 
     onFrame(scope, ctx.fpsCap, ({ dt, now }) => {
@@ -443,180 +664,19 @@ const mainWebCamBorder = defineEffect({
       waveLayer.clear();
       for (let i = 0; i < WAVE_CONFIGS.length; i += 1) {
         const config = WAVE_CONFIGS[i];
-        if (config === undefined) continue;
-
-        // Two slow independent drifts per ring, alternating direction, so no ring ever settles.
-        speedDrift[i] = (speedDrift[i] ?? 0) + dt * (0.008 + i * 0.0005) * (i % 2 === 0 ? 1 : -1);
-        ampDrift[i] = (ampDrift[i] ?? 0) + dt * (0.019 + i * 0.002);
-
-        const speedMod = 1 + 0.28 * Math.sin(speedDrift[i] ?? 0);
-        const ampEnvelope = 0.45 + 0.55 * Math.abs(Math.sin(ampDrift[i] ?? 0));
-        const ambient = 0.55 + activity * 0.45;
-
-        const phase = time * config.speed * speedMod + config.phaseOffset;
-        const amplitude = config.baseAmplitude * ampEnvelope * ambient * amplitudeScale;
-        const radius = baseRadius * breathe * config.radiusScale;
-
-        const passes = GLOW_PASSES[config.breatheMode];
-        const width = config.lineWidth * (0.92 + ambient * 0.1);
-        // Only `electric` jitters its vertices — that is what makes it crackle where the others flow.
-        const jitter = config.breatheMode === "electric" ? amplitude * 0.08 * ambient : 0;
-
-        for (let p = 0; p < passes.length; p += 1) {
-          const pass = passes[p];
-          if (pass === undefined) continue;
-          // The sharp core is always drawn; the two soft passes behind it scale with Glow.
-          const isCore = p === passes.length - 1;
-          const passWidth = isCore ? width : width * pass.width * glowScale;
-          if (passWidth <= 0) continue;
-          buildWavePath(cx, cy, radius, config.waveCount, amplitude, phase, jitter * (p + 1) * 0.3);
-          waveLayer.stroke({ color: config.color, alpha: pass.alpha, width: passWidth });
-        }
+        if (config !== undefined)
+          drawWaveRing(i, config, dt, cx, cy, baseRadius * breathe, activity);
       }
 
       // ── Orbiting particles ──────────────────────────────────────────────
-      particleLayer.clear();
-      if (particles.length !== particleCount) seedParticles();
-      for (const particle of particles) {
-        particle.angle += particle.speed * dt * (1 + activity);
-        const drift =
-          Math.sin(time * particle.driftSpeed + particle.driftPhase) * particle.driftAmplitude;
-        const r = (baseRadius + particle.radiusOffset + drift) * breathe;
-        particleLayer
-          .circle(
-            cx + Math.cos(particle.angle) * r,
-            cy + Math.sin(particle.angle) * r,
-            particle.size,
-          )
-          .fill({ color: particle.color, alpha: particle.alpha });
-      }
+      drawParticles(dt, cx, cy, baseRadius, breathe, activity);
 
       // ── Sparkles, sparks, lightning ─────────────────────────────────────
       // Spawn intervals shorten as the audio gets louder, which is the main way the frame reacts.
       effectLayer.clear();
-
-      if (showSparkles) {
-        sparkleAccum += dt;
-        if (sparkleAccum >= 0.28 / (0.3 + activity * 0.9)) {
-          sparkleAccum = 0;
-          sparkles.push({
-            angle: Math.random() * Math.PI * 2,
-            radius: baseRadius + (Math.random() - 0.5) * 40,
-            size: 1.5 + Math.random() * 3,
-            alpha: 1,
-            decay: 1.2 + Math.random() * 1.4,
-            color:
-              WAVE_CONFIGS[Math.floor(Math.random() * WAVE_CONFIGS.length)]?.color ?? "#ffffff",
-          });
-          if (sparkles.length > 60) sparkles.shift();
-        }
-        for (let i = sparkles.length - 1; i >= 0; i -= 1) {
-          const sparkle = sparkles[i];
-          if (sparkle === undefined) continue;
-          sparkle.alpha -= sparkle.decay * dt;
-          if (sparkle.alpha <= 0) {
-            sparkles.splice(i, 1);
-            continue;
-          }
-          const r = sparkle.radius * breathe;
-          const x = cx + Math.cos(sparkle.angle) * r;
-          const y = cy + Math.sin(sparkle.angle) * r;
-          effectLayer
-            .circle(x, y, sparkle.size * 2.5)
-            .fill({ color: sparkle.color, alpha: sparkle.alpha * 0.15 });
-          effectLayer
-            .circle(x, y, sparkle.size)
-            .fill({ color: sparkle.color, alpha: sparkle.alpha });
-        }
-      }
-
-      if (showSparks) {
-        sparkAccum += dt;
-        if (sparkAccum >= 0.15 / (0.4 + activity * 0.7)) {
-          sparkAccum = 0;
-          const angle = Math.random() * Math.PI * 2;
-          const outward = 40 + Math.random() * 160;
-          for (let i = 0; i < 3; i += 1) {
-            const spread = angle + (Math.random() - 0.5) * 0.6;
-            sparks.push({
-              x: cx + Math.cos(angle) * baseRadius,
-              y: cy + Math.sin(angle) * baseRadius,
-              vx: Math.cos(spread) * outward,
-              vy: Math.sin(spread) * outward,
-              life: 1,
-              decay: 1.5 + Math.random(),
-              color:
-                WAVE_CONFIGS[Math.floor(Math.random() * WAVE_CONFIGS.length)]?.color ?? "#ffffff",
-            });
-          }
-          while (sparks.length > 120) sparks.shift();
-        }
-        for (let i = sparks.length - 1; i >= 0; i -= 1) {
-          const spark = sparks[i];
-          if (spark === undefined) continue;
-          spark.x += spark.vx * dt;
-          spark.y += spark.vy * dt;
-          spark.life -= spark.decay * dt;
-          if (spark.life <= 0) {
-            sparks.splice(i, 1);
-            continue;
-          }
-          effectLayer
-            .circle(spark.x, spark.y, 1.5 * spark.life)
-            .fill({ color: spark.color, alpha: spark.life });
-        }
-      }
-
-      if (showLightning) {
-        lightningAccum += dt;
-        if (lightningAccum >= 5 * (1.5 - activity * 0.7) * (0.7 + Math.random() * 0.6)) {
-          lightningAccum = 0;
-          // A jagged chord across the ring: two random points on the rim, joined by a path that
-          // wanders off the straight line between them.
-          const a0 = Math.random() * Math.PI * 2;
-          const a1 = a0 + Math.PI * (0.4 + Math.random() * 0.8);
-          const x0 = cx + Math.cos(a0) * baseRadius;
-          const y0 = cy + Math.sin(a0) * baseRadius;
-          const x1 = cx + Math.cos(a1) * baseRadius;
-          const y1 = cy + Math.sin(a1) * baseRadius;
-          const points: number[] = [];
-          const steps = 12;
-          for (let i = 0; i <= steps; i += 1) {
-            const t = i / steps;
-            // The deviation is largest in the middle and zero at both ends, so the arc stays
-            // anchored to the rim.
-            const wander = Math.sin(t * Math.PI) * 40;
-            points.push(
-              x0 + (x1 - x0) * t + (Math.random() - 0.5) * wander,
-              y0 + (y1 - y0) * t + (Math.random() - 0.5) * wander,
-            );
-          }
-          bolts.push({
-            points,
-            alpha: 1,
-            decay: 3 + Math.random() * 3,
-            color:
-              WAVE_CONFIGS[Math.floor(Math.random() * WAVE_CONFIGS.length)]?.color ?? "#ffffff",
-          });
-          while (bolts.length > 8) bolts.shift();
-        }
-        for (let i = bolts.length - 1; i >= 0; i -= 1) {
-          const bolt = bolts[i];
-          if (bolt === undefined) continue;
-          bolt.alpha -= bolt.decay * dt;
-          if (bolt.alpha <= 0) {
-            bolts.splice(i, 1);
-            continue;
-          }
-          // Two passes: a wide soft one and a sharp core, the same glow trick the rings use.
-          effectLayer
-            .poly(bolt.points, false)
-            .stroke({ color: bolt.color, alpha: bolt.alpha * 0.2, width: 6 });
-          effectLayer
-            .poly(bolt.points, false)
-            .stroke({ color: bolt.color, alpha: bolt.alpha, width: 1.5 });
-        }
-      }
+      if (showSparkles) updateSparkles(dt, cx, cy, baseRadius, breathe, activity);
+      if (showSparks) updateSparks(dt, cx, cy, baseRadius, activity);
+      if (showLightning) updateLightning(dt, cx, cy, baseRadius, activity);
 
       stage.render();
     });

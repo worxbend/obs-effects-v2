@@ -72,7 +72,9 @@ function compileCondition(condition: SoundboardCondition): Predicate {
         // stored (validation forbids it), but if one slips through, "and" over nothing is true
         // and "or" over nothing is false — the usual identities.
         const combined =
-          op === "and" ? children.every((child) => child(msg)) : children.some((child) => child(msg));
+          op === "and"
+            ? children.every((child) => child(msg))
+            : children.some((child) => child(msg));
         return negate ? !combined : combined;
       };
     }

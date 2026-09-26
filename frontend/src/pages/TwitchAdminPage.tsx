@@ -692,16 +692,16 @@ function BulkActionsCard(props: { onCompleted: () => void }): JSX.Element {
       </p>
 
       <div class="field">
-        <label class="field-label" for="twitch-bulk-users">
-          Accounts
+        <label for="twitch-bulk-users">
+          <span class="field-label">Accounts</span>
+          <textarea
+            id="twitch-bulk-users"
+            rows="5"
+            value={text()}
+            placeholder="@someviewer, anotherviewer&#10;athirdviewer"
+            onInput={(event) => setText(event.currentTarget.value)}
+          />
         </label>
-        <textarea
-          id="twitch-bulk-users"
-          rows="5"
-          value={text()}
-          placeholder="@someviewer, anotherviewer&#10;athirdviewer"
-          onInput={(event) => setText(event.currentTarget.value)}
-        />
         <p class={["field-help", { "field-error": tooMany() }]}>
           {logins().length} account{logins().length === 1 ? "" : "s"} parsed
           {tooMany() ? ` — at most ${MAX_BULK_USERS} per request.` : "."}
@@ -717,21 +717,21 @@ function BulkActionsCard(props: { onCompleted: () => void }): JSX.Element {
       </div>
 
       <div class="field">
-        <label class="field-label" for="twitch-bulk-action">
-          Action
+        <label for="twitch-bulk-action">
+          <span class="field-label">Action</span>
+          <select
+            id="twitch-bulk-action"
+            value={action()}
+            onChange={(event) => {
+              setAction(event.currentTarget.value as BulkAction);
+              // Changing what the button will do invalidates a confirmation given for the old one.
+              setConfirming(false);
+            }}
+          >
+            <option value="ban">Ban permanently</option>
+            <option value="timeout">Time out</option>
+          </select>
         </label>
-        <select
-          id="twitch-bulk-action"
-          value={action()}
-          onChange={(event) => {
-            setAction(event.currentTarget.value as BulkAction);
-            // Changing what the button will do invalidates a confirmation given for the old one.
-            setConfirming(false);
-          }}
-        >
-          <option value="ban">Ban permanently</option>
-          <option value="timeout">Time out</option>
-        </select>
       </div>
 
       {/*
@@ -741,31 +741,34 @@ function BulkActionsCard(props: { onCompleted: () => void }): JSX.Element {
       */}
       <Show when={action() === "timeout"}>
         <div class="field">
-          <label class="field-label" for="twitch-bulk-duration">
-            Duration (seconds)
+          <label for="twitch-bulk-duration">
+            <span class="field-label" id="twitch-bulk-duration-caption">
+              Duration (seconds)
+            </span>
+            <div class="twitch-duration-row">
+              <input
+                id="twitch-bulk-duration"
+                aria-labelledby="twitch-bulk-duration-caption"
+                type="number"
+                min="1"
+                max={MAX_TIMEOUT_SECONDS}
+                value={duration()}
+                class={durationValid() ? undefined : "invalid"}
+                onInput={(event) => setDuration(Number(event.currentTarget.value))}
+              />
+              <For each={TIMEOUT_PRESETS}>
+                {(preset) => (
+                  <button
+                    type="button"
+                    class="btn btn-sm"
+                    onClick={() => setDuration(preset.seconds)}
+                  >
+                    {preset.label}
+                  </button>
+                )}
+              </For>
+            </div>
           </label>
-          <div class="twitch-duration-row">
-            <input
-              id="twitch-bulk-duration"
-              type="number"
-              min="1"
-              max={MAX_TIMEOUT_SECONDS}
-              value={duration()}
-              class={durationValid() ? undefined : "invalid"}
-              onInput={(event) => setDuration(Number(event.currentTarget.value))}
-            />
-            <For each={TIMEOUT_PRESETS}>
-              {(preset) => (
-                <button
-                  type="button"
-                  class="btn btn-sm"
-                  onClick={() => setDuration(preset.seconds)}
-                >
-                  {preset.label}
-                </button>
-              )}
-            </For>
-          </div>
           <p class={durationValid() ? "field-help" : "field-error"}>
             Twitch allows 1 second to 14 days ({MAX_TIMEOUT_SECONDS} seconds). Anything longer has
             to be a permanent ban.
@@ -774,16 +777,16 @@ function BulkActionsCard(props: { onCompleted: () => void }): JSX.Element {
       </Show>
 
       <div class="field">
-        <label class="field-label" for="twitch-bulk-reason">
-          Reason (optional)
+        <label for="twitch-bulk-reason">
+          <span class="field-label">Reason (optional)</span>
+          <input
+            id="twitch-bulk-reason"
+            type="text"
+            value={reason()}
+            placeholder="Shown to the viewer"
+            onInput={(event) => setReason(event.currentTarget.value)}
+          />
         </label>
-        <input
-          id="twitch-bulk-reason"
-          type="text"
-          value={reason()}
-          placeholder="Shown to the viewer"
-          onInput={(event) => setReason(event.currentTarget.value)}
-        />
       </div>
 
       <Banner kind="error" message={error()} />
@@ -924,7 +927,7 @@ function parseLogins(raw: string): string[] {
  * warn about it before the button is pressed.
  */
 function isValidLogin(login: string): boolean {
-  return /^[A-Za-z0-9_]{1,25}$/.test(login);
+  return /^\w{1,25}$/.test(login);
 }
 
 /** Shows "2026-08-23 14:07" in the viewer's own time zone instead of a raw ISO string. */

@@ -1,7 +1,7 @@
 import * as PIXI from "pixi.js";
 
 import { colorHex, num } from "../paramUtils";
-import { createPixiStage, defineEffect, onFrame } from "../sdk";
+import { createPixiStage, defineEffect, onFrame, random } from "../sdk";
 
 /**
  * Glitch Veil
@@ -39,7 +39,7 @@ const MICRO_TICK = 1 / 18;
 
 /** A random number between `min` and `max`. */
 function rand(min: number, max: number): number {
-  return min + Math.random() * (max - min);
+  return min + random() * (max - min);
 }
 
 const glitchVeil = defineEffect({
@@ -184,19 +184,14 @@ const glitchVeil = defineEffect({
       scanY = rand(0, h);
     });
 
-    /** Draws one stutter frame of a burst. Called 18 times a second while bursting, not every frame. */
-    const drawBurst = (): void => {
-      const w = stage.width;
-      const h = stage.height;
-      const s = burstStrength * intensity;
-
-      // ── RGB slice bars ──────────────────────────────────────────────────
+    /** RGB slice bars: one channel-split bar per slice, some with a bright edge line. */
+    const drawSlices = (w: number, h: number, s: number): void => {
       sliceLayer.clear();
       const sliceCount = 2 + Math.floor(rand(0, 4) * s);
       for (let i = 0; i < sliceCount; i += 1) {
         const y = rand(0, h);
         const sliceHeight = rand(3, 26);
-        const shift = rand(8, 60) * s * (Math.random() < 0.5 ? -1 : 1);
+        const shift = rand(8, 60) * s * (random() < 0.5 ? -1 : 1);
         // The three channels are drawn at different horizontal offsets, which is what produces the
         // colour fringing of a mistimed signal rather than a plain coloured bar.
         for (let c = 0; c < 3; c += 1) {
@@ -204,14 +199,16 @@ const glitchVeil = defineEffect({
             .rect(shift * (c - 1) * 0.6, y, w, sliceHeight)
             .fill({ color: split[c] ?? "#ffffff", alpha: rand(0.04, 0.12) * s });
         }
-        if (Math.random() < 0.5) {
+        if (random() < 0.5) {
           sliceLayer
-            .rect(0, y + (Math.random() < 0.5 ? 0 : sliceHeight), w, 1)
+            .rect(0, y + (random() < 0.5 ? 0 : sliceHeight), w, 1)
             .fill({ color: "#ffffff", alpha: rand(0.08, 0.2) * s });
         }
       }
+    };
 
-      // ── Chromatic blocks ────────────────────────────────────────────────
+    /** Chromatic blocks, each with a faint white copy offset as its edge fringe. */
+    const drawBlocks = (w: number, h: number, s: number): void => {
       blockLayer.clear();
       const blockCount = Math.floor(rand(2, 7) * s);
       for (let i = 0; i < blockCount; i += 1) {
@@ -229,8 +226,10 @@ const glitchVeil = defineEffect({
           .rect(x + fringe, y, bw, bh)
           .fill({ color: "#ffffff", alpha: rand(0.02, 0.05) * s });
       }
+    };
 
-      // ── Static ──────────────────────────────────────────────────────────
+    /** Speckle static in a couple of horizontal strips. */
+    const drawStatic = (w: number, h: number, s: number): void => {
       staticLayer.clear();
       // Confined to a couple of horizontal strips rather than the whole frame. Full-frame static
       // hides whatever is underneath, which is the one thing this overlay must not do.
@@ -241,11 +240,22 @@ const glitchVeil = defineEffect({
         const dots = Math.floor(rand(60, 160) * s);
         for (let i = 0; i < dots; i += 1) {
           staticLayer.rect(rand(0, w), sy + rand(0, sh), rand(1, 3), 1).fill({
-            color: Math.random() > 0.5 ? "#ffffff" : "#000000",
+            color: random() > 0.5 ? "#ffffff" : "#000000",
             alpha: rand(0.1, 0.4) * s,
           });
         }
       }
+    };
+
+    /** Draws one stutter frame of a burst. Called 18 times a second while bursting, not every frame. */
+    const drawBurst = (): void => {
+      const w = stage.width;
+      const h = stage.height;
+      const s = burstStrength * intensity;
+
+      drawSlices(w, h, s);
+      drawBlocks(w, h, s);
+      drawStatic(w, h, s);
     };
 
     onFrame(scope, ctx.fpsCap, ({ dt }) => {

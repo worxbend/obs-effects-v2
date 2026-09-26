@@ -866,13 +866,7 @@ export type SoundboardEventValue = "chat" | "sub" | "gift_sub" | "cheer" | "raid
 
 /** The condition kinds that carry a single string `value` (everything except `"group"`). */
 export type SoundboardLeafType =
-  | "command"
-  | "contains"
-  | "regex"
-  | "emote"
-  | "emoji"
-  | "event"
-  | "user";
+  "command" | "contains" | "regex" | "emote" | "emoji" | "event" | "user";
 
 /**
  * A branch of a rule's condition tree: children combined with And/Or, optionally negated.
@@ -956,7 +950,7 @@ export interface SoundboardWriteRequest {
 export const SLUG_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
 
 /** Regular expression a `ParamSpec.key` must match. */
-export const PARAM_KEY_PATTERN = /^[a-zA-Z][a-zA-Z0-9_]{0,63}$/;
+export const PARAM_KEY_PATTERN = /^[a-zA-Z]\w{0,63}$/;
 
 /** Regular expression a `color` parameter value must match. */
 export const COLOR_PATTERN = /^#[0-9a-fA-F]{6}$/;

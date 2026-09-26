@@ -1,7 +1,7 @@
 import * as PIXI from "pixi.js";
 
 import { bool, colorHex, int, num } from "../paramUtils";
-import { createPixiStage, defineEffect, onFrame } from "../sdk";
+import { createPixiStage, defineEffect, onFrame, random } from "../sdk";
 
 /**
  * Star Field
@@ -183,12 +183,12 @@ const starField = defineEffect({
 
     /** Creates one star heading in a random direction from just off the centre. */
     const newStar = (cx: number, cy: number, halfDiagonal: number): Star => {
-      const angle = Math.random() * Math.PI * 2;
+      const angle = random() * Math.PI * 2;
       const vx = Math.cos(angle);
       const vy = Math.sin(angle);
       // Born a little way out rather than exactly at the centre, so they do not all emerge from a
       // single pixel and produce a visible bright dot there.
-      const spawn = Math.random() * halfDiagonal * 0.04;
+      const spawn = random() * halfDiagonal * 0.04;
       const x = cx + vx * spawn;
       const y = cy + vy * spawn;
 
@@ -201,11 +201,11 @@ const starField = defineEffect({
         vy,
         // Speed is a fraction of the half-diagonal per second, so the field crosses the frame in
         // the same time whatever its size.
-        speed: (0.5 + Math.random() * 0.5) * 0.4,
-        size: 0.5 + Math.random() * 1.5,
-        color: colors[Math.floor(Math.random() * colors.length)] ?? "#ffffff",
+        speed: (0.5 + random() * 0.5) * 0.4,
+        size: 0.5 + random() * 1.5,
+        color: colors[Math.floor(random() * colors.length)] ?? "#ffffff",
         age: 0,
-        life: (1.2 + Math.random() * 2) * lifetimeScale,
+        life: (1.2 + random() * 2) * lifetimeScale,
       };
     };
 
@@ -220,7 +220,7 @@ const starField = defineEffect({
         const star = newStar(cx, cy, halfDiagonal);
         // Each star starts partway through its life and is placed where it would have got to.
         // Without this the effect opens on a blank frame and everything arrives at once.
-        star.age = Math.random() * 0.9;
+        star.age = random() * 0.9;
         star.x = cx + star.vx * star.age * star.life * star.speed * halfDiagonal;
         star.y = cy + star.vy * star.age * star.life * star.speed * halfDiagonal;
         star.px = star.x;

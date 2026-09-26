@@ -183,14 +183,14 @@ function ImportCard(): JSX.Element {
       <div class="field">
         <label class="field-label" for="import-file">
           Backup file
+          <input
+            id="import-file"
+            type="file"
+            accept="application/json,.json"
+            disabled={reading()}
+            onChange={(e) => void chooseFile(e.currentTarget)}
+          />
         </label>
-        <input
-          id="import-file"
-          type="file"
-          accept="application/json,.json"
-          disabled={reading()}
-          onChange={(e) => void chooseFile(e.currentTarget)}
-        />
       </div>
 
       <Show when={problems().length > 0}>
@@ -204,7 +204,7 @@ function ImportCard(): JSX.Element {
 
       <Show when={result()}>
         {(counts) => (
-          <div class="banner banner-ok" role="status">
+          <output class="banner banner-ok">
             <p>Import finished.</p>
             <ul class="issue-list">
               <li>
@@ -220,7 +220,7 @@ function ImportCard(): JSX.Element {
               Live browser sources were told about every change as it happened, so anything showing
               one of these slugs has already followed the restore.
             </p>
-          </div>
+          </output>
         )}
       </Show>
 
@@ -280,6 +280,13 @@ function ImportPlan(props: {
 
   const storedRoutes = () => props.stored[0];
   const storedPresets = () => props.stored[1];
+
+  const confirmLabel = () => {
+    if (busy()) return "Importing…";
+    if (mode() === "replace") return "Yes, delete everything and import";
+    if (mode() === "merge") return "Yes, merge this file in";
+    return "Choose merge or replace first";
+  };
 
   /** File entries split into "this already exists here" and "this is new". */
   const plan = createMemo(() => {
@@ -345,12 +352,12 @@ function ImportPlan(props: {
       </Show>
 
       <Show when={props.file.warnings.length > 0}>
-        <div class="banner banner-info" role="status">
+        <output class="banner banner-info">
           <p>Worth knowing before you import:</p>
           <ul class="issue-list">
             <For each={props.file.warnings}>{(warning) => <li>{warning}</li>}</For>
           </ul>
-        </div>
+        </output>
       </Show>
 
       <fieldset class="mode-choice">
@@ -422,13 +429,7 @@ function ImportPlan(props: {
           disabled={mode() === null || busy()}
           onClick={() => void run()}
         >
-          {busy()
-            ? "Importing…"
-            : mode() === "replace"
-              ? "Yes, delete everything and import"
-              : mode() === "merge"
-                ? "Yes, merge this file in"
-                : "Choose merge or replace first"}
+          {confirmLabel()}
         </button>
         <button type="button" class="btn" disabled={busy()} onClick={() => props.onCancel()}>
           Cancel

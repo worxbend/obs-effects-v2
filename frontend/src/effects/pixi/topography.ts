@@ -1,7 +1,7 @@
 import * as PIXI from "pixi.js";
 
 import { bool, colorHex, colorInt, int, num, str } from "../paramUtils";
-import { createPixiStage, defineEffect, onFrame, useFont } from "../sdk";
+import { createPixiStage, defineEffect, onFrame, random, useFont } from "../sdk";
 
 /**
  * Luminescent Topography
@@ -52,6 +52,24 @@ const CLIP_BOTTOM = 8;
  * Graphics instruction.
  */
 const CULL_MARGIN = 4;
+
+/** The outcode of a screen point against a viewport of half-size `clipX` × `clipY`. */
+function clipCodeOf(screenX: number, screenY: number, clipX: number, clipY: number): number {
+  let code = 0;
+  if (screenX < -clipX) code = CLIP_LEFT;
+  else if (screenX > clipX) code = CLIP_RIGHT;
+  if (screenY < -clipY) code |= CLIP_TOP;
+  else if (screenY > clipY) code |= CLIP_BOTTOM;
+  return code;
+}
+
+/** Wraps a drifting particle's home position around a frame of half-size `halfW` × `halfH`. */
+function wrapHome(p: BackgroundParticle, halfW: number, halfH: number): void {
+  if (p.homeX > halfW) p.homeX = -halfW;
+  if (p.homeX < -halfW) p.homeX = halfW;
+  if (p.homeY > halfH) p.homeY = -halfH;
+  if (p.homeY < -halfH) p.homeY = halfH;
+}
 
 /** Blends two 0xRRGGBB colours per channel, `t` clamped to [0, 1]. Copied from the old repo. */
 function mixHex(a: number, b: number, t: number): number {
@@ -353,28 +371,28 @@ const topography = defineEffect({
       const w = stage.width;
       const h = stage.height;
       for (let i = 0; i < particleCount; i += 1) {
-        const px = (Math.random() - 0.5) * w;
-        const py = (Math.random() - 0.5) * h;
+        const px = (random() - 0.5) * w;
+        const py = (random() - 0.5) * h;
         const p: BackgroundParticle = {
           x: px,
           y: py,
           homeX: px,
           homeY: py,
-          vx: (Math.random() - 0.5) * 12,
-          vy: (Math.random() - 0.5) * 12,
-          size: 1 + Math.random() * 2,
-          color: Math.random() > 0.5 ? colorCrest : colorAccent,
-          alpha: 0.1 + Math.random() * 0.2,
+          vx: (random() - 0.5) * 12,
+          vy: (random() - 0.5) * 12,
+          size: 1 + random() * 2,
+          color: random() > 0.5 ? colorCrest : colorAccent,
+          alpha: 0.1 + random() * 0.2,
           connected: [],
           isTextParticle: false,
           lift: 0,
         };
         // Roughly a third of particles connect to 2..4 random others, giving the sparse
         // constellation lines behind the mesh.
-        if (Math.random() > 0.7) {
-          const count = 2 + Math.floor(Math.random() * 3);
+        if (random() > 0.7) {
+          const count = 2 + Math.floor(random() * 3);
           for (let j = 0; j < count; j += 1) {
-            p.connected.push(Math.floor(Math.random() * particleCount));
+            p.connected.push(Math.floor(random() * particleCount));
           }
         }
         particles.push(p);
@@ -424,7 +442,7 @@ const topography = defineEffect({
       for (let y = 0; y < h; y += step) {
         for (let x = 0; x < w; x += step) {
           const liftValue = (imageData[(y * w + x) * 4] ?? 0) / 255;
-          if (liftValue > 0.5 && Math.random() > 0.8) {
+          if (liftValue > 0.5 && random() > 0.8) {
             const px = x - w / 2;
             const py = y - h / 2;
             particles.push({
@@ -434,9 +452,9 @@ const topography = defineEffect({
               homeY: py,
               vx: 0,
               vy: 0,
-              size: 1 + Math.random() * 1.5,
+              size: 1 + random() * 1.5,
               color: colorPeak,
-              alpha: 0.5 + Math.random() * 0.4,
+              alpha: 0.5 + random() * 0.4,
               connected: [],
               isTextParticle: true,
               lift: liftValue,
@@ -484,7 +502,10 @@ const topography = defineEffect({
       // makes steep slopes look taut.
       const dx = p1.screenX - p2.screenX;
       const dy = p1.screenY - p2.screenY;
-      const dist = Math.sqrt(dx * dx + dy * dy);
+      // Kept as `sqrt` of a named square rather than `Math.hypot`: this runs for every mesh edge
+      // every frame, and `hypot`'s overflow-safe path is measurably slower at that volume.
+      const distSq = dx * dx + dy * dy;
+      const dist = Math.sqrt(distSq);
       const tension = Math.max(0.1, 1 - (dist - gridSpacing) / gridSpacing);
 
       scratchStroke.color = getColorForZ(avgZ);
@@ -493,18 +514,11 @@ const topography = defineEffect({
       meshGfx.moveTo(p1.screenX, p1.screenY).lineTo(p2.screenX, p2.screenY).stroke(scratchStroke);
     };
 
-    let elapsed = 0;
-
-    onFrame(scope, ctx.fpsCap, ({ dt }) => {
-      elapsed += dt;
-      const time = elapsed * waveSpeed;
-
-      // A slow whole-surface heave on top of the travelling waves, so the centre visibly breathes.
-      const globalSwell = Math.sin(time * 0.8) * 15;
-
-      // ── Update the mesh ─────────────────────────────────────────────────
-      // Row 0 carries every distinct x, column 0 every distinct y, so the trig tables cover the
-      // whole grid.
+    /**
+     * Fills the per-column and per-row trig tables for this frame. Row 0 carries every distinct x,
+     * column 0 every distinct y, so the tables cover the whole grid.
+     */
+    const fillWaveTables = (time: number): void => {
       for (let c = 0; c < cols; c += 1) {
         const x = points[c]?.x ?? 0;
         waveSinX[c] = Math.sin(x * waveFreq + time);
@@ -515,6 +529,11 @@ const topography = defineEffect({
         waveCosY[r] = Math.cos(y * waveFreq + time * 0.7);
         waveSinY2[r] = Math.sin(y * waveFreq * 0.5 + time * 0.2);
       }
+    };
+
+    /** Heights, screen positions and clip codes for every mesh point. */
+    const updateMesh = (time: number, globalSwell: number): void => {
+      fillWaveTables(time);
 
       const clipX = stage.width / 2 + CULL_MARGIN;
       const clipY = stage.height / 2 + CULL_MARGIN;
@@ -536,64 +555,49 @@ const topography = defineEffect({
           p.z = baseZ + p.lift * textLift;
 
           const perspective = focalLength / (focalLength + p.z);
-          const screenX = p.x * perspective;
-          const screenY = p.y * perspective;
-          p.screenX = screenX;
-          p.screenY = screenY;
-
-          let code = 0;
-          if (screenX < -clipX) code = CLIP_LEFT;
-          else if (screenX > clipX) code = CLIP_RIGHT;
-          if (screenY < -clipY) code |= CLIP_TOP;
-          else if (screenY > clipY) code |= CLIP_BOTTOM;
-          clipCodes[i] = code;
+          p.screenX = p.x * perspective;
+          p.screenY = p.y * perspective;
+          clipCodes[i] = clipCodeOf(p.screenX, p.screenY, clipX, clipY);
         }
       }
+    };
 
-      // ── Update the particles ────────────────────────────────────────────
-      // Hoisted out of the loop: identical for every particle this frame.
-      const timeY = time * 0.7;
-      const time2X = time * 0.4;
-      const time2Y = time * 0.2;
-      const halfW = stage.width / 2;
-      const halfH = stage.height / 2;
+    /**
+     * Text particles ride the same wave arithmetic as the mesh, including their lift, so they stay
+     * glued to the raised lettering.
+     */
+    const placeTextParticle = (p: BackgroundParticle, time: number, globalSwell: number): void => {
+      const noise = Math.sin(p.homeX * waveFreq + time) * Math.cos(p.homeY * waveFreq + time * 0.7);
+      const noise2 =
+        Math.sin(p.homeX * waveFreq * 0.6 - time * 0.4) *
+        Math.sin(p.homeY * waveFreq * 0.5 + time * 0.2);
+      const z = (noise + noise2 * 0.5) * waveAmp + globalSwell + p.lift * textLift;
+      const perspective = focalLength / (focalLength + z);
+      p.x = p.homeX * perspective;
+      p.y = p.homeY * perspective;
+    };
 
-      for (const p of particles) {
-        if (p.isTextParticle) {
-          // Text particles ride the same wave arithmetic as the mesh, including their lift, so
-          // they stay glued to the raised lettering.
-          const noise =
-            Math.sin(p.homeX * waveFreq + time) * Math.cos(p.homeY * waveFreq + timeY);
-          const noise2 =
-            Math.sin(p.homeX * waveFreq * 0.6 - time2X) *
-            Math.sin(p.homeY * waveFreq * 0.5 + time2Y);
-          const z = (noise + noise2 * 0.5) * waveAmp + globalSwell + p.lift * textLift;
-          const perspective = focalLength / (focalLength + z);
-          p.x = p.homeX * perspective;
-          p.y = p.homeY * perspective;
-        } else {
-          // The original advanced positions by `vx * deltaMS * 0.01` per Pixi tick; the SDK clock
-          // hands out seconds, so the factor becomes 10 for the identical drift rate.
-          p.homeX += p.vx * dt * 10;
-          p.homeY += p.vy * dt * 10;
+    const driftParticle = (
+      p: BackgroundParticle,
+      time: number,
+      globalSwell: number,
+      dt: number,
+    ): void => {
+      // The original advanced positions by `vx * deltaMS * 0.01` per Pixi tick; the SDK clock
+      // hands out seconds, so the factor becomes 10 for the identical drift rate.
+      p.homeX += p.vx * dt * 10;
+      p.homeY += p.vy * dt * 10;
+      wrapHome(p, stage.width / 2, stage.height / 2);
 
-          if (p.homeX > halfW) p.homeX = -halfW;
-          if (p.homeX < -halfW) p.homeX = halfW;
-          if (p.homeY > halfH) p.homeY = -halfH;
-          if (p.homeY < -halfH) p.homeY = halfH;
+      const noise = Math.sin(p.homeX * waveFreq + time) * Math.cos(p.homeY * waveFreq + time * 0.7);
+      const z = noise * waveAmp + globalSwell;
+      const perspective = focalLength / (focalLength + z);
+      p.x = p.homeX * perspective;
+      p.y = p.homeY * perspective;
+    };
 
-          const noise =
-            Math.sin(p.homeX * waveFreq + time) * Math.cos(p.homeY * waveFreq + timeY);
-          const z = noise * waveAmp + globalSwell;
-          const perspective = focalLength / (focalLength + z);
-          p.x = p.homeX * perspective;
-          p.y = p.homeY * perspective;
-        }
-      }
-
-      // ── Draw the mesh ───────────────────────────────────────────────────
-      meshGfx.clear();
-
+    /** The mesh's grid edges, skipping any whose two ends are beyond the same viewport edge. */
+    const drawMeshEdges = (): void => {
       for (let r = 0; r < rows; r += 1) {
         const rowStart = r * cols;
         for (let c = 0; c < cols; c += 1) {
@@ -614,8 +618,10 @@ const topography = defineEffect({
           }
         }
       }
+    };
 
-      // A small dot at every visible vertex, brighter the higher it sits.
+    /** A small dot at every visible vertex, brighter the higher it sits. */
+    const drawMeshVertices = (): void => {
       for (let i = 0; i < points.length; i += 1) {
         if ((clipCodes[i] ?? 0) !== 0) continue;
         const p = points[i];
@@ -624,8 +630,21 @@ const topography = defineEffect({
         scratchFill.alpha = 0.2 + ((p.z + waveAmp) / (waveAmp + textLift)) * 0.6;
         meshGfx.circle(p.screenX, p.screenY, 1.2).fill(scratchFill);
       }
+    };
 
-      // ── Draw the particles ──────────────────────────────────────────────
+    /** The faint lines from one drifting particle to the particles it is connected to. */
+    const drawConnections = (p: BackgroundParticle): void => {
+      for (const targetIndex of p.connected) {
+        const target = particles[targetIndex];
+        if (target === undefined) continue;
+        scratchStroke.color = p.color;
+        scratchStroke.alpha = p.alpha * 0.3;
+        scratchStroke.width = 0.5;
+        particlesGfx.moveTo(p.x, p.y).lineTo(target.x, target.y).stroke(scratchStroke);
+      }
+    };
+
+    const drawParticles = (): void => {
       particlesGfx.clear();
       for (const p of particles) {
         scratchFill.color = p.color;
@@ -633,17 +652,30 @@ const topography = defineEffect({
         particlesGfx.circle(p.x, p.y, p.size).fill(scratchFill);
 
         // Text particles are created without connections and never gain any.
-        if (p.isTextParticle) continue;
-
-        for (const targetIndex of p.connected) {
-          const target = particles[targetIndex];
-          if (target === undefined) continue;
-          scratchStroke.color = p.color;
-          scratchStroke.alpha = p.alpha * 0.3;
-          scratchStroke.width = 0.5;
-          particlesGfx.moveTo(p.x, p.y).lineTo(target.x, target.y).stroke(scratchStroke);
-        }
+        if (!p.isTextParticle) drawConnections(p);
       }
+    };
+
+    let elapsed = 0;
+
+    onFrame(scope, ctx.fpsCap, ({ dt }) => {
+      elapsed += dt;
+      const time = elapsed * waveSpeed;
+
+      // A slow whole-surface heave on top of the travelling waves, so the centre visibly breathes.
+      const globalSwell = Math.sin(time * 0.8) * 15;
+
+      updateMesh(time, globalSwell);
+
+      for (const p of particles) {
+        if (p.isTextParticle) placeTextParticle(p, time, globalSwell);
+        else driftParticle(p, time, globalSwell, dt);
+      }
+
+      meshGfx.clear();
+      drawMeshEdges();
+      drawMeshVertices();
+      drawParticles();
 
       stage.render();
     });

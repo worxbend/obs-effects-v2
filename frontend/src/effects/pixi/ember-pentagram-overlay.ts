@@ -1,7 +1,7 @@
 import * as PIXI from "pixi.js";
 
 import { bool, colorHex, int, num } from "../paramUtils";
-import { createPixiStage, defineEffect, onFrame } from "../sdk";
+import { createPixiStage, defineEffect, onFrame, random } from "../sdk";
 
 /**
  * Ember Pentagram Overlay
@@ -100,6 +100,152 @@ interface BackgroundSigil {
   rot: number;
   vRot: number;
   alpha: number;
+}
+
+type NodeAdder = (x: number, y: number, interiorBias: number) => number;
+
+function addShapeNode(
+  nodes: ShapeNode[],
+  byKey: Map<string, number>,
+  x: number,
+  y: number,
+  interiorBias: number,
+): number {
+  const key = `${Math.round(x * 2200)}:${Math.round(y * 2200)}`;
+  const existing = byKey.get(key);
+  if (existing !== undefined) {
+    const node = nodes[existing];
+    if (node !== undefined) node.interiorBias = Math.max(node.interiorBias, interiorBias);
+    return existing;
+  }
+  const index = nodes.length;
+  nodes.push({
+    baseX: x,
+    baseY: y,
+    // Phases derived from position rather than randomness, so a remount reproduces the
+    // identical wave pattern instead of reshuffling the figure.
+    phase: ((x * 0.73 + y * 0.49) % 1) * TAU,
+    drift: ((x * 0.36 - y * 0.58) % 1) * TAU,
+    interiorBias,
+    relX: 0,
+    relY: 0,
+    x: 0,
+    y: 0,
+    elevation: 0,
+  });
+  byKey.set(key, index);
+  return index;
+}
+
+function connectRun(
+  segments: MeshSegment[],
+  indices: number[],
+  strength: number,
+  closed = false,
+): void {
+  const limit = closed ? indices.length : indices.length - 1;
+  for (let i = 0; i < limit; i += 1) {
+    const a = indices[i];
+    const b = indices[(i + 1) % indices.length];
+    if (a !== undefined && b !== undefined && a !== b) segments.push({ a, b, strength });
+  }
+}
+
+/** Cross-links parallel bands into a strip. */
+function connectBands(
+  segments: MeshSegment[],
+  bands: number[][],
+  strength: number,
+  closed = false,
+): void {
+  if (bands.length < 2) return;
+  const span = bands[0]?.length ?? 0;
+  const limit = closed ? span : span - 1;
+  for (let b = 0; b < bands.length - 1; b += 1) {
+    const current = bands[b];
+    const next = bands[b + 1];
+    if (current === undefined || next === undefined) continue;
+    for (let i = 0; i < limit; i += 1) {
+      const a = current[i];
+      const c = next[i];
+      if (a !== undefined && c !== undefined && a !== c) segments.push({ a, b: c, strength });
+    }
+  }
+}
+
+/** Samples one arm of the star into three tapered, slightly wobbling parallel bands of nodes. */
+function sampleArmBands(
+  start: { x: number; y: number },
+  end: { x: number; y: number },
+  armIndex: number,
+  samples: number,
+  addNode: NodeAdder,
+): number[][] {
+  const strokeBands = [-0.034, 0, 0.034];
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const length = Math.hypot(dx, dy) || 1;
+  // The normal to the arm, so bands are offset sideways from it rather than diagonally.
+  const nx = -dy / length;
+  const ny = dx / length;
+
+  const bands: number[][] = strokeBands.map(() => []);
+  for (let i = 0; i <= samples; i += 1) {
+    const t = i / samples;
+    // Fattest in the middle of the arm, tapering towards each point.
+    const taper = 0.74 + Math.sin(t * Math.PI) * 0.32;
+    const bx = start.x + dx * t;
+    const by = start.y + dy * t;
+
+    for (let b = 0; b < strokeBands.length; b += 1) {
+      const band = strokeBands[b] ?? 0;
+      // A little wobble so the bands are not mechanically parallel.
+      const jitter =
+        Math.sin(t * TAU * 4 + armIndex * 0.9 + b * 0.75) * 0.004 +
+        Math.cos(t * TAU * 2.4 + b * 0.6) * 0.002;
+      const offset = band * taper + jitter;
+      const bias = clamp(0.56 + (1 - Math.abs(band) / 0.05) * 0.42, 0.42, 1);
+      bands[b]?.push(addNode(bx + nx * offset, by + ny * offset, bias));
+    }
+  }
+  return bands;
+}
+
+function buildStarArms(detail: number, addNode: NodeAdder, segments: MeshSegment[]): void {
+  // The five outer points of the star.
+  const outer: { x: number; y: number }[] = [];
+  for (let i = 0; i < 5; i += 1) {
+    const angle = -Math.PI / 2 + (i / 5) * TAU;
+    outer.push({ x: Math.cos(angle), y: Math.sin(angle) });
+  }
+  // Visiting every second point is what draws a five-pointed star in one unbroken stroke.
+  const starOrder = [0, 2, 4, 1, 3];
+
+  const samples = Math.max(24, Math.round(120 * detail));
+  for (let s = 0; s < starOrder.length; s += 1) {
+    const start = outer[starOrder[s] ?? 0];
+    const end = outer[starOrder[(s + 1) % starOrder.length] ?? 0];
+    if (start === undefined || end === undefined) continue;
+
+    const bands = sampleArmBands(start, end, s, samples, addNode);
+    for (const band of bands) connectRun(segments, band, 0.88);
+    connectBands(segments, bands, 0.56);
+  }
+}
+
+function buildRing(detail: number, addNode: NodeAdder, segments: MeshSegment[]): void {
+  const ringSamples = Math.max(60, Math.round(260 * detail));
+  const ringBands = [-0.014, 0.014];
+  const traces: number[][] = ringBands.map(() => []);
+  for (let i = 0; i < ringSamples; i += 1) {
+    const angle = (i / ringSamples) * TAU - Math.PI / 2;
+    for (let b = 0; b < ringBands.length; b += 1) {
+      const radius = 1.1 + (ringBands[b] ?? 0);
+      traces[b]?.push(addNode(Math.cos(angle) * radius, Math.sin(angle) * radius, 0.5));
+    }
+  }
+  for (const trace of traces) connectRun(segments, trace, 0.7, true);
+  connectBands(segments, traces, 0.44, true);
 }
 
 const emberPentagramOverlay = defineEffect({
@@ -258,121 +404,11 @@ const emberPentagramOverlay = defineEffect({
       nodes = [];
       segments = [];
       const byKey = new Map<string, number>();
+      const addNode: NodeAdder = (x, y, interiorBias) =>
+        addShapeNode(nodes, byKey, x, y, interiorBias);
 
-      const addNode = (x: number, y: number, interiorBias: number): number => {
-        const key = `${Math.round(x * 2200)}:${Math.round(y * 2200)}`;
-        const existing = byKey.get(key);
-        if (existing !== undefined) {
-          const node = nodes[existing];
-          if (node !== undefined) node.interiorBias = Math.max(node.interiorBias, interiorBias);
-          return existing;
-        }
-        const index = nodes.length;
-        nodes.push({
-          baseX: x,
-          baseY: y,
-          // Phases derived from position rather than randomness, so a remount reproduces the
-          // identical wave pattern instead of reshuffling the figure.
-          phase: ((x * 0.73 + y * 0.49) % 1) * TAU,
-          drift: ((x * 0.36 - y * 0.58) % 1) * TAU,
-          interiorBias,
-          relX: 0,
-          relY: 0,
-          x: 0,
-          y: 0,
-          elevation: 0,
-        });
-        byKey.set(key, index);
-        return index;
-      };
-
-      const connectRun = (indices: number[], strength: number, closed = false): void => {
-        const limit = closed ? indices.length : indices.length - 1;
-        for (let i = 0; i < limit; i += 1) {
-          const a = indices[i];
-          const b = indices[(i + 1) % indices.length];
-          if (a !== undefined && b !== undefined && a !== b) segments.push({ a, b, strength });
-        }
-      };
-
-      /** Cross-links parallel bands into a strip. */
-      const connectBands = (bands: number[][], strength: number, closed = false): void => {
-        if (bands.length < 2) return;
-        const span = bands[0]?.length ?? 0;
-        const limit = closed ? span : span - 1;
-        for (let b = 0; b < bands.length - 1; b += 1) {
-          const current = bands[b];
-          const next = bands[b + 1];
-          if (current === undefined || next === undefined) continue;
-          for (let i = 0; i < limit; i += 1) {
-            const a = current[i];
-            const c = next[i];
-            if (a !== undefined && c !== undefined && a !== c) segments.push({ a, b: c, strength });
-          }
-        }
-      };
-
-      // The five outer points of the star.
-      const outer: { x: number; y: number }[] = [];
-      for (let i = 0; i < 5; i += 1) {
-        const angle = -Math.PI / 2 + (i / 5) * TAU;
-        outer.push({ x: Math.cos(angle), y: Math.sin(angle) });
-      }
-      // Visiting every second point is what draws a five-pointed star in one unbroken stroke.
-      const starOrder = [0, 2, 4, 1, 3];
-      const strokeBands = [-0.034, 0, 0.034];
-
-      const samples = Math.max(24, Math.round(120 * detail));
-      for (let s = 0; s < starOrder.length; s += 1) {
-        const start = outer[starOrder[s] ?? 0];
-        const end = outer[starOrder[(s + 1) % starOrder.length] ?? 0];
-        if (start === undefined || end === undefined) continue;
-
-        const dx = end.x - start.x;
-        const dy = end.y - start.y;
-        const length = Math.hypot(dx, dy) || 1;
-        // The normal to the arm, so bands are offset sideways from it rather than diagonally.
-        const nx = -dy / length;
-        const ny = dx / length;
-
-        const bands: number[][] = strokeBands.map(() => []);
-        for (let i = 0; i <= samples; i += 1) {
-          const t = i / samples;
-          // Fattest in the middle of the arm, tapering towards each point.
-          const taper = 0.74 + Math.sin(t * Math.PI) * 0.32;
-          const bx = start.x + dx * t;
-          const by = start.y + dy * t;
-
-          for (let b = 0; b < strokeBands.length; b += 1) {
-            const band = strokeBands[b] ?? 0;
-            // A little wobble so the bands are not mechanically parallel.
-            const jitter =
-              Math.sin(t * TAU * 4 + s * 0.9 + b * 0.75) * 0.004 +
-              Math.cos(t * TAU * 2.4 + b * 0.6) * 0.002;
-            const offset = band * taper + jitter;
-            const bias = clamp(0.56 + (1 - Math.abs(band) / 0.05) * 0.42, 0.42, 1);
-            bands[b]?.push(addNode(bx + nx * offset, by + ny * offset, bias));
-          }
-        }
-
-        for (const band of bands) connectRun(band, 0.88);
-        connectBands(bands, 0.56);
-      }
-
-      if (showRing) {
-        const ringSamples = Math.max(60, Math.round(260 * detail));
-        const ringBands = [-0.014, 0.014];
-        const traces: number[][] = ringBands.map(() => []);
-        for (let i = 0; i < ringSamples; i += 1) {
-          const angle = (i / ringSamples) * TAU - Math.PI / 2;
-          for (let b = 0; b < ringBands.length; b += 1) {
-            const radius = 1.1 + (ringBands[b] ?? 0);
-            traces[b]?.push(addNode(Math.cos(angle) * radius, Math.sin(angle) * radius, 0.5));
-          }
-        }
-        for (const trace of traces) connectRun(trace, 0.7, true);
-        connectBands(traces, 0.44, true);
-      }
+      buildStarArms(detail, addNode, segments);
+      if (showRing) buildRing(detail, addNode, segments);
     };
 
     /**
@@ -437,25 +473,25 @@ const emberPentagramOverlay = defineEffect({
       motes = [];
       for (let i = 0; i < moteCount; i += 1) {
         motes.push({
-          x: Math.random() * w,
-          y: Math.random() * h,
-          vx: (Math.random() - 0.5) * 12,
-          vy: -(6 + Math.random() * 22),
-          radius: 0.6 + Math.random() * 1.8,
-          alpha: 0.15 + Math.random() * 0.35,
-          phase: Math.random() * TAU,
+          x: random() * w,
+          y: random() * h,
+          vx: (random() - 0.5) * 12,
+          vy: -(6 + random() * 22),
+          radius: 0.6 + random() * 1.8,
+          alpha: 0.15 + random() * 0.35,
+          phase: random() * TAU,
         });
       }
 
       sigils = [];
       for (let i = 0; i < sigilCount; i += 1) {
         sigils.push({
-          x: Math.random() * w,
-          y: Math.random() * h,
-          size: Math.min(w, h) * (0.12 + Math.random() * 0.2),
-          rot: Math.random() * TAU,
-          vRot: (Math.random() - 0.5) * 0.06,
-          alpha: 0.03 + Math.random() * 0.05,
+          x: random() * w,
+          y: random() * h,
+          size: Math.min(w, h) * (0.12 + random() * 0.2),
+          rot: random() * TAU,
+          vRot: (random() - 0.5) * 0.06,
+          alpha: 0.03 + random() * 0.05,
         });
       }
     };
@@ -474,18 +510,7 @@ const emberPentagramOverlay = defineEffect({
 
     let time = 0;
 
-    onFrame(scope, ctx.fpsCap, ({ dt }) => {
-      time += Math.min(dt, 0.05) * speed;
-
-      const w = stage.width;
-      const h = stage.height;
-      const cx = w * 0.5;
-      const cy = h * 0.5;
-
-      backdropLayer.clear();
-      if (drawBackground) backdropLayer.rect(0, 0, w, h).fill({ color: backgroundColor });
-
-      // ── Background sigils ───────────────────────────────────────────────
+    const drawSigils = (dt: number): void => {
       sigilLayer.clear();
       for (const sigil of sigils) {
         sigil.rot += sigil.vRot * dt;
@@ -505,8 +530,9 @@ const emberPentagramOverlay = defineEffect({
           .circle(sigil.x, sigil.y, sigil.size * 1.1)
           .stroke({ color: colorCore, width: 1, alpha: sigil.alpha * 0.7 });
       }
+    };
 
-      // ── Atmosphere ──────────────────────────────────────────────────────
+    const stepMotes = (w: number, h: number, dt: number): void => {
       moteLayer.clear();
       for (const mote of motes) {
         mote.phase += dt;
@@ -514,7 +540,7 @@ const emberPentagramOverlay = defineEffect({
         mote.y += mote.vy * dt;
         if (mote.y < -20) {
           mote.y = h + 20;
-          mote.x = Math.random() * w;
+          mote.x = random() * w;
         }
         if (mote.x < -20) mote.x = w + 20;
         if (mote.x > w + 20) mote.x = -20;
@@ -522,8 +548,9 @@ const emberPentagramOverlay = defineEffect({
           .circle(mote.x, mote.y, mote.radius)
           .fill({ color: colorEmber, alpha: mote.alpha * (0.6 + 0.4 * Math.sin(mote.phase * 2)) });
       }
+    };
 
-      // ── Advance the waves ───────────────────────────────────────────────
+    const advanceWaves = (cx: number, cy: number): void => {
       // Seven trig pairs for the entire figure, however many nodes it has.
       const pulse = 1 + Math.sin(time * 0.18) * 0.01;
       const shear = Math.sin(time * 0.16) * 0.014;
@@ -590,10 +617,9 @@ const emberPentagramOverlay = defineEffect({
         node.x = cx + stretchedX + flowX;
         node.y = cy + stretchedY + flowY;
       }
+    };
 
-      // ── Draw the figure ─────────────────────────────────────────────────
-      meshLayer.clear();
-
+    const drawSegments = (): void => {
       for (const segment of segments) {
         const a = nodes[segment.a];
         const b = nodes[segment.b];
@@ -612,7 +638,12 @@ const emberPentagramOverlay = defineEffect({
           0.82,
         );
         const radius = 0.34 + segment.strength * 0.12 + lift * 0.22 + relief * 0.06;
-        const color = lift > 0.82 ? colorHot : lift > 0.26 ? colorEmber : colorCore;
+        let color = colorCore;
+        if (lift > 0.82) {
+          color = colorHot;
+        } else if (lift > 0.26) {
+          color = colorEmber;
+        }
 
         // Every dot on a segment shares a colour, so they are collected into one run of circles and
         // filled once. Filling per dot would be thousands of draw calls a frame.
@@ -622,10 +653,17 @@ const emberPentagramOverlay = defineEffect({
         }
         meshLayer.fill({ color, alpha });
       }
+    };
 
+    const drawNodes = (): void => {
       for (const node of nodes) {
         const lift = Math.max(0, node.elevation);
-        const color = lift > 0.9 ? colorHot : lift > 0.34 ? colorEmber : colorCore;
+        let color = colorCore;
+        if (lift > 0.9) {
+          color = colorHot;
+        } else if (lift > 0.34) {
+          color = colorEmber;
+        }
         // Only strongly-interior nodes at a crest get a halo, which keeps the glow on the ridges
         // rather than smearing it over the whole figure.
         if (node.interiorBias > 0.78 && lift > 0.1) {
@@ -638,6 +676,32 @@ const emberPentagramOverlay = defineEffect({
           .circle(node.x, node.y, 0.68 + node.interiorBias * 0.24 + lift * 0.58)
           .fill({ color, alpha: clamp(0.72 + node.interiorBias * 0.14 + lift * 0.22, 0.66, 1) });
       }
+    };
+
+    onFrame(scope, ctx.fpsCap, ({ dt }) => {
+      time += Math.min(dt, 0.05) * speed;
+
+      const w = stage.width;
+      const h = stage.height;
+      const cx = w * 0.5;
+      const cy = h * 0.5;
+
+      backdropLayer.clear();
+      if (drawBackground) backdropLayer.rect(0, 0, w, h).fill({ color: backgroundColor });
+
+      // ── Background sigils ───────────────────────────────────────────────
+      drawSigils(dt);
+
+      // ── Atmosphere ──────────────────────────────────────────────────────
+      stepMotes(w, h, dt);
+
+      // ── Advance the waves ───────────────────────────────────────────────
+      advanceWaves(cx, cy);
+
+      // ── Draw the figure ─────────────────────────────────────────────────
+      meshLayer.clear();
+      drawSegments();
+      drawNodes();
 
       stage.render();
     });

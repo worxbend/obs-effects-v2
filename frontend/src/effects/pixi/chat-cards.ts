@@ -1,7 +1,7 @@
 import * as PIXI from "pixi.js";
 
 import { int, num } from "../paramUtils";
-import { createPixiStage, defineEffect, onFrame, useChat } from "../sdk";
+import { createPixiStage, defineEffect, onFrame, random, useChat } from "../sdk";
 import type { ChatMessage, ChatPart } from "~/types/contract";
 
 /**
@@ -86,7 +86,7 @@ function clamp(value: number, min: number, max: number): number {
 
 /** A tiny deterministic random generator (LCG), so a seed always draws the same card. */
 function seedRng(seed: number): () => number {
-  let s = (seed >>> 0) || 1;
+  let s = seed >>> 0 || 1;
   return () => {
     s = (Math.imul(1664525, s) + 1013904223) >>> 0;
     return s / 0xffffffff;
@@ -97,7 +97,7 @@ function seedRng(seed: number): () => number {
 function hashSeed(input: string): number {
   let hash = 2166136261;
   for (let i = 0; i < input.length; i++) {
-    hash ^= input.charCodeAt(i);
+    hash ^= input.codePointAt(i) ?? 0;
     hash = Math.imul(hash, 16777619);
   }
   return hash >>> 0;
@@ -127,9 +127,7 @@ function hslToRgb(h: number, s: number, l: number): number {
   else [r, g, b] = [c, 0, x];
 
   return (
-    (Math.round((r + m) * 255) << 16) |
-    (Math.round((g + m) * 255) << 8) |
-    Math.round((b + m) * 255)
+    (Math.round((r + m) * 255) << 16) | (Math.round((g + m) * 255) << 8) | Math.round((b + m) * 255)
   );
 }
 
@@ -242,6 +240,37 @@ function makePixelTexture(app: PIXI.Application): PIXI.Texture {
   return texture;
 }
 
+interface PatternParticle {
+  texture: PIXI.Texture;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  tint: number;
+  alpha: number;
+}
+
+/** One of the card-background motif painters; all share this signature. */
+type MotifPainter = (
+  out: PIXI.Particle[],
+  texture: PIXI.Texture,
+  width: number,
+  height: number,
+  palette: Palette,
+  rng: () => number,
+) => void;
+
+interface StainBlobSpec {
+  texture: PIXI.Texture;
+  cx: number;
+  cy: number;
+  w: number;
+  h: number;
+  tint: number;
+  alpha: number;
+  rng: () => number;
+}
+
 /**
  * The seeded background artwork of one card: a colour wash, a dot field, one to three of the 42
  * motifs, and scattered accent bits — all built once at construction as static particles.
@@ -310,16 +339,7 @@ class PixelPattern {
     this.view.update();
   }
 
-  private _add(
-    out: PIXI.Particle[],
-    texture: PIXI.Texture,
-    x: number,
-    y: number,
-    w: number,
-    h: number,
-    tint: number,
-    alpha: number,
-  ): void {
+  private _add(out: PIXI.Particle[], { texture, x, y, w, h, tint, alpha }: PatternParticle): void {
     out.push(
       new PIXI.Particle({
         texture,
@@ -366,18 +386,63 @@ class PixelPattern {
     for (let i = 0; i < bits; i++) {
       const horizontal = rng() > 0.35;
       const size = this.plate * (1 + Math.floor(rng() * 3));
-      this._add(
-        out,
+      this._add(out, {
         texture,
-        rng() * width,
-        rng() * height,
-        horizontal ? size * (1 + rng() * 3) : size,
-        horizontal ? this.plate : size * (1 + rng() * 2),
-        this._pick(colors, rng),
-        0.24 + rng() * 0.28,
-      );
+        x: rng() * width,
+        y: rng() * height,
+        w: horizontal ? size * (1 + rng() * 3) : size,
+        h: horizontal ? this.plate : size * (1 + rng() * 2),
+        tint: this._pick(colors, rng),
+        alpha: 0.24 + rng() * 0.28,
+      });
     }
   }
+
+  /** The motif painters, indexed by motif id; an id past the end falls back to the last one. */
+  private readonly _motifPainters: readonly MotifPainter[] = [
+    this._diagonalBars.bind(this),
+    this._rings.bind(this),
+    this._pixelWaves.bind(this),
+    this._blocks.bind(this),
+    this._signalRunes.bind(this),
+    this._edgeSpray.bind(this),
+    this._bubbles.bind(this),
+    this._chevrons.bind(this),
+    this._circuit.bind(this),
+    this._flameSweep.bind(this),
+    this._slashStack.bind(this),
+    this._scallops.bind(this),
+    this._mountainPixels.bind(this),
+    this._confettiLane.bind(this),
+    this._zebraCuts.bind(this),
+    this._sunbursts.bind(this),
+    this._cloudBands.bind(this),
+    this._leafBits.bind(this),
+    this._equalizer.bind(this),
+    this._checkerFade.bind(this),
+    this._ribbonCut.bind(this),
+    this._constellation.bind(this),
+    this._stairSteps.bind(this),
+    this._pixelSwirl.bind(this),
+    this._xMarks.bind(this),
+    this._honeycomb.bind(this),
+    this._drips.bind(this),
+    this._wideStripes.bind(this),
+    this._barcode.bind(this),
+    this._waveBlocks.bind(this),
+    this._petalScatter.bind(this),
+    this._glitch.bind(this),
+    this._foam.bind(this),
+    this._borderDots.bind(this),
+    this._tileSlants.bind(this),
+    this._paintScabs.bind(this),
+    this._stainIslands.bind(this),
+    this._inkPuddles.bind(this),
+    this._offsetSwatches.bind(this),
+    this._dryBrush.bind(this),
+    this._splatterRail.bind(this),
+    this._blockArrows.bind(this),
+  ];
 
   private _motif(
     motif: number,
@@ -388,50 +453,9 @@ class PixelPattern {
     palette: Palette,
     rng: () => number,
   ): void {
-    switch (motif) {
-      case 0: this._diagonalBars(out, texture, width, height, palette, rng); break;
-      case 1: this._rings(out, texture, width, height, palette, rng); break;
-      case 2: this._pixelWaves(out, texture, width, height, palette, rng); break;
-      case 3: this._blocks(out, texture, width, height, palette, rng); break;
-      case 4: this._signalRunes(out, texture, width, height, palette, rng); break;
-      case 5: this._edgeSpray(out, texture, width, height, palette, rng); break;
-      case 6: this._bubbles(out, texture, width, height, palette, rng); break;
-      case 7: this._chevrons(out, texture, width, height, palette, rng); break;
-      case 8: this._circuit(out, texture, width, height, palette, rng); break;
-      case 9: this._flameSweep(out, texture, width, height, palette, rng); break;
-      case 10: this._slashStack(out, texture, width, height, palette, rng); break;
-      case 11: this._scallops(out, texture, width, height, palette, rng); break;
-      case 12: this._mountainPixels(out, texture, width, height, palette, rng); break;
-      case 13: this._confettiLane(out, texture, width, height, palette, rng); break;
-      case 14: this._zebraCuts(out, texture, width, height, palette, rng); break;
-      case 15: this._sunbursts(out, texture, width, height, palette, rng); break;
-      case 16: this._cloudBands(out, texture, width, height, palette, rng); break;
-      case 17: this._leafBits(out, texture, width, height, palette, rng); break;
-      case 18: this._equalizer(out, texture, width, height, palette, rng); break;
-      case 19: this._checkerFade(out, texture, width, height, palette, rng); break;
-      case 20: this._ribbonCut(out, texture, width, height, palette, rng); break;
-      case 21: this._constellation(out, texture, width, height, palette, rng); break;
-      case 22: this._stairSteps(out, texture, width, height, palette, rng); break;
-      case 23: this._pixelSwirl(out, texture, width, height, palette, rng); break;
-      case 24: this._xMarks(out, texture, width, height, palette, rng); break;
-      case 25: this._honeycomb(out, texture, width, height, palette, rng); break;
-      case 26: this._drips(out, texture, width, height, palette, rng); break;
-      case 27: this._wideStripes(out, texture, width, height, palette, rng); break;
-      case 28: this._barcode(out, texture, width, height, palette, rng); break;
-      case 29: this._waveBlocks(out, texture, width, height, palette, rng); break;
-      case 30: this._petalScatter(out, texture, width, height, palette, rng); break;
-      case 31: this._glitch(out, texture, width, height, palette, rng); break;
-      case 32: this._foam(out, texture, width, height, palette, rng); break;
-      case 33: this._borderDots(out, texture, width, height, palette, rng); break;
-      case 34: this._tileSlants(out, texture, width, height, palette, rng); break;
-      case 35: this._paintScabs(out, texture, width, height, palette, rng); break;
-      case 36: this._stainIslands(out, texture, width, height, palette, rng); break;
-      case 37: this._inkPuddles(out, texture, width, height, palette, rng); break;
-      case 38: this._offsetSwatches(out, texture, width, height, palette, rng); break;
-      case 39: this._dryBrush(out, texture, width, height, palette, rng); break;
-      case 40: this._splatterRail(out, texture, width, height, palette, rng); break;
-      default: this._blockArrows(out, texture, width, height, palette, rng); break;
-    }
+    const painters = this._motifPainters;
+    const paint = painters[motif] ?? painters.at(-1);
+    paint?.(out, texture, width, height, palette, rng);
   }
 
   private _stainWash(
@@ -476,14 +500,7 @@ class PixelPattern {
 
   private _stainBlob(
     out: PIXI.Particle[],
-    texture: PIXI.Texture,
-    cx: number,
-    cy: number,
-    w: number,
-    h: number,
-    tint: number,
-    alpha: number,
-    rng: () => number,
+    { texture, cx, cy, w, h, tint, alpha, rng }: StainBlobSpec,
   ): void {
     const step = this.plate;
     const left = cx - w / 2;
@@ -497,7 +514,15 @@ class PixelPattern {
         const edge = nx * nx + ny * ny * (1.35 + rowNoise);
         if (edge < 1.0 + rowNoise && rng() > 0.08 + Math.max(0, edge - 0.62) * 0.42) {
           const cellW = step * (1 + Math.floor(rng() * 3));
-          this._add(out, texture, x, y, cellW, step, tint, alpha * (0.78 + rng() * 0.28));
+          this._add(out, {
+            texture,
+            x,
+            y,
+            w: cellW,
+            h: step,
+            tint,
+            alpha: alpha * (0.78 + rng() * 0.28),
+          });
         }
       }
     }
@@ -509,49 +534,130 @@ class PixelPattern {
       const x = cx + Math.cos(angle) * w * 0.5 * dist;
       const y = cy + Math.sin(angle) * h * 0.5 * dist;
       const size = rng() > 0.65 ? step * 2 : step;
-      this._add(out, texture, x, y, size, size, tint, alpha * (0.52 + rng() * 0.28));
+      this._add(out, {
+        texture,
+        x,
+        y,
+        w: size,
+        h: size,
+        tint,
+        alpha: alpha * (0.52 + rng() * 0.28),
+      });
     }
   }
 
-  private _stackedStains(out: PIXI.Particle[], texture: PIXI.Texture, width: number, height: number, colors: number[], rng: () => number): void {
+  private _stackedStains(
+    out: PIXI.Particle[],
+    texture: PIXI.Texture,
+    width: number,
+    height: number,
+    colors: number[],
+    rng: () => number,
+  ): void {
     const bands = 3 + Math.floor(rng() * 3);
     for (let i = 0; i < bands; i++) {
       const bandH = height / (bands + 0.45);
       const cy = bandH * (i + 0.52) + (rng() - 0.5) * 10;
       const w = width * (0.62 + rng() * 0.34);
       const cx = width * (0.44 + rng() * 0.12);
-      this._stainBlob(out, texture, cx, cy, w, bandH * (0.95 + rng() * 0.45), colors[i % colors.length] ?? 0xffffff, 0.22 + rng() * 0.2, rng);
+      this._stainBlob(out, {
+        texture,
+        cx,
+        cy,
+        w,
+        h: bandH * (0.95 + rng() * 0.45),
+        tint: colors[i % colors.length] ?? 0xffffff,
+        alpha: 0.22 + rng() * 0.2,
+        rng,
+      });
     }
   }
 
-  private _offsetStains(out: PIXI.Particle[], texture: PIXI.Texture, width: number, height: number, colors: number[], rng: () => number): void {
+  private _offsetStains(
+    out: PIXI.Particle[],
+    texture: PIXI.Texture,
+    width: number,
+    height: number,
+    colors: number[],
+    rng: () => number,
+  ): void {
     const stains = 4 + Math.floor(rng() * 4);
     for (let i = 0; i < stains; i++) {
       const cy = height * (0.16 + (i / Math.max(1, stains - 1)) * 0.68) + (rng() - 0.5) * 12;
       const cx = width * (0.25 + rng() * 0.5);
       const w = width * (0.32 + rng() * 0.48);
       const h = 18 + rng() * Math.max(16, height * 0.24);
-      this._stainBlob(out, texture, cx, cy, w, h, colors[(i + 1) % colors.length] ?? 0xffffff, 0.2 + rng() * 0.22, rng);
+      this._stainBlob(out, {
+        texture,
+        cx,
+        cy,
+        w,
+        h,
+        tint: colors[(i + 1) % colors.length] ?? 0xffffff,
+        alpha: 0.2 + rng() * 0.22,
+        rng,
+      });
     }
   }
 
-  private _splitStains(out: PIXI.Particle[], texture: PIXI.Texture, width: number, height: number, colors: number[], rng: () => number): void {
+  private _splitStains(
+    out: PIXI.Particle[],
+    texture: PIXI.Texture,
+    width: number,
+    height: number,
+    colors: number[],
+    rng: () => number,
+  ): void {
     for (let side = 0; side < 2; side++) {
       const cx = width * (side === 0 ? 0.28 : 0.72) + (rng() - 0.5) * 30;
       const cy = height * (0.38 + rng() * 0.24);
-      this._stainBlob(out, texture, cx, cy, width * (0.34 + rng() * 0.22), height * (0.68 + rng() * 0.25), colors[(side * 2 + 1) % colors.length] ?? 0xffffff, 0.22 + rng() * 0.18, rng);
+      this._stainBlob(out, {
+        texture,
+        cx,
+        cy,
+        w: width * (0.34 + rng() * 0.22),
+        h: height * (0.68 + rng() * 0.25),
+        tint: colors[(side * 2 + 1) % colors.length] ?? 0xffffff,
+        alpha: 0.22 + rng() * 0.18,
+        rng,
+      });
     }
-    this._stainBlob(out, texture, width * 0.5, height * (0.48 + (rng() - 0.5) * 0.22), width * 0.48, height * 0.36, colors[3 % colors.length] ?? 0xffffff, 0.12 + rng() * 0.16, rng);
+    this._stainBlob(out, {
+      texture,
+      cx: width * 0.5,
+      cy: height * (0.48 + (rng() - 0.5) * 0.22),
+      w: width * 0.48,
+      h: height * 0.36,
+      tint: colors[3 % colors.length] ?? 0xffffff,
+      alpha: 0.12 + rng() * 0.16,
+      rng,
+    });
   }
 
-  private _brushStreaks(out: PIXI.Particle[], texture: PIXI.Texture, width: number, height: number, colors: number[], rng: () => number): void {
+  private _brushStreaks(
+    out: PIXI.Particle[],
+    texture: PIXI.Texture,
+    width: number,
+    height: number,
+    colors: number[],
+    rng: () => number,
+  ): void {
     const lanes = 4 + Math.floor(rng() * 4);
     for (let i = 0; i < lanes; i++) {
       const y = height * (0.14 + rng() * 0.72);
       const x = -20 + rng() * width * 0.3;
       const w = width * (0.48 + rng() * 0.58);
       const h = 10 + rng() * 18;
-      this._stainBlob(out, texture, x + w * 0.5, y, w, h, colors[i % colors.length] ?? 0xffffff, 0.22 + rng() * 0.2, rng);
+      this._stainBlob(out, {
+        texture,
+        cx: x + w * 0.5,
+        cy: y,
+        w,
+        h,
+        tint: colors[i % colors.length] ?? 0xffffff,
+        alpha: 0.22 + rng() * 0.2,
+        rng,
+      });
     }
   }
 
@@ -566,383 +672,997 @@ class PixelPattern {
     const count = Math.floor(width / 18);
     for (let i = 0; i < count; i++) {
       const size = rng() > 0.7 ? this.px * 2 : this.px;
-      this._add(
-        out,
+      this._add(out, {
         texture,
-        rng() * width,
-        10 + rng() * (height - 20),
-        size,
-        size,
-        this._pick(colors, rng),
-        0.18 + rng() * 0.32,
-      );
+        x: rng() * width,
+        y: 10 + rng() * (height - 20),
+        w: size,
+        h: size,
+        tint: this._pick(colors, rng),
+        alpha: 0.18 + rng() * 0.32,
+      });
     }
   }
 
-  private _diagonalBars(out: PIXI.Particle[], texture: PIXI.Texture, width: number, height: number, palette: Palette, rng: () => number): void {
+  private _diagonalBars(
+    out: PIXI.Particle[],
+    texture: PIXI.Texture,
+    width: number,
+    height: number,
+    palette: Palette,
+    rng: () => number,
+  ): void {
     for (let x = -width * 0.15; x < width; x += 26 + rng() * 12) {
       for (let step = 0; step < 7; step++) {
-        this._add(out, texture, x + step * 7, height - 12 - step * 5, 24, this.px, palette.accent, 0.24);
+        this._add(out, {
+          texture,
+          x: x + step * 7,
+          y: height - 12 - step * 5,
+          w: 24,
+          h: this.px,
+          tint: palette.accent,
+          alpha: 0.24,
+        });
       }
     }
   }
 
-  private _rings(out: PIXI.Particle[], texture: PIXI.Texture, width: number, height: number, palette: Palette, rng: () => number): void {
+  private _rings(
+    out: PIXI.Particle[],
+    texture: PIXI.Texture,
+    width: number,
+    height: number,
+    palette: Palette,
+    rng: () => number,
+  ): void {
     const cx = width * (0.2 + rng() * 0.6);
     const cy = height * (0.35 + rng() * 0.35);
     for (let r = 12; r < height * 1.5; r += 13) {
       for (let a = 0; a < Math.PI * 2; a += 0.35) {
         if (rng() < 0.42) {
-          this._add(out, texture, cx + Math.cos(a) * r, cy + Math.sin(a) * r, this.px, this.px, palette.pop, 0.24);
+          this._add(out, {
+            texture,
+            x: cx + Math.cos(a) * r,
+            y: cy + Math.sin(a) * r,
+            w: this.px,
+            h: this.px,
+            tint: palette.pop,
+            alpha: 0.24,
+          });
         }
       }
     }
   }
 
-  private _pixelWaves(out: PIXI.Particle[], texture: PIXI.Texture, width: number, height: number, palette: Palette, rng: () => number): void {
+  private _pixelWaves(
+    out: PIXI.Particle[],
+    texture: PIXI.Texture,
+    width: number,
+    height: number,
+    palette: Palette,
+    rng: () => number,
+  ): void {
     for (let lane = 0; lane < 4; lane++) {
       const y = 12 + lane * ((height - 24) / 4);
       const tint = lane % 2 === 0 ? palette.glow : palette.accent;
       for (let x = 0; x < width; x += this.px * 2) {
         const wave = Math.sin(x * 0.035 + lane + rng() * 0.1);
-        if (wave > 0.15) this._add(out, texture, x, y + wave * 11, this.px, this.px, tint, 0.22);
+        if (wave > 0.15)
+          this._add(out, {
+            texture,
+            x,
+            y: y + wave * 11,
+            w: this.px,
+            h: this.px,
+            tint,
+            alpha: 0.22,
+          });
       }
     }
   }
 
-  private _blocks(out: PIXI.Particle[], texture: PIXI.Texture, width: number, height: number, palette: Palette, rng: () => number): void {
+  private _blocks(
+    out: PIXI.Particle[],
+    texture: PIXI.Texture,
+    width: number,
+    height: number,
+    palette: Palette,
+    rng: () => number,
+  ): void {
     const blockW = 30 + rng() * 48;
     for (let x = 0; x < width; x += blockW) {
       const tint = rng() > 0.5 ? palette.accent : palette.pop;
-      this._add(out, texture, x, height - 18 - rng() * 12, blockW * (0.55 + rng() * 0.4), 14, tint, 0.18);
+      this._add(out, {
+        texture,
+        x,
+        y: height - 18 - rng() * 12,
+        w: blockW * (0.55 + rng() * 0.4),
+        h: 14,
+        tint,
+        alpha: 0.18,
+      });
     }
   }
 
-  private _signalRunes(out: PIXI.Particle[], texture: PIXI.Texture, width: number, height: number, palette: Palette, rng: () => number): void {
+  private _signalRunes(
+    out: PIXI.Particle[],
+    texture: PIXI.Texture,
+    width: number,
+    height: number,
+    palette: Palette,
+    rng: () => number,
+  ): void {
     for (let x = 12; x < width - 12; x += 24 + rng() * 20) {
       const y = 12 + rng() * (height - 24);
-      this._add(out, texture, x, y, this.px * 3, this.px, palette.glow, 0.32);
-      this._add(out, texture, x + this.px, y - this.px, this.px, this.px * 3, palette.glow, 0.24);
-      if (rng() > 0.45) this._add(out, texture, x + this.px * 4, y + this.px, this.px, this.px, palette.pop, 0.32);
+      this._add(out, {
+        texture,
+        x,
+        y,
+        w: this.px * 3,
+        h: this.px,
+        tint: palette.glow,
+        alpha: 0.32,
+      });
+      this._add(out, {
+        texture,
+        x: x + this.px,
+        y: y - this.px,
+        w: this.px,
+        h: this.px * 3,
+        tint: palette.glow,
+        alpha: 0.24,
+      });
+      if (rng() > 0.45)
+        this._add(out, {
+          texture,
+          x: x + this.px * 4,
+          y: y + this.px,
+          w: this.px,
+          h: this.px,
+          tint: palette.pop,
+          alpha: 0.32,
+        });
     }
   }
 
-  private _edgeSpray(out: PIXI.Particle[], texture: PIXI.Texture, width: number, height: number, palette: Palette, rng: () => number): void {
+  private _edgeSpray(
+    out: PIXI.Particle[],
+    texture: PIXI.Texture,
+    width: number,
+    height: number,
+    palette: Palette,
+    rng: () => number,
+  ): void {
     for (let i = 0; i < 42; i++) {
       const side = rng() > 0.5;
       const x = side ? rng() * width * 0.26 : width - rng() * width * 0.26;
-      this._add(out, texture, x, rng() * height, this.px, this.px, rng() > 0.5 ? palette.accent : palette.glow, 0.35);
+      this._add(out, {
+        texture,
+        x,
+        y: rng() * height,
+        w: this.px,
+        h: this.px,
+        tint: rng() > 0.5 ? palette.accent : palette.glow,
+        alpha: 0.35,
+      });
     }
   }
 
-  private _bubbles(out: PIXI.Particle[], texture: PIXI.Texture, width: number, height: number, palette: Palette, rng: () => number): void {
+  private _bubbles(
+    out: PIXI.Particle[],
+    texture: PIXI.Texture,
+    width: number,
+    height: number,
+    palette: Palette,
+    rng: () => number,
+  ): void {
     for (let i = 0; i < 18; i++) {
       const cx = rng() * width;
       const cy = rng() * height;
       const r = 6 + rng() * 18;
       for (let a = 0; a < Math.PI * 2; a += 0.55) {
-        this._add(out, texture, cx + Math.cos(a) * r, cy + Math.sin(a) * r, this.px, this.px, rng() > 0.5 ? palette.glow : palette.accent, 0.22);
+        this._add(out, {
+          texture,
+          x: cx + Math.cos(a) * r,
+          y: cy + Math.sin(a) * r,
+          w: this.px,
+          h: this.px,
+          tint: rng() > 0.5 ? palette.glow : palette.accent,
+          alpha: 0.22,
+        });
       }
     }
   }
 
-  private _chevrons(out: PIXI.Particle[], texture: PIXI.Texture, width: number, height: number, palette: Palette, rng: () => number): void {
+  private _chevrons(
+    out: PIXI.Particle[],
+    texture: PIXI.Texture,
+    width: number,
+    height: number,
+    palette: Palette,
+    rng: () => number,
+  ): void {
     for (let x = -20; x < width; x += 44) {
       const y = 8 + rng() * (height - 20);
       const tint = rng() > 0.5 ? palette.accent : palette.pop;
       for (let i = 0; i < 6; i++) {
-        this._add(out, texture, x + i * this.px * 2, y + i * this.px, this.px * 3, this.px, tint, 0.38);
-        this._add(out, texture, x + i * this.px * 2, y + (10 - i) * this.px, this.px * 3, this.px, tint, 0.38);
+        this._add(out, {
+          texture,
+          x: x + i * this.px * 2,
+          y: y + i * this.px,
+          w: this.px * 3,
+          h: this.px,
+          tint,
+          alpha: 0.38,
+        });
+        this._add(out, {
+          texture,
+          x: x + i * this.px * 2,
+          y: y + (10 - i) * this.px,
+          w: this.px * 3,
+          h: this.px,
+          tint,
+          alpha: 0.38,
+        });
       }
     }
   }
 
-  private _circuit(out: PIXI.Particle[], texture: PIXI.Texture, width: number, height: number, palette: Palette, rng: () => number): void {
+  private _circuit(
+    out: PIXI.Particle[],
+    texture: PIXI.Texture,
+    width: number,
+    height: number,
+    palette: Palette,
+    rng: () => number,
+  ): void {
     for (let y = 12; y < height; y += 16 + rng() * 10) {
       let x = rng() * 24;
       while (x < width - 20) {
         const len = 18 + rng() * 52;
-        this._add(out, texture, x, y, len, this.px, palette.accent, 0.32);
-        if (rng() > 0.45) this._add(out, texture, x + len, y - 8, this.px, 16, palette.glow, 0.28);
-        if (rng() > 0.55) this._add(out, texture, x + len + 6, y - 2, this.px * 2, this.px * 2, palette.pop, 0.38);
+        this._add(out, {
+          texture,
+          x,
+          y,
+          w: len,
+          h: this.px,
+          tint: palette.accent,
+          alpha: 0.32,
+        });
+        if (rng() > 0.45)
+          this._add(out, {
+            texture,
+            x: x + len,
+            y: y - 8,
+            w: this.px,
+            h: 16,
+            tint: palette.glow,
+            alpha: 0.28,
+          });
+        if (rng() > 0.55)
+          this._add(out, {
+            texture,
+            x: x + len + 6,
+            y: y - 2,
+            w: this.px * 2,
+            h: this.px * 2,
+            tint: palette.pop,
+            alpha: 0.38,
+          });
         x += len + 18 + rng() * 22;
       }
     }
   }
 
-  private _flameSweep(out: PIXI.Particle[], texture: PIXI.Texture, width: number, height: number, palette: Palette, rng: () => number): void {
+  private _flameSweep(
+    out: PIXI.Particle[],
+    texture: PIXI.Texture,
+    width: number,
+    height: number,
+    palette: Palette,
+    rng: () => number,
+  ): void {
     for (let x = 0; x < width; x += this.px * 2) {
       const flame = Math.sin(x * 0.035 + rng() * 0.3) * 0.5 + 0.5;
       const h = 14 + flame * (height - 18);
       const tint = rng() > 0.5 ? palette.pop : palette.accent;
       for (let y = height - h; y < height; y += this.px * 2) {
-        if (rng() > 0.22) this._add(out, texture, x, y, this.px * 2, this.px * 2, tint, 0.21 + flame * 0.22);
+        if (rng() > 0.22)
+          this._add(out, {
+            texture,
+            x,
+            y,
+            w: this.px * 2,
+            h: this.px * 2,
+            tint,
+            alpha: 0.21 + flame * 0.22,
+          });
       }
     }
   }
 
-  private _slashStack(out: PIXI.Particle[], texture: PIXI.Texture, width: number, height: number, palette: Palette, rng: () => number): void {
+  private _slashStack(
+    out: PIXI.Particle[],
+    texture: PIXI.Texture,
+    width: number,
+    height: number,
+    palette: Palette,
+    rng: () => number,
+  ): void {
     for (let x = -height; x < width; x += 18 + rng() * 18) {
       const tint = rng() > 0.5 ? palette.glow : palette.pop;
       for (let y = 0; y < height; y += this.px) {
-        this._add(out, texture, x + y * 0.9, y, 10 + rng() * 18, this.px, tint, 0.2);
+        this._add(out, {
+          texture,
+          x: x + y * 0.9,
+          y,
+          w: 10 + rng() * 18,
+          h: this.px,
+          tint,
+          alpha: 0.2,
+        });
       }
     }
   }
 
-  private _scallops(out: PIXI.Particle[], texture: PIXI.Texture, width: number, height: number, palette: Palette, rng: () => number): void {
+  private _scallops(
+    out: PIXI.Particle[],
+    texture: PIXI.Texture,
+    width: number,
+    height: number,
+    palette: Palette,
+    rng: () => number,
+  ): void {
     for (let cx = 0; cx < width + 30; cx += 28) {
       const cy = rng() > 0.5 ? 0 : height;
       for (let a = 0; a < Math.PI; a += 0.22) {
         const yDir = cy === 0 ? 1 : -1;
-        this._add(out, texture, cx + Math.cos(a) * 18, cy + Math.sin(a) * 18 * yDir, this.px * 2, this.px, palette.glow, 0.25);
+        this._add(out, {
+          texture,
+          x: cx + Math.cos(a) * 18,
+          y: cy + Math.sin(a) * 18 * yDir,
+          w: this.px * 2,
+          h: this.px,
+          tint: palette.glow,
+          alpha: 0.25,
+        });
       }
     }
   }
 
-  private _mountainPixels(out: PIXI.Particle[], texture: PIXI.Texture, width: number, height: number, palette: Palette, rng: () => number): void {
+  private _mountainPixels(
+    out: PIXI.Particle[],
+    texture: PIXI.Texture,
+    width: number,
+    height: number,
+    palette: Palette,
+    rng: () => number,
+  ): void {
     for (let x = 0; x < width; x += this.px * 2) {
       const ridge = height * (0.34 + 0.28 * Math.sin(x * 0.024 + rng()));
       for (let y = ridge; y < height; y += this.px * 2) {
-        if (rng() > 0.36) this._add(out, texture, x, y, this.px * 2, this.px * 2, rng() > 0.5 ? palette.dim : palette.accent, 0.24);
+        if (rng() > 0.36)
+          this._add(out, {
+            texture,
+            x,
+            y,
+            w: this.px * 2,
+            h: this.px * 2,
+            tint: rng() > 0.5 ? palette.dim : palette.accent,
+            alpha: 0.24,
+          });
       }
     }
   }
 
-  private _confettiLane(out: PIXI.Particle[], texture: PIXI.Texture, width: number, height: number, palette: Palette, rng: () => number): void {
+  private _confettiLane(
+    out: PIXI.Particle[],
+    texture: PIXI.Texture,
+    width: number,
+    height: number,
+    palette: Palette,
+    rng: () => number,
+  ): void {
     const colors = [palette.panel, palette.accent, palette.pop, palette.glow, palette.ink];
     for (let i = 0; i < 75; i++) {
-      this._add(out, texture, rng() * width, rng() * height, this.px * (1 + Math.floor(rng() * 4)), this.px, this._pick(colors, rng), 0.26 + rng() * 0.28);
+      this._add(out, {
+        texture,
+        x: rng() * width,
+        y: rng() * height,
+        w: this.px * (1 + Math.floor(rng() * 4)),
+        h: this.px,
+        tint: this._pick(colors, rng),
+        alpha: 0.26 + rng() * 0.28,
+      });
     }
   }
 
-  private _zebraCuts(out: PIXI.Particle[], texture: PIXI.Texture, width: number, height: number, palette: Palette, rng: () => number): void {
+  private _zebraCuts(
+    out: PIXI.Particle[],
+    texture: PIXI.Texture,
+    width: number,
+    height: number,
+    palette: Palette,
+    rng: () => number,
+  ): void {
     for (let y = -height; y < height * 2; y += 12 + rng() * 10) {
       const tint = rng() > 0.5 ? 0xffffff : palette.dim;
       for (let x = 0; x < width; x += this.px * 2) {
-        this._add(out, texture, x, y + Math.sin(x * 0.04) * 10 + x * 0.14, this.px * 2, this.px * 2, tint, 0.18);
+        this._add(out, {
+          texture,
+          x,
+          y: y + Math.sin(x * 0.04) * 10 + x * 0.14,
+          w: this.px * 2,
+          h: this.px * 2,
+          tint,
+          alpha: 0.18,
+        });
       }
     }
   }
 
-  private _sunbursts(out: PIXI.Particle[], texture: PIXI.Texture, width: number, height: number, palette: Palette, rng: () => number): void {
+  private _sunbursts(
+    out: PIXI.Particle[],
+    texture: PIXI.Texture,
+    width: number,
+    height: number,
+    palette: Palette,
+    rng: () => number,
+  ): void {
     const cx = rng() * width;
     const cy = rng() * height;
     for (let a = 0; a < Math.PI * 2; a += 0.18) {
       const len = 18 + rng() * Math.max(width, height) * 0.38;
       for (let r = 8; r < len; r += this.px * 3) {
-        this._add(out, texture, cx + Math.cos(a) * r, cy + Math.sin(a) * r, this.px * 2, this.px, rng() > 0.5 ? palette.glow : palette.accent, 0.18);
+        this._add(out, {
+          texture,
+          x: cx + Math.cos(a) * r,
+          y: cy + Math.sin(a) * r,
+          w: this.px * 2,
+          h: this.px,
+          tint: rng() > 0.5 ? palette.glow : palette.accent,
+          alpha: 0.18,
+        });
       }
     }
   }
 
-  private _cloudBands(out: PIXI.Particle[], texture: PIXI.Texture, width: number, height: number, palette: Palette, rng: () => number): void {
+  private _cloudBands(
+    out: PIXI.Particle[],
+    texture: PIXI.Texture,
+    width: number,
+    height: number,
+    palette: Palette,
+    rng: () => number,
+  ): void {
     for (let x = -30; x < width; x += 22) {
       const cy = height * (0.28 + rng() * 0.44);
       const h = 16 + rng() * 28;
-      this._add(out, texture, x, cy, 32 + rng() * 50, h, rng() > 0.5 ? palette.glow : palette.panel, 0.18);
-      this._add(out, texture, x + 10, cy - h * 0.35, 22 + rng() * 35, h * 0.55, palette.accent, 0.16);
+      this._add(out, {
+        texture,
+        x,
+        y: cy,
+        w: 32 + rng() * 50,
+        h,
+        tint: rng() > 0.5 ? palette.glow : palette.panel,
+        alpha: 0.18,
+      });
+      this._add(out, {
+        texture,
+        x: x + 10,
+        y: cy - h * 0.35,
+        w: 22 + rng() * 35,
+        h: h * 0.55,
+        tint: palette.accent,
+        alpha: 0.16,
+      });
     }
   }
 
-  private _leafBits(out: PIXI.Particle[], texture: PIXI.Texture, width: number, height: number, palette: Palette, rng: () => number): void {
+  private _leafBits(
+    out: PIXI.Particle[],
+    texture: PIXI.Texture,
+    width: number,
+    height: number,
+    palette: Palette,
+    rng: () => number,
+  ): void {
     for (let i = 0; i < 34; i++) {
       const x = rng() * width;
       const y = rng() * height;
       const tint = rng() > 0.5 ? palette.accent : palette.glow;
-      this._add(out, texture, x, y, this.px * 4, this.px, tint, 0.3);
-      this._add(out, texture, x + this.px, y - this.px, this.px * 2, this.px * 3, tint, 0.22);
+      this._add(out, { texture, x: x, y: y, w: this.px * 4, h: this.px, tint: tint, alpha: 0.3 });
+      this._add(out, {
+        texture,
+        x: x + this.px,
+        y: y - this.px,
+        w: this.px * 2,
+        h: this.px * 3,
+        tint,
+        alpha: 0.22,
+      });
     }
   }
 
-  private _equalizer(out: PIXI.Particle[], texture: PIXI.Texture, width: number, height: number, palette: Palette, rng: () => number): void {
+  private _equalizer(
+    out: PIXI.Particle[],
+    texture: PIXI.Texture,
+    width: number,
+    height: number,
+    palette: Palette,
+    rng: () => number,
+  ): void {
     for (let x = 0; x < width; x += 10) {
       const h = 6 + rng() * (height - 12);
-      this._add(out, texture, x, height - h, 5, h, rng() > 0.5 ? palette.pop : palette.glow, 0.32);
+      this._add(out, {
+        texture,
+        x,
+        y: height - h,
+        w: 5,
+        h,
+        tint: rng() > 0.5 ? palette.pop : palette.glow,
+        alpha: 0.32,
+      });
     }
   }
 
-  private _checkerFade(out: PIXI.Particle[], texture: PIXI.Texture, width: number, height: number, palette: Palette, rng: () => number): void {
+  private _checkerFade(
+    out: PIXI.Particle[],
+    texture: PIXI.Texture,
+    width: number,
+    height: number,
+    palette: Palette,
+    rng: () => number,
+  ): void {
     const cell = 12 + Math.floor(rng() * 3) * 4;
     for (let y = 0; y < height; y += cell) {
       for (let x = 0; x < width; x += cell) {
-        if (((x / cell + y / cell) | 0) % 2 === 0) this._add(out, texture, x, y, cell, cell, rng() > 0.5 ? palette.accent : palette.dim, 0.16 + (x / width) * 0.2);
+        if (Math.trunc(x / cell + y / cell) % 2 === 0)
+          this._add(out, {
+            texture,
+            x,
+            y,
+            w: cell,
+            h: cell,
+            tint: rng() > 0.5 ? palette.accent : palette.dim,
+            alpha: 0.16 + (x / width) * 0.2,
+          });
       }
     }
   }
 
-  private _ribbonCut(out: PIXI.Particle[], texture: PIXI.Texture, width: number, height: number, palette: Palette, rng: () => number): void {
+  private _ribbonCut(
+    out: PIXI.Particle[],
+    texture: PIXI.Texture,
+    width: number,
+    height: number,
+    palette: Palette,
+    rng: () => number,
+  ): void {
     for (let i = 0; i < 5; i++) {
       const y = rng() * height;
       const h = 8 + rng() * 14;
-      this._add(out, texture, 0, y, width, h, i % 2 ? palette.pop : palette.accent, 0.17);
-      this._add(out, texture, width * (0.2 + rng() * 0.5), y - this.px, 18 + rng() * 30, h + this.px * 2, palette.glow, 0.26);
+      this._add(out, {
+        texture,
+        x: 0,
+        y,
+        w: width,
+        h,
+        tint: i % 2 ? palette.pop : palette.accent,
+        alpha: 0.17,
+      });
+      this._add(out, {
+        texture,
+        x: width * (0.2 + rng() * 0.5),
+        y: y - this.px,
+        w: 18 + rng() * 30,
+        h: h + this.px * 2,
+        tint: palette.glow,
+        alpha: 0.26,
+      });
     }
   }
 
-  private _constellation(out: PIXI.Particle[], texture: PIXI.Texture, width: number, height: number, palette: Palette, rng: () => number): void {
+  private _constellation(
+    out: PIXI.Particle[],
+    texture: PIXI.Texture,
+    width: number,
+    height: number,
+    palette: Palette,
+    rng: () => number,
+  ): void {
     let px = rng() * width;
     let py = rng() * height;
     for (let i = 0; i < 24; i++) {
       const x = rng() * width;
       const y = rng() * height;
-      this._add(out, texture, x, y, this.px * 2, this.px * 2, palette.glow, 0.48);
-      this._add(out, texture, Math.min(px, x), Math.min(py, y), Math.abs(x - px) + this.px, this.px, palette.accent, 0.12);
+      this._add(out, {
+        texture,
+        x,
+        y,
+        w: this.px * 2,
+        h: this.px * 2,
+        tint: palette.glow,
+        alpha: 0.48,
+      });
+      this._add(out, {
+        texture,
+        x: Math.min(px, x),
+        y: Math.min(py, y),
+        w: Math.abs(x - px) + this.px,
+        h: this.px,
+        tint: palette.accent,
+        alpha: 0.12,
+      });
       px = x;
       py = y;
     }
   }
 
-  private _stairSteps(out: PIXI.Particle[], texture: PIXI.Texture, width: number, height: number, palette: Palette, rng: () => number): void {
+  private _stairSteps(
+    out: PIXI.Particle[],
+    texture: PIXI.Texture,
+    width: number,
+    height: number,
+    palette: Palette,
+    rng: () => number,
+  ): void {
     for (let x = 0; x < width; x += 24) {
       const steps = 3 + Math.floor(rng() * 5);
       for (let s = 0; s < steps; s++) {
-        this._add(out, texture, x + s * this.px * 2, height - (s + 2) * this.px * 2, 22, this.px * 2, rng() > 0.5 ? palette.pop : palette.panel, 0.22);
+        this._add(out, {
+          texture,
+          x: x + s * this.px * 2,
+          y: height - (s + 2) * this.px * 2,
+          w: 22,
+          h: this.px * 2,
+          tint: rng() > 0.5 ? palette.pop : palette.panel,
+          alpha: 0.22,
+        });
       }
     }
   }
 
-  private _pixelSwirl(out: PIXI.Particle[], texture: PIXI.Texture, width: number, height: number, palette: Palette, rng: () => number): void {
+  private _pixelSwirl(
+    out: PIXI.Particle[],
+    texture: PIXI.Texture,
+    width: number,
+    height: number,
+    palette: Palette,
+    rng: () => number,
+  ): void {
     const cx = width * (0.35 + rng() * 0.3);
     const cy = height * (0.25 + rng() * 0.5);
     for (let t = 0; t < 42; t++) {
       const a = t * 0.42;
       const r = 2 + t * 1.8;
-      this._add(out, texture, cx + Math.cos(a) * r, cy + Math.sin(a) * r, this.px * 3, this.px, t % 2 ? palette.accent : palette.glow, 0.34);
+      this._add(out, {
+        texture,
+        x: cx + Math.cos(a) * r,
+        y: cy + Math.sin(a) * r,
+        w: this.px * 3,
+        h: this.px,
+        tint: t % 2 ? palette.accent : palette.glow,
+        alpha: 0.34,
+      });
     }
   }
 
-  private _xMarks(out: PIXI.Particle[], texture: PIXI.Texture, width: number, height: number, palette: Palette, rng: () => number): void {
+  private _xMarks(
+    out: PIXI.Particle[],
+    texture: PIXI.Texture,
+    width: number,
+    height: number,
+    palette: Palette,
+    rng: () => number,
+  ): void {
     for (let i = 0; i < 18; i++) {
       const x = rng() * width;
       const y = rng() * height;
       const tint = rng() > 0.5 ? palette.pop : palette.accent;
       for (let s = 0; s < 5; s++) {
-        this._add(out, texture, x + s * this.px, y + s * this.px, this.px, this.px, tint, 0.32);
-        this._add(out, texture, x + (4 - s) * this.px, y + s * this.px, this.px, this.px, tint, 0.32);
+        this._add(out, {
+          texture,
+          x: x + s * this.px,
+          y: y + s * this.px,
+          w: this.px,
+          h: this.px,
+          tint,
+          alpha: 0.32,
+        });
+        this._add(out, {
+          texture,
+          x: x + (4 - s) * this.px,
+          y: y + s * this.px,
+          w: this.px,
+          h: this.px,
+          tint,
+          alpha: 0.32,
+        });
       }
     }
   }
 
-  private _honeycomb(out: PIXI.Particle[], texture: PIXI.Texture, width: number, height: number, palette: Palette, rng: () => number): void {
+  private _honeycomb(
+    out: PIXI.Particle[],
+    texture: PIXI.Texture,
+    width: number,
+    height: number,
+    palette: Palette,
+    rng: () => number,
+  ): void {
     for (let y = 0; y < height; y += 18) {
       for (let x = (Math.floor(y / 18) % 2) * 12; x < width; x += 26) {
         const tint = rng() > 0.5 ? palette.glow : palette.dim;
-        this._add(out, texture, x, y, 12, this.px, tint, 0.2);
-        this._add(out, texture, x - this.px, y + this.px, this.px, 10, tint, 0.2);
-        this._add(out, texture, x + 12, y + this.px, this.px, 10, tint, 0.2);
+        this._add(out, { texture, x: x, y: y, w: 12, h: this.px, tint: tint, alpha: 0.2 });
+        this._add(out, {
+          texture,
+          x: x - this.px,
+          y: y + this.px,
+          w: this.px,
+          h: 10,
+          tint,
+          alpha: 0.2,
+        });
+        this._add(out, {
+          texture,
+          x: x + 12,
+          y: y + this.px,
+          w: this.px,
+          h: 10,
+          tint,
+          alpha: 0.2,
+        });
       }
     }
   }
 
-  private _drips(out: PIXI.Particle[], texture: PIXI.Texture, width: number, height: number, palette: Palette, rng: () => number): void {
+  private _drips(
+    out: PIXI.Particle[],
+    texture: PIXI.Texture,
+    width: number,
+    height: number,
+    palette: Palette,
+    rng: () => number,
+  ): void {
     for (let x = 0; x < width; x += 12 + rng() * 24) {
       const h = 10 + rng() * (height * 0.7);
-      this._add(out, texture, x, 0, 6 + rng() * 10, h, rng() > 0.5 ? palette.pop : palette.accent, 0.25);
-      this._add(out, texture, x - this.px, h, this.px * 3, this.px * 3, palette.glow, 0.24);
+      this._add(out, {
+        texture,
+        x,
+        y: 0,
+        w: 6 + rng() * 10,
+        h,
+        tint: rng() > 0.5 ? palette.pop : palette.accent,
+        alpha: 0.25,
+      });
+      this._add(out, {
+        texture,
+        x: x - this.px,
+        y: h,
+        w: this.px * 3,
+        h: this.px * 3,
+        tint: palette.glow,
+        alpha: 0.24,
+      });
     }
   }
 
-  private _wideStripes(out: PIXI.Particle[], texture: PIXI.Texture, width: number, height: number, palette: Palette, rng: () => number): void {
+  private _wideStripes(
+    out: PIXI.Particle[],
+    texture: PIXI.Texture,
+    width: number,
+    height: number,
+    palette: Palette,
+    rng: () => number,
+  ): void {
     const colors = [palette.panel, palette.accent, palette.pop, palette.glow];
     for (let x = 0; x < width; x += 28 + rng() * 26) {
-      this._add(out, texture, x, 0, 18 + rng() * 35, height, this._pick(colors, rng), 0.2);
+      this._add(out, {
+        texture,
+        x,
+        y: 0,
+        w: 18 + rng() * 35,
+        h: height,
+        tint: this._pick(colors, rng),
+        alpha: 0.2,
+      });
     }
   }
 
-  private _barcode(out: PIXI.Particle[], texture: PIXI.Texture, width: number, height: number, palette: Palette, rng: () => number): void {
+  private _barcode(
+    out: PIXI.Particle[],
+    texture: PIXI.Texture,
+    width: number,
+    height: number,
+    palette: Palette,
+    rng: () => number,
+  ): void {
     for (let x = 0; x < width; x += 5 + rng() * 9) {
       const w = 2 + rng() * 7;
-      this._add(out, texture, x, 6 + rng() * 10, w, height - 12 - rng() * 20, rng() > 0.5 ? palette.ink : palette.glow, 0.25);
+      this._add(out, {
+        texture,
+        x,
+        y: 6 + rng() * 10,
+        w,
+        h: height - 12 - rng() * 20,
+        tint: rng() > 0.5 ? palette.ink : palette.glow,
+        alpha: 0.25,
+      });
     }
   }
 
-  private _waveBlocks(out: PIXI.Particle[], texture: PIXI.Texture, width: number, height: number, palette: Palette, rng: () => number): void {
+  private _waveBlocks(
+    out: PIXI.Particle[],
+    texture: PIXI.Texture,
+    width: number,
+    height: number,
+    palette: Palette,
+    rng: () => number,
+  ): void {
     for (let x = 0; x < width; x += 10) {
       const y = height * 0.5 + Math.sin(x * 0.035) * height * 0.28;
-      this._add(out, texture, x, y, 18, height - y, rng() > 0.5 ? palette.accent : palette.panel, 0.22);
+      this._add(out, {
+        texture,
+        x,
+        y,
+        w: 18,
+        h: height - y,
+        tint: rng() > 0.5 ? palette.accent : palette.panel,
+        alpha: 0.22,
+      });
     }
   }
 
-  private _petalScatter(out: PIXI.Particle[], texture: PIXI.Texture, width: number, height: number, palette: Palette, rng: () => number): void {
+  private _petalScatter(
+    out: PIXI.Particle[],
+    texture: PIXI.Texture,
+    width: number,
+    height: number,
+    palette: Palette,
+    rng: () => number,
+  ): void {
     for (let i = 0; i < 36; i++) {
       const x = rng() * width;
       const y = rng() * height;
       const tint = rng() > 0.5 ? palette.pop : palette.glow;
-      this._add(out, texture, x, y, this.px * 3, this.px, tint, 0.3);
-      this._add(out, texture, x + this.px, y + this.px, this.px, this.px * 2, tint, 0.22);
+      this._add(out, { texture, x: x, y: y, w: this.px * 3, h: this.px, tint: tint, alpha: 0.3 });
+      this._add(out, {
+        texture,
+        x: x + this.px,
+        y: y + this.px,
+        w: this.px,
+        h: this.px * 2,
+        tint,
+        alpha: 0.22,
+      });
     }
   }
 
-  private _glitch(out: PIXI.Particle[], texture: PIXI.Texture, width: number, height: number, palette: Palette, rng: () => number): void {
+  private _glitch(
+    out: PIXI.Particle[],
+    texture: PIXI.Texture,
+    width: number,
+    height: number,
+    palette: Palette,
+    rng: () => number,
+  ): void {
     for (let i = 0; i < 26; i++) {
-      this._add(out, texture, rng() * width, rng() * height, 18 + rng() * 88, this.px * (1 + Math.floor(rng() * 3)), rng() > 0.5 ? palette.accent : palette.pop, 0.28);
+      this._add(out, {
+        texture,
+        x: rng() * width,
+        y: rng() * height,
+        w: 18 + rng() * 88,
+        h: this.px * (1 + Math.floor(rng() * 3)),
+        tint: rng() > 0.5 ? palette.accent : palette.pop,
+        alpha: 0.28,
+      });
     }
   }
 
-  private _foam(out: PIXI.Particle[], texture: PIXI.Texture, width: number, height: number, palette: Palette, rng: () => number): void {
+  private _foam(
+    out: PIXI.Particle[],
+    texture: PIXI.Texture,
+    width: number,
+    height: number,
+    palette: Palette,
+    rng: () => number,
+  ): void {
     for (let i = 0; i < 45; i++) {
       const s = this.px * (1 + Math.floor(rng() * 3));
-      this._add(out, texture, rng() * width, rng() * height, s, s, rng() > 0.5 ? palette.glow : 0xffffff, 0.2 + rng() * 0.28);
+      this._add(out, {
+        texture,
+        x: rng() * width,
+        y: rng() * height,
+        w: s,
+        h: s,
+        tint: rng() > 0.5 ? palette.glow : 0xffffff,
+        alpha: 0.2 + rng() * 0.28,
+      });
     }
   }
 
-  private _paintScabs(out: PIXI.Particle[], texture: PIXI.Texture, width: number, height: number, palette: Palette, rng: () => number): void {
+  private _paintScabs(
+    out: PIXI.Particle[],
+    texture: PIXI.Texture,
+    width: number,
+    height: number,
+    palette: Palette,
+    rng: () => number,
+  ): void {
     const colors = [palette.accent, palette.pop, palette.glow, palette.panel];
     for (let i = 0; i < 9; i++) {
-      this._stainBlob(
-        out,
+      this._stainBlob(out, {
         texture,
-        width * (0.12 + rng() * 0.76),
-        height * (0.14 + rng() * 0.72),
-        38 + rng() * 98,
-        14 + rng() * 32,
-        this._pick(colors, rng),
-        0.2 + rng() * 0.24,
+        cx: width * (0.12 + rng() * 0.76),
+        cy: height * (0.14 + rng() * 0.72),
+        w: 38 + rng() * 98,
+        h: 14 + rng() * 32,
+        tint: this._pick(colors, rng),
+        alpha: 0.2 + rng() * 0.24,
         rng,
-      );
+      });
     }
   }
 
-  private _stainIslands(out: PIXI.Particle[], texture: PIXI.Texture, width: number, height: number, palette: Palette, rng: () => number): void {
+  private _stainIslands(
+    out: PIXI.Particle[],
+    texture: PIXI.Texture,
+    width: number,
+    height: number,
+    palette: Palette,
+    rng: () => number,
+  ): void {
     const colors = [palette.panel, palette.accent, palette.dim, palette.pop, palette.glow];
     const islands = 5 + Math.floor(rng() * 5);
     for (let i = 0; i < islands; i++) {
       const w = width * (0.18 + rng() * 0.34);
       const h = height * (0.2 + rng() * 0.26);
-      this._stainBlob(
-        out,
+      this._stainBlob(out, {
         texture,
-        rng() * width,
-        height * (0.16 + rng() * 0.68),
+        cx: rng() * width,
+        cy: height * (0.16 + rng() * 0.68),
         w,
         h,
-        colors[i % colors.length] ?? 0xffffff,
-        0.2 + rng() * 0.24,
+        tint: colors[i % colors.length] ?? 0xffffff,
+        alpha: 0.2 + rng() * 0.24,
         rng,
-      );
+      });
     }
   }
 
-  private _inkPuddles(out: PIXI.Particle[], texture: PIXI.Texture, width: number, height: number, palette: Palette, rng: () => number): void {
+  private _inkPuddles(
+    out: PIXI.Particle[],
+    texture: PIXI.Texture,
+    width: number,
+    height: number,
+    palette: Palette,
+    rng: () => number,
+  ): void {
     const colors = [palette.ink, palette.dim, palette.accent, palette.panel];
     for (let i = 0; i < 4; i++) {
-      this._stainBlob(
-        out,
+      this._stainBlob(out, {
         texture,
-        width * (0.18 + rng() * 0.64),
-        height * (0.24 + rng() * 0.52),
-        width * (0.28 + rng() * 0.36),
-        height * (0.18 + rng() * 0.22),
-        colors[i % colors.length] ?? 0xffffff,
-        0.16 + rng() * 0.22,
+        cx: width * (0.18 + rng() * 0.64),
+        cy: height * (0.24 + rng() * 0.52),
+        w: width * (0.28 + rng() * 0.36),
+        h: height * (0.18 + rng() * 0.22),
+        tint: colors[i % colors.length] ?? 0xffffff,
+        alpha: 0.16 + rng() * 0.22,
         rng,
-      );
+      });
     }
     this._dotField(out, texture, width, height, [palette.ink, palette.glow, palette.pop], rng);
   }
 
-  private _offsetSwatches(out: PIXI.Particle[], texture: PIXI.Texture, width: number, height: number, palette: Palette, rng: () => number): void {
+  private _offsetSwatches(
+    out: PIXI.Particle[],
+    texture: PIXI.Texture,
+    width: number,
+    height: number,
+    palette: Palette,
+    rng: () => number,
+  ): void {
     const colors = [palette.accent, palette.panel, palette.pop, palette.glow, palette.dim];
     const rows = 3 + Math.floor(rng() * 3);
     for (let row = 0; row < rows; row++) {
@@ -951,65 +1671,174 @@ class PixelPattern {
       for (let i = 0; i < swatches; i++) {
         const w = width * (0.18 + rng() * 0.24);
         const x = width * ((i + 0.5) / swatches) + (rng() - 0.5) * 42;
-        this._stainBlob(out, texture, x, y, w, 18 + rng() * 22, colors[(row + i) % colors.length] ?? 0xffffff, 0.18 + rng() * 0.2, rng);
+        this._stainBlob(out, {
+          texture,
+          cx: x,
+          cy: y,
+          w,
+          h: 18 + rng() * 22,
+          tint: colors[(row + i) % colors.length] ?? 0xffffff,
+          alpha: 0.18 + rng() * 0.2,
+          rng,
+        });
       }
     }
   }
 
-  private _dryBrush(out: PIXI.Particle[], texture: PIXI.Texture, width: number, height: number, palette: Palette, rng: () => number): void {
+  private _dryBrush(
+    out: PIXI.Particle[],
+    texture: PIXI.Texture,
+    width: number,
+    height: number,
+    palette: Palette,
+    rng: () => number,
+  ): void {
     const colors = [palette.glow, palette.accent, palette.pop, palette.panel];
     for (let line = 0; line < 9; line++) {
       const y = height * (0.12 + rng() * 0.74);
       let x = -rng() * 30;
       while (x < width) {
         if (rng() > 0.28) {
-          this._add(out, texture, x, y + (rng() - 0.5) * 10, 18 + rng() * 46, this.plate, colors[line % colors.length] ?? 0xffffff, 0.16 + rng() * 0.22);
+          this._add(out, {
+            texture,
+            x,
+            y: y + (rng() - 0.5) * 10,
+            w: 18 + rng() * 46,
+            h: this.plate,
+            tint: colors[line % colors.length] ?? 0xffffff,
+            alpha: 0.16 + rng() * 0.22,
+          });
         }
         x += 18 + rng() * 30;
       }
     }
   }
 
-  private _splatterRail(out: PIXI.Particle[], texture: PIXI.Texture, width: number, height: number, palette: Palette, rng: () => number): void {
+  private _splatterRail(
+    out: PIXI.Particle[],
+    texture: PIXI.Texture,
+    width: number,
+    height: number,
+    palette: Palette,
+    rng: () => number,
+  ): void {
     const colors = [palette.accent, palette.pop, palette.glow, palette.ink];
     const rails = 2 + Math.floor(rng() * 3);
     for (let rail = 0; rail < rails; rail++) {
       const y = height * ((rail + 0.65) / (rails + 0.3));
-      this._stainBlob(out, texture, width * 0.5, y, width * (0.64 + rng() * 0.22), 12 + rng() * 18, colors[rail % colors.length] ?? 0xffffff, 0.22 + rng() * 0.18, rng);
+      this._stainBlob(out, {
+        texture,
+        cx: width * 0.5,
+        cy: y,
+        w: width * (0.64 + rng() * 0.22),
+        h: 12 + rng() * 18,
+        tint: colors[rail % colors.length] ?? 0xffffff,
+        alpha: 0.22 + rng() * 0.18,
+        rng,
+      });
       for (let i = 0; i < 18; i++) {
         const size = rng() > 0.62 ? this.plate * 2 : this.plate;
-        this._add(out, texture, rng() * width, y + (rng() - 0.5) * 42, size, size, this._pick(colors, rng), 0.22 + rng() * 0.28);
+        this._add(out, {
+          texture,
+          x: rng() * width,
+          y: y + (rng() - 0.5) * 42,
+          w: size,
+          h: size,
+          tint: this._pick(colors, rng),
+          alpha: 0.22 + rng() * 0.28,
+        });
       }
     }
   }
 
-  private _borderDots(out: PIXI.Particle[], texture: PIXI.Texture, width: number, height: number, palette: Palette, rng: () => number): void {
+  private _borderDots(
+    out: PIXI.Particle[],
+    texture: PIXI.Texture,
+    width: number,
+    height: number,
+    palette: Palette,
+    rng: () => number,
+  ): void {
     for (let x = 4; x < width; x += 14) {
-      this._add(out, texture, x, 4, this.px, this.px, palette.glow, 0.42);
-      this._add(out, texture, x, height - 8, this.px, this.px, palette.pop, 0.34);
+      this._add(out, {
+        texture,
+        x,
+        y: 4,
+        w: this.px,
+        h: this.px,
+        tint: palette.glow,
+        alpha: 0.42,
+      });
+      this._add(out, {
+        texture,
+        x,
+        y: height - 8,
+        w: this.px,
+        h: this.px,
+        tint: palette.pop,
+        alpha: 0.34,
+      });
     }
     for (let y = 8; y < height; y += 14) {
-      this._add(out, texture, 4, y, this.px, this.px, palette.accent, 0.34);
-      this._add(out, texture, width - 8, y, this.px, this.px, palette.glow, 0.34);
+      this._add(out, {
+        texture,
+        x: 4,
+        y,
+        w: this.px,
+        h: this.px,
+        tint: palette.accent,
+        alpha: 0.34,
+      });
+      this._add(out, {
+        texture,
+        x: width - 8,
+        y,
+        w: this.px,
+        h: this.px,
+        tint: palette.glow,
+        alpha: 0.34,
+      });
     }
     if (rng() > 0.5) this._edgeSpray(out, texture, width, height, palette, rng);
   }
 
-  private _tileSlants(out: PIXI.Particle[], texture: PIXI.Texture, width: number, height: number, palette: Palette, rng: () => number): void {
+  private _tileSlants(
+    out: PIXI.Particle[],
+    texture: PIXI.Texture,
+    width: number,
+    height: number,
+    palette: Palette,
+    rng: () => number,
+  ): void {
     for (let y = 0; y < height; y += 18) {
       for (let x = -20; x < width; x += 34) {
-        this._add(out, texture, x + y * 0.6, y, 24, 8, rng() > 0.5 ? palette.panel : palette.accent, 0.22);
+        this._add(out, {
+          texture,
+          x: x + y * 0.6,
+          y,
+          w: 24,
+          h: 8,
+          tint: rng() > 0.5 ? palette.panel : palette.accent,
+          alpha: 0.22,
+        });
       }
     }
   }
 
-  private _blockArrows(out: PIXI.Particle[], texture: PIXI.Texture, width: number, height: number, palette: Palette, rng: () => number): void {
+  private _blockArrows(
+    out: PIXI.Particle[],
+    texture: PIXI.Texture,
+    width: number,
+    height: number,
+    palette: Palette,
+    rng: () => number,
+  ): void {
     for (let x = 0; x < width; x += 48) {
       const y = height * (0.25 + rng() * 0.4);
       const tint = rng() > 0.5 ? palette.pop : palette.glow;
-      this._add(out, texture, x, y, 28, 14, tint, 0.28);
-      this._add(out, texture, x + 28, y - 8, 12, 30, tint, 0.28);
-      this._add(out, texture, x + 40, y, 10, 14, palette.accent, 0.32);
+      this._add(out, { texture, x: x, y: y, w: 28, h: 14, tint: tint, alpha: 0.28 });
+      this._add(out, { texture, x: x + 28, y: y - 8, w: 12, h: 30, tint: tint, alpha: 0.28 });
+      this._add(out, { texture, x: x + 40, y: y, w: 10, h: 14, tint: palette.accent, alpha: 0.32 });
     }
   }
 }
@@ -1029,6 +1858,57 @@ interface MascotProfile {
   spotColor: number;
 }
 
+/** A mascot body's base ellipse (centre and radii, in cells) and its shape variant. */
+interface BodyOutline {
+  shape: number;
+  cx: number;
+  cy: number;
+  rx: number;
+  ry: number;
+}
+
+/** Whether grid cell (x, y) is inside the body outline; `fuzz` roughens the ellipse edge. */
+function isBodyCell(
+  { shape, cx, cy, rx, ry }: BodyOutline,
+  x: number,
+  y: number,
+  fuzz: number,
+): boolean {
+  const nx = (x - cx) / rx;
+  const ny = (y - cy) / ry;
+  switch (shape) {
+    case 3: {
+      const lowerBoost = y > cy ? 1.24 : 0.72;
+      return nx * nx + (ny / lowerBoost) * (ny / lowerBoost) < 1 + fuzz;
+    }
+    case 4: {
+      const bodyWidth = 1.0 - Math.abs(y - 7) / 7;
+      return Math.abs(nx) < bodyWidth * 0.92 && y > 1 && y < 12;
+    }
+    case 6: {
+      const cap = ((x - cx) / 5.2) ** 2 + ((y - 4) / 2.8) ** 2 < 1.05;
+      const stem = Math.abs(x - cx) < 2.6 && y >= 5 && y < 12;
+      return cap || stem;
+    }
+    case 9:
+      return Math.abs(ny) < 0.95 && Math.abs(nx) < 0.9 + Math.sin(y * 0.8) * 0.08;
+    case 10:
+      return nx * nx + ny * ny < 0.86 + fuzz || (x === 6 && y < 3);
+    default:
+      return nx * nx + ny * ny < 1 + fuzz;
+  }
+}
+
+interface MascotParticle {
+  texture: PIXI.Texture;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  tint: number;
+  alpha?: number;
+}
+
 /**
  * The little pixel creature that peeks over a card's left edge. Its seed is derived from the
  * username alone, so a returning chatter always brings the same mascot — that recognition is the
@@ -1039,7 +1919,13 @@ class PixelMascot {
 
   private readonly px: number;
 
-  constructor(cfg: CardConfig, texture: PIXI.Texture, palette: Palette, userColor: number, seed: number) {
+  constructor(
+    cfg: CardConfig,
+    texture: PIXI.Texture,
+    palette: Palette,
+    userColor: number,
+    seed: number,
+  ) {
     this.px = cfg.px;
     const rng = seedRng(seed ^ 0x5ca1ab1e);
     const body = new PIXI.ParticleContainer({
@@ -1106,13 +1992,7 @@ class PixelMascot {
 
   private _add(
     out: PIXI.Particle[],
-    texture: PIXI.Texture,
-    x: number,
-    y: number,
-    w: number,
-    h: number,
-    tint: number,
-    alpha = 1,
+    { texture, x, y, w, h, tint, alpha = 1 }: MascotParticle,
   ): void {
     out.push(
       new PIXI.Particle({
@@ -1133,42 +2013,42 @@ class PixelMascot {
     rng: () => number,
     profile: MascotProfile,
   ): void {
-    const px = this.px;
     const cells: boolean[][] = [];
     const cx = 6;
-    const cy = profile.shape === 6 ? 7.0 : profile.shape === 4 ? 6.0 : 6.5;
-    const rx = [5.0, 3.8, 5.8, 4.6, 4.8, 4.2, 3.5, 5.2, 4.4, 5.6, 3.9, 4.7, 5.1, 4.1][profile.shape] ?? 4.6;
-    const ry = [4.4, 5.4, 3.6, 4.7, 4.5, 5.0, 5.3, 3.9, 4.9, 3.4, 4.2, 5.6, 4.1, 4.7][profile.shape] ?? 4.5;
+    let cy = 6.5;
+    if (profile.shape === 6) {
+      cy = 7.0;
+    } else if (profile.shape === 4) {
+      cy = 6.0;
+    }
+    const rx =
+      [5.0, 3.8, 5.8, 4.6, 4.8, 4.2, 3.5, 5.2, 4.4, 5.6, 3.9, 4.7, 5.1, 4.1][profile.shape] ?? 4.6;
+    const ry =
+      [4.4, 5.4, 3.6, 4.7, 4.5, 5.0, 5.3, 3.9, 4.9, 3.4, 4.2, 5.6, 4.1, 4.7][profile.shape] ?? 4.5;
+    const outline: BodyOutline = { shape: profile.shape, cx, cy, rx, ry };
 
     for (let y = 0; y < 13; y++) {
       const row: boolean[] = [];
       cells[y] = row;
       for (let x = 0; x < 13; x++) {
-        const nx = (x - cx) / rx;
-        const ny = (y - cy) / ry;
         const fuzz = Math.sin(x * 1.3 + y * 0.7) * 0.08 + (rng() - 0.5) * 0.12;
-        let inside = nx * nx + ny * ny < 1 + fuzz;
-
-        if (profile.shape === 3) {
-          const lowerBoost = y > cy ? 1.24 : 0.72;
-          inside = nx * nx + (ny / lowerBoost) * (ny / lowerBoost) < 1 + fuzz;
-        } else if (profile.shape === 4) {
-          const bodyWidth = 1.0 - Math.abs(y - 7) / 7;
-          inside = Math.abs(nx) < bodyWidth * 0.92 && y > 1 && y < 12;
-        } else if (profile.shape === 6) {
-          const cap = ((x - cx) / 5.2) ** 2 + ((y - 4) / 2.8) ** 2 < 1.05;
-          const stem = Math.abs(x - cx) < 2.6 && y >= 5 && y < 12;
-          inside = cap || stem;
-        } else if (profile.shape === 9) {
-          inside = Math.abs(ny) < 0.95 && Math.abs(nx) < 0.9 + Math.sin(y * 0.8) * 0.08;
-        } else if (profile.shape === 10) {
-          inside = nx * nx + ny * ny < 0.86 + fuzz || (x === 6 && y < 3);
-        }
-
-        row[x] = inside;
+        row[x] = isBodyCell(outline, x, y, fuzz);
       }
     }
 
+    this._paintBodyCells(out, texture, cells, cy, profile);
+    this._paintBodySpots(out, texture, rng, cells, profile);
+  }
+
+  /** Paints the body grid, darkening the outline cells and shading the lower part. */
+  private _paintBodyCells(
+    out: PIXI.Particle[],
+    texture: PIXI.Texture,
+    cells: boolean[][],
+    cy: number,
+    profile: MascotProfile,
+  ): void {
+    const px = this.px;
     for (let y = 0; y < 13; y++) {
       for (let x = 0; x < 13; x++) {
         if (!cells[y]?.[x]) continue;
@@ -1176,19 +2056,29 @@ class PixelMascot {
           !cells[y - 1]?.[x] || !cells[y + 1]?.[x] || !cells[y]?.[x - 1] || !cells[y]?.[x + 1];
         const baseTint = y > cy + 1.3 ? profile.shade : profile.bodyColor;
         const tint = edge ? profile.dark : baseTint;
-        this._add(out, texture, x * px, y * px, px, px, tint, 0.98);
+        this._add(out, { texture, x: x * px, y: y * px, w: px, h: px, tint: tint, alpha: 0.98 });
       }
     }
+  }
 
-    if (profile.spots > 0) {
-      const count = 2 + profile.spots;
-      for (let i = 0; i < count; i++) {
-        const x = 2 + Math.floor(rng() * 9);
-        const y = 3 + Math.floor(rng() * 7);
-        if (cells[y]?.[x]) {
-          const tint = i % 2 === 0 ? profile.highlight : mixColor(profile.spotColor, profile.dark, 0.2);
-          this._add(out, texture, x * px, y * px, px, px, tint, 0.62);
-        }
+  /** Scatters highlight spots over body cells; a spot that misses the body is skipped. */
+  private _paintBodySpots(
+    out: PIXI.Particle[],
+    texture: PIXI.Texture,
+    rng: () => number,
+    cells: boolean[][],
+    profile: MascotProfile,
+  ): void {
+    if (profile.spots <= 0) return;
+    const px = this.px;
+    const count = 2 + profile.spots;
+    for (let i = 0; i < count; i++) {
+      const x = 2 + Math.floor(rng() * 9);
+      const y = 3 + Math.floor(rng() * 7);
+      if (cells[y]?.[x]) {
+        const tint =
+          i % 2 === 0 ? profile.highlight : mixColor(profile.spotColor, profile.dark, 0.2);
+        this._add(out, { texture, x: x * px, y: y * px, w: px, h: px, tint: tint, alpha: 0.62 });
       }
     }
   }
@@ -1199,37 +2089,69 @@ class PixelMascot {
     rng: () => number,
     profile: MascotProfile,
   ): void {
+    this._monsterEyes(out, texture, profile);
+    this._monsterMouth(out, texture, rng, profile);
+  }
+
+  private _monsterEyes(out: PIXI.Particle[], texture: PIXI.Texture, profile: MascotProfile): void {
     const px = this.px;
-    const eyeColor = profile.eyes % 3 === 0 ? 0xfaff77 : profile.eyes % 3 === 1 ? 0xafffff : 0xffffff;
+    let eyeColor = 0xffffff;
+    if (profile.eyes % 3 === 0) {
+      eyeColor = 0xfaff77;
+    } else if (profile.eyes % 3 === 1) {
+      eyeColor = 0xafffff;
+    }
     const pupil = 0x120715;
-    const mouth = 0x13070c;
-    const tooth = 0xfff0b5;
 
     if (profile.eyes === 0) {
       this._eye(out, texture, 3, 3, eyeColor, pupil);
       this._eye(out, texture, 7, 3, eyeColor, pupil);
     } else if (profile.eyes === 1) {
       this._eye(out, texture, 5, 3, eyeColor, pupil, 3);
-      this._add(out, texture, 8 * px, 2 * px, px, px, profile.highlight, 0.78);
+      this._add(out, {
+        texture,
+        x: 8 * px,
+        y: 2 * px,
+        w: px,
+        h: px,
+        tint: profile.highlight,
+        alpha: 0.78,
+      });
     } else if (profile.eyes === 2) {
       this._eye(out, texture, 2, 2, eyeColor, pupil);
       this._eye(out, texture, 8, 4, eyeColor, pupil);
     } else if (profile.eyes === 3) {
-      this._add(out, texture, 3 * px, 4 * px, 3 * px, px, pupil, 0.92);
-      this._add(out, texture, 7 * px, 4 * px, 3 * px, px, pupil, 0.92);
+      this._add(out, { texture, x: 3 * px, y: 4 * px, w: 3 * px, h: px, tint: pupil, alpha: 0.92 });
+      this._add(out, { texture, x: 7 * px, y: 4 * px, w: 3 * px, h: px, tint: pupil, alpha: 0.92 });
     } else if (profile.eyes === 4) {
       this._eye(out, texture, 2, 3, eyeColor, pupil);
       this._eye(out, texture, 5, 2, eyeColor, pupil);
       this._eye(out, texture, 8, 3, eyeColor, pupil);
     } else if (profile.eyes === 5) {
       this._eye(out, texture, 5, 2, eyeColor, pupil);
-      this._add(out, texture, 3 * px, 4 * px, 2 * px, px, pupil, 0.9);
-      this._add(out, texture, 8 * px, 4 * px, 2 * px, px, pupil, 0.9);
+      this._add(out, { texture, x: 3 * px, y: 4 * px, w: 2 * px, h: px, tint: pupil, alpha: 0.9 });
+      this._add(out, { texture, x: 8 * px, y: 4 * px, w: 2 * px, h: px, tint: pupil, alpha: 0.9 });
     } else if (profile.eyes === 6) {
       this._eye(out, texture, 4, 3, eyeColor, pupil);
       this._eye(out, texture, 8, 3, eyeColor, pupil);
-      this._add(out, texture, 2 * px, 2 * px, 3 * px, px, profile.dark, 0.72);
-      this._add(out, texture, 8 * px, 2 * px, 3 * px, px, profile.dark, 0.72);
+      this._add(out, {
+        texture,
+        x: 2 * px,
+        y: 2 * px,
+        w: 3 * px,
+        h: px,
+        tint: profile.dark,
+        alpha: 0.72,
+      });
+      this._add(out, {
+        texture,
+        x: 8 * px,
+        y: 2 * px,
+        w: 3 * px,
+        h: px,
+        tint: profile.dark,
+        alpha: 0.72,
+      });
     } else if (profile.eyes === 7) {
       this._eye(out, texture, 5, 2, eyeColor, pupil, 2);
       this._eye(out, texture, 5, 5, eyeColor, pupil, 2);
@@ -1238,35 +2160,189 @@ class PixelMascot {
       this._eye(out, texture, 8, 3, eyeColor, pupil);
       if (profile.eyes === 9) this._eye(out, texture, 6, 1, eyeColor, pupil);
     }
+  }
 
+  private _monsterMouth(
+    out: PIXI.Particle[],
+    texture: PIXI.Texture,
+    rng: () => number,
+    profile: MascotProfile,
+  ): void {
+    const px = this.px;
+    const mouth = 0x13070c;
+    const tooth = 0xfff0b5;
     const mouthY = profile.shape === 4 ? 8 : 7;
     if (profile.mouth === 0) {
-      this._add(out, texture, 3 * px, mouthY * px, 6 * px, 2 * px, mouth, 0.96);
-      this._add(out, texture, 4 * px, mouthY * px, px, px, tooth, 0.98);
-      this._add(out, texture, 7 * px, mouthY * px, px, px, tooth, 0.98);
+      this._add(out, {
+        texture,
+        x: 3 * px,
+        y: mouthY * px,
+        w: 6 * px,
+        h: 2 * px,
+        tint: mouth,
+        alpha: 0.96,
+      });
+      this._add(out, {
+        texture,
+        x: 4 * px,
+        y: mouthY * px,
+        w: px,
+        h: px,
+        tint: tooth,
+        alpha: 0.98,
+      });
+      this._add(out, {
+        texture,
+        x: 7 * px,
+        y: mouthY * px,
+        w: px,
+        h: px,
+        tint: tooth,
+        alpha: 0.98,
+      });
     } else if (profile.mouth === 1) {
-      this._add(out, texture, 4 * px, mouthY * px, 4 * px, 3 * px, mouth, 0.96);
-      this._add(out, texture, 5 * px, (mouthY + 2) * px, px, px, 0xff6b7d, 0.95);
+      this._add(out, {
+        texture,
+        x: 4 * px,
+        y: mouthY * px,
+        w: 4 * px,
+        h: 3 * px,
+        tint: mouth,
+        alpha: 0.96,
+      });
+      this._add(out, {
+        texture,
+        x: 5 * px,
+        y: (mouthY + 2) * px,
+        w: px,
+        h: px,
+        tint: 0xff6b7d,
+        alpha: 0.95,
+      });
     } else if (profile.mouth === 2) {
-      this._add(out, texture, 4 * px, mouthY * px, 5 * px, px, mouth, 0.96);
+      this._add(out, {
+        texture,
+        x: 4 * px,
+        y: mouthY * px,
+        w: 5 * px,
+        h: px,
+        tint: mouth,
+        alpha: 0.96,
+      });
     } else if (profile.mouth === 3) {
-      this._add(out, texture, 3 * px, mouthY * px, 7 * px, px, mouth, 0.96);
-      this._add(out, texture, 4 * px, (mouthY + 1) * px, px, px, tooth, 0.98);
-      this._add(out, texture, 8 * px, (mouthY + 1) * px, px, px, tooth, 0.98);
+      this._add(out, {
+        texture,
+        x: 3 * px,
+        y: mouthY * px,
+        w: 7 * px,
+        h: px,
+        tint: mouth,
+        alpha: 0.96,
+      });
+      this._add(out, {
+        texture,
+        x: 4 * px,
+        y: (mouthY + 1) * px,
+        w: px,
+        h: px,
+        tint: tooth,
+        alpha: 0.98,
+      });
+      this._add(out, {
+        texture,
+        x: 8 * px,
+        y: (mouthY + 1) * px,
+        w: px,
+        h: px,
+        tint: tooth,
+        alpha: 0.98,
+      });
     } else if (profile.mouth === 4) {
-      this._add(out, texture, 5 * px, mouthY * px, 3 * px, px, mouth, 0.96);
-      this._add(out, texture, 4 * px, (mouthY + 1) * px, px, px, mouth, 0.96);
-      this._add(out, texture, 8 * px, (mouthY + 1) * px, px, px, mouth, 0.96);
+      this._add(out, {
+        texture,
+        x: 5 * px,
+        y: mouthY * px,
+        w: 3 * px,
+        h: px,
+        tint: mouth,
+        alpha: 0.96,
+      });
+      this._add(out, {
+        texture,
+        x: 4 * px,
+        y: (mouthY + 1) * px,
+        w: px,
+        h: px,
+        tint: mouth,
+        alpha: 0.96,
+      });
+      this._add(out, {
+        texture,
+        x: 8 * px,
+        y: (mouthY + 1) * px,
+        w: px,
+        h: px,
+        tint: mouth,
+        alpha: 0.96,
+      });
     } else if (profile.mouth === 5) {
-      this._add(out, texture, 4 * px, mouthY * px, 5 * px, 3 * px, mouth, 0.96);
-      this._add(out, texture, 5 * px, mouthY * px, px, px, tooth, 0.98);
-      this._add(out, texture, 7 * px, mouthY * px, px, px, tooth, 0.98);
+      this._add(out, {
+        texture,
+        x: 4 * px,
+        y: mouthY * px,
+        w: 5 * px,
+        h: 3 * px,
+        tint: mouth,
+        alpha: 0.96,
+      });
+      this._add(out, {
+        texture,
+        x: 5 * px,
+        y: mouthY * px,
+        w: px,
+        h: px,
+        tint: tooth,
+        alpha: 0.98,
+      });
+      this._add(out, {
+        texture,
+        x: 7 * px,
+        y: mouthY * px,
+        w: px,
+        h: px,
+        tint: tooth,
+        alpha: 0.98,
+      });
     } else {
-      this._add(out, texture, 4 * px, mouthY * px, 5 * px, 2 * px, mouth, 0.92);
-      this._add(out, texture, 6 * px, mouthY * px, px, px, tooth, 0.98);
+      this._add(out, {
+        texture,
+        x: 4 * px,
+        y: mouthY * px,
+        w: 5 * px,
+        h: 2 * px,
+        tint: mouth,
+        alpha: 0.92,
+      });
+      this._add(out, {
+        texture,
+        x: 6 * px,
+        y: mouthY * px,
+        w: px,
+        h: px,
+        tint: tooth,
+        alpha: 0.98,
+      });
     }
     if (profile.mouth === 1 || profile.mouth === 5 || rng() > 0.82) {
-      this._add(out, texture, 5 * px, (mouthY + 2) * px, 2 * px, px, 0xff6b7d, 0.95);
+      this._add(out, {
+        texture,
+        x: 5 * px,
+        y: (mouthY + 2) * px,
+        w: 2 * px,
+        h: px,
+        tint: 0xff6b7d,
+        alpha: 0.95,
+      });
     }
   }
 
@@ -1280,8 +2356,24 @@ class PixelMascot {
     size = 2,
   ): void {
     const px = this.px;
-    this._add(out, texture, x * px, y * px, size * px, size * px, eyeColor, 0.98);
-    this._add(out, texture, (x + size - 1) * px, (y + size - 1) * px, px, px, pupil, 1);
+    this._add(out, {
+      texture,
+      x: x * px,
+      y: y * px,
+      w: size * px,
+      h: size * px,
+      tint: eyeColor,
+      alpha: 0.98,
+    });
+    this._add(out, {
+      texture,
+      x: (x + size - 1) * px,
+      y: (y + size - 1) * px,
+      w: px,
+      h: px,
+      tint: pupil,
+      alpha: 1,
+    });
   }
 
   private _monsterExtras(
@@ -1291,66 +2383,347 @@ class PixelMascot {
     profile: MascotProfile,
     behindBody: boolean,
   ): void {
-    const px = this.px;
     if (behindBody) {
-      if (profile.accessory === 4 || profile.accessory === 11) {
-        this._add(out, texture, -2 * px, 5 * px, 4 * px, 3 * px, profile.shade, 0.84);
-        this._add(out, texture, 11 * px, 5 * px, 4 * px, 3 * px, profile.shade, 0.84);
-        this._add(out, texture, -px, 4 * px, 2 * px, px, profile.highlight, 0.5);
-        this._add(out, texture, 12 * px, 4 * px, 2 * px, px, profile.highlight, 0.5);
-      }
-      if (profile.accessory === 5 || profile.accessory === 12) {
-        this._add(out, texture, 11 * px, 8 * px, 4 * px, px, profile.dark, 0.9);
-        this._add(out, texture, 14 * px, 7 * px, px, 2 * px, profile.shade, 0.9);
-      }
+      this._monsterBackExtras(out, texture, profile);
       return;
     }
+    this._monsterHeadgear(out, texture, profile);
+    this._monsterLimbs(out, texture, rng, profile);
+  }
 
+  /** The accessories that sit behind the body (side flaps, tails). */
+  private _monsterBackExtras(
+    out: PIXI.Particle[],
+    texture: PIXI.Texture,
+    profile: MascotProfile,
+  ): void {
+    const px = this.px;
+    if (profile.accessory === 4 || profile.accessory === 11) {
+      this._add(out, {
+        texture,
+        x: -2 * px,
+        y: 5 * px,
+        w: 4 * px,
+        h: 3 * px,
+        tint: profile.shade,
+        alpha: 0.84,
+      });
+      this._add(out, {
+        texture,
+        x: 11 * px,
+        y: 5 * px,
+        w: 4 * px,
+        h: 3 * px,
+        tint: profile.shade,
+        alpha: 0.84,
+      });
+      this._add(out, {
+        texture,
+        x: -px,
+        y: 4 * px,
+        w: 2 * px,
+        h: px,
+        tint: profile.highlight,
+        alpha: 0.5,
+      });
+      this._add(out, {
+        texture,
+        x: 12 * px,
+        y: 4 * px,
+        w: 2 * px,
+        h: px,
+        tint: profile.highlight,
+        alpha: 0.5,
+      });
+    }
+    if (profile.accessory === 5 || profile.accessory === 12) {
+      this._add(out, {
+        texture,
+        x: 11 * px,
+        y: 8 * px,
+        w: 4 * px,
+        h: px,
+        tint: profile.dark,
+        alpha: 0.9,
+      });
+      this._add(out, {
+        texture,
+        x: 14 * px,
+        y: 7 * px,
+        w: px,
+        h: 2 * px,
+        tint: profile.shade,
+        alpha: 0.9,
+      });
+    }
+  }
+
+  /** The accessory on top of the head. */
+  private _monsterHeadgear(
+    out: PIXI.Particle[],
+    texture: PIXI.Texture,
+    profile: MascotProfile,
+  ): void {
+    const px = this.px;
     if (profile.accessory === 0 || profile.accessory === 7) {
-      this._add(out, texture, 2 * px, 0, px, 3 * px, profile.dark, 0.95);
-      this._add(out, texture, 9 * px, 0, px, 3 * px, profile.dark, 0.95);
-      this._add(out, texture, 2 * px, 0, 2 * px, px, profile.highlight, 0.8);
-      this._add(out, texture, 8 * px, 0, 2 * px, px, profile.highlight, 0.8);
+      this._add(out, {
+        texture,
+        x: 2 * px,
+        y: 0,
+        w: px,
+        h: 3 * px,
+        tint: profile.dark,
+        alpha: 0.95,
+      });
+      this._add(out, {
+        texture,
+        x: 9 * px,
+        y: 0,
+        w: px,
+        h: 3 * px,
+        tint: profile.dark,
+        alpha: 0.95,
+      });
+      this._add(out, {
+        texture,
+        x: 2 * px,
+        y: 0,
+        w: 2 * px,
+        h: px,
+        tint: profile.highlight,
+        alpha: 0.8,
+      });
+      this._add(out, {
+        texture,
+        x: 8 * px,
+        y: 0,
+        w: 2 * px,
+        h: px,
+        tint: profile.highlight,
+        alpha: 0.8,
+      });
     } else if (profile.accessory === 1 || profile.accessory === 8) {
       for (let i = 0; i < 3; i++) {
-        this._add(out, texture, (4 + i) * px, (1 - i) * px, px, 4 * px, profile.highlight, 0.86);
+        this._add(out, {
+          texture,
+          x: (4 + i) * px,
+          y: (1 - i) * px,
+          w: px,
+          h: 4 * px,
+          tint: profile.highlight,
+          alpha: 0.86,
+        });
       }
     } else if (profile.accessory === 2) {
       for (let i = 0; i < 5; i++) {
-        this._add(out, texture, (3 + i) * px, (i % 2) * px, px, 2 * px, profile.dark, 0.9);
+        this._add(out, {
+          texture,
+          x: (3 + i) * px,
+          y: (i % 2) * px,
+          w: px,
+          h: 2 * px,
+          tint: profile.dark,
+          alpha: 0.9,
+        });
       }
     } else if (profile.accessory === 3 || profile.accessory === 10) {
-      this._add(out, texture, 0, 4 * px, 2 * px, 3 * px, profile.shade, 0.9);
-      this._add(out, texture, 11 * px, 4 * px, 2 * px, 3 * px, profile.shade, 0.9);
+      this._add(out, {
+        texture,
+        x: 0,
+        y: 4 * px,
+        w: 2 * px,
+        h: 3 * px,
+        tint: profile.shade,
+        alpha: 0.9,
+      });
+      this._add(out, {
+        texture,
+        x: 11 * px,
+        y: 4 * px,
+        w: 2 * px,
+        h: 3 * px,
+        tint: profile.shade,
+        alpha: 0.9,
+      });
     } else if (profile.accessory === 6) {
-      this._add(out, texture, 4 * px, 0, 4 * px, px, profile.highlight, 0.8);
-      this._add(out, texture, 5 * px, -px, 2 * px, px, profile.spotColor, 0.88);
+      this._add(out, {
+        texture,
+        x: 4 * px,
+        y: 0,
+        w: 4 * px,
+        h: px,
+        tint: profile.highlight,
+        alpha: 0.8,
+      });
+      this._add(out, {
+        texture,
+        x: 5 * px,
+        y: -px,
+        w: 2 * px,
+        h: px,
+        tint: profile.spotColor,
+        alpha: 0.88,
+      });
     } else if (profile.accessory === 9) {
-      this._add(out, texture, 4 * px, -px, 4 * px, 2 * px, 0xffb53d, 0.92);
-      this._add(out, texture, 5 * px, -2 * px, 2 * px, px, 0xffef67, 0.92);
+      this._add(out, {
+        texture,
+        x: 4 * px,
+        y: -px,
+        w: 4 * px,
+        h: 2 * px,
+        tint: 0xffb53d,
+        alpha: 0.92,
+      });
+      this._add(out, {
+        texture,
+        x: 5 * px,
+        y: -2 * px,
+        w: 2 * px,
+        h: px,
+        tint: 0xffef67,
+        alpha: 0.92,
+      });
     } else if (profile.accessory === 13) {
-      this._add(out, texture, 3 * px, 0, 6 * px, px, profile.dark, 0.82);
-      this._add(out, texture, 5 * px, -px, 2 * px, px, profile.dark, 0.82);
+      this._add(out, {
+        texture,
+        x: 3 * px,
+        y: 0,
+        w: 6 * px,
+        h: px,
+        tint: profile.dark,
+        alpha: 0.82,
+      });
+      this._add(out, {
+        texture,
+        x: 5 * px,
+        y: -px,
+        w: 2 * px,
+        h: px,
+        tint: profile.dark,
+        alpha: 0.82,
+      });
     }
+  }
 
+  /** Arms by limb style, then feet (always with limbs, otherwise by chance). */
+  private _monsterLimbs(
+    out: PIXI.Particle[],
+    texture: PIXI.Texture,
+    rng: () => number,
+    profile: MascotProfile,
+  ): void {
+    const px = this.px;
     if (profile.limbs === 1 || profile.limbs === 4) {
-      this._add(out, texture, 0, 7 * px, 3 * px, px, profile.bodyColor, 0.95);
-      this._add(out, texture, 10 * px, 7 * px, 3 * px, px, profile.bodyColor, 0.95);
-      this._add(out, texture, 0, 8 * px, px, 2 * px, profile.shade, 0.95);
-      this._add(out, texture, 12 * px, 8 * px, px, 2 * px, profile.shade, 0.95);
+      this._add(out, {
+        texture,
+        x: 0,
+        y: 7 * px,
+        w: 3 * px,
+        h: px,
+        tint: profile.bodyColor,
+        alpha: 0.95,
+      });
+      this._add(out, {
+        texture,
+        x: 10 * px,
+        y: 7 * px,
+        w: 3 * px,
+        h: px,
+        tint: profile.bodyColor,
+        alpha: 0.95,
+      });
+      this._add(out, {
+        texture,
+        x: 0,
+        y: 8 * px,
+        w: px,
+        h: 2 * px,
+        tint: profile.shade,
+        alpha: 0.95,
+      });
+      this._add(out, {
+        texture,
+        x: 12 * px,
+        y: 8 * px,
+        w: px,
+        h: 2 * px,
+        tint: profile.shade,
+        alpha: 0.95,
+      });
     } else if (profile.limbs === 2 || profile.limbs === 6) {
-      this._add(out, texture, px, 8 * px, 2 * px, 2 * px, profile.shade, 0.95);
-      this._add(out, texture, 10 * px, 8 * px, 2 * px, 2 * px, profile.shade, 0.95);
+      this._add(out, {
+        texture,
+        x: px,
+        y: 8 * px,
+        w: 2 * px,
+        h: 2 * px,
+        tint: profile.shade,
+        alpha: 0.95,
+      });
+      this._add(out, {
+        texture,
+        x: 10 * px,
+        y: 8 * px,
+        w: 2 * px,
+        h: 2 * px,
+        tint: profile.shade,
+        alpha: 0.95,
+      });
     } else if (profile.limbs === 3) {
-      this._add(out, texture, 0, 6 * px, 2 * px, px, profile.dark, 0.9);
-      this._add(out, texture, 11 * px, 6 * px, 2 * px, px, profile.dark, 0.9);
+      this._add(out, {
+        texture,
+        x: 0,
+        y: 6 * px,
+        w: 2 * px,
+        h: px,
+        tint: profile.dark,
+        alpha: 0.9,
+      });
+      this._add(out, {
+        texture,
+        x: 11 * px,
+        y: 6 * px,
+        w: 2 * px,
+        h: px,
+        tint: profile.dark,
+        alpha: 0.9,
+      });
     }
 
     if (profile.limbs !== 0 || rng() > 0.58) {
-      this._add(out, texture, 2 * px, 11 * px, 2 * px, px, profile.dark, 0.95);
-      this._add(out, texture, 8 * px, 11 * px, 2 * px, px, profile.dark, 0.95);
+      this._add(out, {
+        texture,
+        x: 2 * px,
+        y: 11 * px,
+        w: 2 * px,
+        h: px,
+        tint: profile.dark,
+        alpha: 0.95,
+      });
+      this._add(out, {
+        texture,
+        x: 8 * px,
+        y: 11 * px,
+        w: 2 * px,
+        h: px,
+        tint: profile.dark,
+        alpha: 0.95,
+      });
     }
   }
+}
+
+interface ChatCardOptions {
+  cfg: CardConfig;
+  parent: PIXI.Container;
+  texture: PIXI.Texture;
+  msg: ChatMessage;
+  width: number;
+  palette: Palette;
+  userSeed: number;
+  userAccent: number;
+  mascotSeed: number;
+  plateSeed: number;
 }
 
 /**
@@ -1370,18 +2743,18 @@ class ChatCard {
   private readonly glitchSeed: number;
   private readonly glitchColors: number[];
 
-  constructor(
-    cfg: CardConfig,
-    parent: PIXI.Container,
-    texture: PIXI.Texture,
-    msg: ChatMessage,
-    width: number,
-    palette: Palette,
-    userSeed: number,
-    userAccent: number,
-    mascotSeed: number,
-    plateSeed: number,
-  ) {
+  constructor({
+    cfg,
+    parent,
+    texture,
+    msg,
+    width,
+    palette,
+    userSeed,
+    userAccent,
+    mascotSeed,
+    plateSeed,
+  }: ChatCardOptions) {
     this.cfg = cfg;
     this.width = width;
     this.glitchSeed = plateSeed;
@@ -1441,7 +2814,14 @@ class ChatCard {
     this.height = Math.max(76, Math.ceil(content.height + 56));
     this._drawFrame(palette, userAccent, plateSeed);
 
-    const pattern = new PixelPattern(cfg, texture, width - 16, this.height - 14, palette, plateSeed);
+    const pattern = new PixelPattern(
+      cfg,
+      texture,
+      width - 16,
+      this.height - 14,
+      palette,
+      plateSeed,
+    );
     pattern.view.x = 8;
     pattern.view.y = 7;
     pattern.view.alpha = 0.9;
@@ -1503,7 +2883,11 @@ class ChatCard {
       y += lineHeight;
     };
 
-    const place = (node: PIXI.Container | PIXI.Text, nodeWidth: number, nodeHeight = lineHeight): void => {
+    const place = (
+      node: PIXI.Container | PIXI.Text,
+      nodeWidth: number,
+      nodeHeight = lineHeight,
+    ): void => {
       if (x > 0 && x + nodeWidth > wrap) newline();
       node.x = x;
       node.y = y + Math.max(0, Math.floor((lineHeight - nodeHeight) / 2));
@@ -1555,7 +2939,11 @@ class ChatCard {
    * (this application bundles no GIF plugin); a failed load falls back to the emote's name as
    * text, scaled to fit the box, so the message never has a hole in it.
    */
-  private _loadInlineImage(part: ChatPart & { type: "image" }, holder: PIXI.Container, size: number): void {
+  private _loadInlineImage(
+    part: ChatPart & { type: "image" },
+    holder: PIXI.Container,
+    size: number,
+  ): void {
     const fallbackText = (): void => {
       if (holder.destroyed) return;
       const fallback = new PIXI.Text({
@@ -1621,7 +3009,9 @@ class ChatCard {
     this.view.x = x + jitter;
     this.view.y += (this.targetY - this.view.y) * 0.22 * delta;
     this.view.alpha =
-      entering * leave * (0.72 + 0.28 * clamp(1 - glitchAmount + Math.abs(pulse) * glitchAmount, 0, 1));
+      entering *
+      leave *
+      (0.72 + 0.28 * clamp(1 - glitchAmount + Math.abs(pulse) * glitchAmount, 0, 1));
     this.view.scale.set(1 + glitchAmount * 0.015 * (snap > 0 ? 1 : -1));
     this._drawGlitch(glitchAmount);
 
@@ -1661,10 +3051,34 @@ class ChatCard {
     this._stainShapeFill(g, px, px, w, h, plateSeed ^ 0x3001, rgba(0x000000, 0.48));
     this._stainShapeFill(g, 0, 0, w, h, plateSeed ^ 0x100d13, 0x100d13);
     this._stainShapeFill(g, px, px, w - px * 2, h - px * 2, plateSeed, rgba(palette.base, 0.9));
-    this._stainShapeFill(g, px * 2, px * 2, w - px * 4, h - px * 4, plateSeed ^ 0x517a, rgba(palette.panel, 0.38));
-    this._stainShapeFill(g, px * 3, px * 3, w - px * 6, h - px * 6, plateSeed ^ 0xb10b, rgba(palette.base, 0.58));
+    this._stainShapeFill(
+      g,
+      px * 2,
+      px * 2,
+      w - px * 4,
+      h - px * 4,
+      plateSeed ^ 0x517a,
+      rgba(palette.panel, 0.38),
+    );
+    this._stainShapeFill(
+      g,
+      px * 3,
+      px * 3,
+      w - px * 6,
+      h - px * 6,
+      plateSeed ^ 0xb10b,
+      rgba(palette.base, 0.58),
+    );
     this._stainStripe(g, px * 4, px * 2, w - px * 8, 10, plateSeed ^ 0xa11, rgba(userColor, 0.94));
-    this._stainStripe(g, px * 5, h - 12, w - px * 10, px * 2, plateSeed ^ 0x6100, rgba(palette.glow, 0.48));
+    this._stainStripe(
+      g,
+      px * 5,
+      h - 12,
+      w - px * 10,
+      px * 2,
+      plateSeed ^ 0x6100,
+      rgba(palette.glow, 0.48),
+    );
     this._stainShapeFill(g, 10, 10, 44, h - 20, plateSeed ^ 0x44, rgba(0xffffff, 0.13));
     this._stainShapeFill(g, 14, 14, 36, h - 28, plateSeed ^ 0x22, rgba(userColor, 0.22));
   }
@@ -1729,12 +3143,32 @@ class ChatCard {
 
     const specks = 10 + Math.floor(rng() * 14);
     for (let i = 0; i < specks; i++) {
-      const side = rng();
-      const sx = side < 0.33 ? x + rng() * w : side < 0.66 ? x - step + rng() * step * 2 : x + w - rng() * step;
-      const sy = side < 0.33 ? y + (rng() > 0.5 ? -step : h) + (rng() - 0.5) * step : y + rng() * h;
+      const [sx, sy] = this._speckPosition(rng, x, y, w, h);
       const size = step * (rng() > 0.72 ? 2 : 1);
       g.rect(snapPixel(sx, px), snapPixel(sy, px), size, size).fill(fill);
     }
+  }
+
+  /** A random speck position hugging the stain: just above/below it, or along its left/right edge. */
+  private _speckPosition(
+    rng: () => number,
+    x: number,
+    y: number,
+    w: number,
+    h: number,
+  ): [number, number] {
+    const step = this.cfg.plate;
+    const side = rng();
+    if (side < 0.33) {
+      const sx = x + rng() * w;
+      return [sx, y + (rng() > 0.5 ? -step : h) + (rng() - 0.5) * step];
+    }
+    if (side < 0.66) {
+      const sx = x - step + rng() * step * 2;
+      return [sx, y + rng() * h];
+    }
+    const sx = x + w - rng() * step;
+    return [sx, y + rng() * h];
   }
 
   /**
@@ -1798,7 +3232,9 @@ class ChatCard {
   private _makeAvatarFrame(palette: Palette, userColor: number): PIXI.Graphics {
     const frame = new PIXI.Graphics();
     frame.circle(16, 16, 16).stroke({ color: 0x07050b, width: 4, alpha: 0.74 });
-    frame.circle(16, 16, 13).stroke({ color: mixColor(palette.glow, userColor, 0.42), width: 3, alpha: 0.92 });
+    frame
+      .circle(16, 16, 13)
+      .stroke({ color: mixColor(palette.glow, userColor, 0.42), width: 3, alpha: 0.92 });
     frame.rect(7, 5, 6, 3).fill(rgba(0xffffff, 0.55));
     frame.rect(11, 4, 3, 3).fill(rgba(0xffffff, 0.38));
     return frame;
@@ -1989,9 +3425,17 @@ const chatCards = defineEffect({
     /** A fresh seed per message, so the same user's consecutive cards never repeat a plate. */
     const nextPlateSeed = (msg: ChatMessage, key: string, userSeed: number): number => {
       messageSerial += 1;
-      const randomBits = Math.floor(Math.random() * 0xffffffff);
+      const randomBits = Math.floor(random() * 0xffffffff);
       return hashSeed(
-        [key, userSeed, msg.event, msg.text, messageSerial, performance.now().toFixed(3), randomBits].join(":"),
+        [
+          key,
+          userSeed,
+          msg.event,
+          msg.text,
+          messageSerial,
+          performance.now().toFixed(3),
+          randomBits,
+        ].join(":"),
       );
     };
 
@@ -2047,18 +3491,18 @@ const chatCards = defineEffect({
       const mascotSeed = mascotSeedFor(key);
       const plateSeed = nextPlateSeed(msg, key, userSeed);
       const palette = makePalette(plateSeed, accent);
-      const card = new ChatCard(
+      const card = new ChatCard({
         cfg,
-        cardLayer,
-        pixelTexture,
+        parent: cardLayer,
+        texture: pixelTexture,
         msg,
-        cardWidth(),
+        width: cardWidth(),
         palette,
         userSeed,
-        accent,
+        userAccent: accent,
         mascotSeed,
         plateSeed,
-      );
+      });
       cards.unshift(card);
 
       while (cards.length > cfg.maxCards) {

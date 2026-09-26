@@ -54,6 +54,16 @@ interface WaveLayerSpec {
   alpha: number;
 }
 
+/** The per-frame wave geometry every wave-drawing helper shares. */
+interface WaveFrame {
+  width: number;
+  height: number;
+  crest: number;
+  amp: number;
+  time: number;
+  active: number;
+}
+
 interface Ripple {
   x: number;
   y: number;
@@ -104,9 +114,7 @@ function hslToRgb(h: number, s: number, l: number): number {
   else if (hue < 300) [r, g, b] = [x, 0, c];
   else [r, g, b] = [c, 0, x];
   return (
-    (Math.round((r + m) * 255) << 16) |
-    (Math.round((g + m) * 255) << 8) |
-    Math.round((b + m) * 255)
+    (Math.round((r + m) * 255) << 16) | (Math.round((g + m) * 255) << 8) | Math.round((b + m) * 255)
   );
 }
 
@@ -347,8 +355,10 @@ const statusLine = defineEffect({
      * chat colour can be anything (including near-black), so only 22% of it survives the mix. */
     const readableAccent = (msg: ChatMessage): number => {
       const base = colorFromString(msg.color, hslToRgb(msg.seed % 360, 0.76, 0.58));
-      const toxicBase =
-        msg.seed % 3 === 0 ? colorAccent : msg.seed % 3 === 1 ? colorToxic : colorAcid;
+      let toxicBase: number;
+      if (msg.seed % 3 === 0) toxicBase = colorAccent;
+      else if (msg.seed % 3 === 1) toxicBase = colorToxic;
+      else toxicBase = colorAcid;
       return mixColor(toxicBase, base, 0.22);
     };
 
@@ -509,6 +519,109 @@ const statusLine = defineEffect({
     const off = chat.onMessage(receive);
     scope.defer(off);
 
+    /** The three stacked sine layers of the liquid, back to front. */
+    const waveLayers = (): WaveLayerSpec[] => [
+      {
+        yOffset: barHeight * 0.3,
+        amplitudeScale: 0.32,
+        frequency: 1.45,
+        speed: 0.032,
+        phase: 1.7,
+        color: mixColor(LIQUID_BLACK, DEEP_GREEN, 0.62),
+        alpha: 1,
+      },
+      {
+        yOffset: barHeight * 0.2,
+        amplitudeScale: 0.42,
+        frequency: 1.9,
+        speed: -0.04,
+        phase: 4.2,
+        color: mixColor(DEEP_GREEN, colorBright, 0.58),
+        alpha: 0.96,
+      },
+      {
+        yOffset: barHeight * 0.11,
+        amplitudeScale: 0.55,
+        frequency: 2.55,
+        speed: 0.052,
+        phase: 2.4,
+        color: mixColor(colorToxic, colorAcid, 0.36),
+        alpha: 0.9,
+      },
+    ];
+
+    /** Traces one layer's sine silhouette and fills it down to the bottom edge of the frame. */
+    const fillWaveLayer = (
+      layer: WaveLayerSpec,
+      { width, height, crest, amp, time, active }: WaveFrame,
+    ): void => {
+      const layerBase = Math.min(height + 4, crest + layer.yOffset + active * 8);
+      wave.moveTo(0, height + 4);
+      wave.lineTo(0, layerBase);
+      for (let x = 0; x <= width + WAVE_STEP; x += WAVE_STEP) {
+        const normalized = x / Math.max(width, 1);
+        const y =
+          layerBase +
+          Math.sin(normalized * TAU * layer.frequency + time * layer.speed + layer.phase) *
+            amp *
+            layer.amplitudeScale +
+          Math.sin(
+            normalized * TAU * (layer.frequency + 2.1) - time * layer.speed * 0.7 + messageSeed,
+          ) *
+            amp *
+            layer.amplitudeScale *
+            0.28;
+        wave.lineTo(x, Math.round(y));
+      }
+      wave.lineTo(width, height + 4);
+      wave.closePath();
+      wave.fill(rgba(layer.color, active > 0.02 ? layer.alpha : active));
+    };
+
+    /** The liquid's main surface: the highest line of the bar, filled with the deep mix. */
+    const fillWaveSurface = (
+      { width, height, crest, amp, time, active }: WaveFrame,
+      baseY: number,
+      deep: number,
+    ): void => {
+      wave.moveTo(0, height + 4);
+      wave.lineTo(0, baseY);
+      for (let x = 0; x <= width + WAVE_STEP; x += WAVE_STEP) {
+        const normalized = x / Math.max(width, 1);
+        const y =
+          crest +
+          Math.sin(normalized * TAU * 2.2 + time * 0.06) * amp +
+          Math.sin(normalized * TAU * 5.3 - time * 0.035 + messageSeed) * amp * 0.35;
+        wave.lineTo(x, Math.round(y));
+      }
+      wave.lineTo(width, height + 4);
+      wave.closePath();
+      wave.fill(rgba(deep, active > 0.02 ? 1 : active));
+    };
+
+    /** One stroked "lane" line riding the crest; the three lanes differ in colour, weight and
+     * frequency, picked by index so the choice itself carries no branching. */
+    const strokeWaveLane = (lane: number, { width, crest, amp, time, active }: WaveFrame): void => {
+      const laneColors = [
+        mixColor(colorAcid, colorToxic, 0.48),
+        mixColor(colorAcid, colorToxic, 0.52),
+        mixColor(colorBright, colorAcid, 0.42),
+      ];
+      const offset = lane * 13 + Math.sin(time * 0.035 + lane) * 4;
+      const laneAlpha = (lane === 0 ? 0.28 : 0.16 + lane * 0.035) * active;
+      wave.moveTo(0, crest + offset);
+      for (let x = 0; x <= width + WAVE_STEP; x += WAVE_STEP) {
+        const normalized = x / Math.max(width, 1);
+        const y =
+          crest +
+          offset +
+          Math.sin(normalized * TAU * (1.7 + lane * 0.8) + time * (0.04 + lane * 0.009)) *
+            (amp * (0.26 + lane * 0.08));
+        wave.lineTo(x, Math.round(y));
+      }
+      wave.stroke({ color: laneColors[lane], alpha: laneAlpha, width: lane === 0 ? 3 : 2 });
+    };
+
     /** Draws the liquid: back-to-front sine layers, the main surface, the base strip, and three
      * stroked "lane" lines riding the crest. All arithmetic is the original's, with the fixed
      * palette constants swapped for the colour parameters. */
@@ -532,98 +645,19 @@ const statusLine = defineEffect({
       wave.clear();
       if (active < 0.01 && textLayer.alpha < 0.02) return;
 
-      const layers: WaveLayerSpec[] = [
-        {
-          yOffset: barHeight * 0.3,
-          amplitudeScale: 0.32,
-          frequency: 1.45,
-          speed: 0.032,
-          phase: 1.7,
-          color: mixColor(LIQUID_BLACK, DEEP_GREEN, 0.62),
-          alpha: 1,
-        },
-        {
-          yOffset: barHeight * 0.2,
-          amplitudeScale: 0.42,
-          frequency: 1.9,
-          speed: -0.04,
-          phase: 4.2,
-          color: mixColor(DEEP_GREEN, colorBright, 0.58),
-          alpha: 0.96,
-        },
-        {
-          yOffset: barHeight * 0.11,
-          amplitudeScale: 0.55,
-          frequency: 2.55,
-          speed: 0.052,
-          phase: 2.4,
-          color: mixColor(colorToxic, colorAcid, 0.36),
-          alpha: 0.9,
-        },
-      ];
-
-      for (const layer of layers) {
-        const layerBase = Math.min(height + 4, crest + layer.yOffset + active * 8);
-        wave.moveTo(0, height + 4);
-        wave.lineTo(0, layerBase);
-        for (let x = 0; x <= width + WAVE_STEP; x += WAVE_STEP) {
-          const normalized = x / Math.max(width, 1);
-          const y =
-            layerBase +
-            Math.sin(normalized * TAU * layer.frequency + time * layer.speed + layer.phase) *
-              amp *
-              layer.amplitudeScale +
-            Math.sin(
-              normalized * TAU * (layer.frequency + 2.1) - time * layer.speed * 0.7 + messageSeed,
-            ) *
-              amp *
-              layer.amplitudeScale *
-              0.28;
-          wave.lineTo(x, Math.round(y));
-        }
-        wave.lineTo(width, height + 4);
-        wave.closePath();
-        wave.fill(rgba(layer.color, active > 0.02 ? layer.alpha : active));
+      const frame: WaveFrame = { width, height, crest, amp, time, active };
+      for (const layer of waveLayers()) {
+        fillWaveLayer(layer, frame);
       }
 
-      wave.moveTo(0, height + 4);
-      wave.lineTo(0, baseY);
-      for (let x = 0; x <= width + WAVE_STEP; x += WAVE_STEP) {
-        const normalized = x / Math.max(width, 1);
-        const y =
-          crest +
-          Math.sin(normalized * TAU * 2.2 + time * 0.06) * amp +
-          Math.sin(normalized * TAU * 5.3 - time * 0.035 + messageSeed) * amp * 0.35;
-        wave.lineTo(x, Math.round(y));
-      }
-      wave.lineTo(width, height + 4);
-      wave.closePath();
-      wave.fill(rgba(deep, active > 0.02 ? 1 : active));
+      fillWaveSurface(frame, baseY, deep);
 
       wave
         .rect(0, height - 10 - active * 4, width, 8 + active * 4)
         .fill(rgba(mixColor(colorToxic, colorAcid, 0.38), active > 0.02 ? 0.96 : active));
 
       for (let lane = 0; lane < 3; lane += 1) {
-        const offset = lane * 13 + Math.sin(time * 0.035 + lane) * 4;
-        const laneAlpha = (lane === 0 ? 0.28 : 0.16 + lane * 0.035) * active;
-        wave.moveTo(0, crest + offset);
-        for (let x = 0; x <= width + WAVE_STEP; x += WAVE_STEP) {
-          const normalized = x / Math.max(width, 1);
-          const y =
-            crest +
-            offset +
-            Math.sin(normalized * TAU * (1.7 + lane * 0.8) + time * (0.04 + lane * 0.009)) *
-              (amp * (0.26 + lane * 0.08));
-          wave.lineTo(x, Math.round(y));
-        }
-        const laneColor =
-          lane === 0
-            ? bright
-            : lane === 1
-              ? mixColor(colorAcid, colorToxic, 0.52)
-              : mixColor(colorBright, colorAcid, 0.42);
-        wave.stroke({ color: laneColor, alpha: laneAlpha, width: lane === 0 ? 3 : 2 });
+        strokeWaveLane(lane, frame);
       }
     };
 

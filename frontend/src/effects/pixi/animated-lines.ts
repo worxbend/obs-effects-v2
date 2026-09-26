@@ -1,7 +1,7 @@
 import * as PIXI from "pixi.js";
 
 import { bool, colorHex, int, num, str } from "../paramUtils";
-import { createPixiStage, defineEffect, onFrame, useFont } from "../sdk";
+import { createPixiStage, defineEffect, onFrame, random, useFont } from "../sdk";
 
 /**
  * Animated Lines
@@ -132,6 +132,53 @@ function easeInOutSine(t: number): number {
 
 function clamp01(value: number): number {
   return Math.max(0, Math.min(1, value));
+}
+
+/** How much of the ring is drawn, for a moment in the loop. */
+function ringProgressAt(ringDraw: number, ringErase: number, blank: number): number {
+  if (ringDraw < 1) return easeInOutSine(ringDraw);
+  if (ringErase > 0 && ringErase < 1) return 1 - easeInOutSine(ringErase);
+  if (blank > 0) return 0;
+  return 1;
+}
+
+/** How much of each arm is drawn; each arm's window is offset within the phase, which is the stagger. */
+function armsProgressAt(armsDraw: number, armsErase: number): number[] {
+  const arms = [0, 0, 0, 0, 0];
+  for (let i = 0; i < arms.length; i += 1) {
+    const stagger = i * 0.12;
+    if (armsDraw > 0 && armsDraw < 1) {
+      arms[i] = easeInOutSine(clamp01((armsDraw - stagger) / (1 - stagger * 0.8)));
+    } else if (armsErase > 0 && armsErase < 1) {
+      // Erased in reverse order, so the last arm drawn is the first to go.
+      const reverse = (arms.length - 1 - i) * 0.12;
+      arms[i] = 1 - easeInOutSine(clamp01((armsErase - reverse) / (1 - reverse * 0.8)));
+    } else if (armsDraw >= 1 && armsErase <= 0) {
+      arms[i] = 1;
+    } else {
+      arms[i] = 0;
+    }
+  }
+  return arms;
+}
+
+/** Title opacity, for a moment in the loop. */
+function textAlphaAt(textIn: number, textOut: number): number {
+  if (textIn > 0 && textIn < 1) return easeInOutSine(textIn);
+  if (textIn >= 1 && textOut <= 0) return 1;
+  if (textOut > 0 && textOut < 1) return 1 - easeInOutSine(textOut);
+  return 0;
+}
+
+/**
+ * A whole-scene fade at the very start and the very end of the loop, so the sigil arrives and
+ * leaves rather than snapping.
+ */
+function fadeAt(ringDraw: number, blank: number): number {
+  let fade = 1;
+  if (ringDraw < 1) fade = clamp01(ringDraw * 3);
+  if (blank > 0) fade = 1 - blank;
+  return fade;
 }
 
 /** One drifting ember. */
@@ -307,15 +354,15 @@ const animatedLines = defineEffect({
     const embers: Ember[] = [];
 
     const spawnEmber = (w: number, h: number, atBottom: boolean): Ember => ({
-      x: Math.random() * w,
+      x: random() * w,
       // Spread through the frame on the first fill so it does not start empty, then always from
       // below the bottom edge afterwards.
-      y: atBottom ? h + Math.random() * 40 : Math.random() * h,
-      vx: (Math.random() - 0.5) * 14,
-      vy: -(18 + Math.random() * 46),
-      size: 1 + Math.random() * 2.4,
-      life: 4 + Math.random() * 6,
-      age: Math.random() * 0.6,
+      y: atBottom ? h + random() * 40 : random() * h,
+      vx: (random() - 0.5) * 14,
+      vy: -(18 + random() * 46),
+      size: 1 + random() * 2.4,
+      life: 4 + random() * 6,
+      age: random() * 0.6,
     });
 
     const seedEmbers = (): void => {
@@ -337,11 +384,6 @@ const animatedLines = defineEffect({
     const progressAt = (
       t: number,
     ): { ring: number; arms: number[]; text: number; fade: number } => {
-      const arms = [0, 0, 0, 0, 0];
-      let ring: number;
-      let textAlpha: number;
-      let fade = 1;
-
       let mark = 0;
       const phase = (length: number): number => {
         const local = (t - mark) / length;
@@ -354,65 +396,23 @@ const animatedLines = defineEffect({
       // Then the arms, staggered so each starts a fifth of the way after the last.
       const armsDraw = phase(PHASE.armsDraw);
       const textIn = phase(PHASE.textIn);
-      const hold = phase(PHASE.hold);
+      // `hold` participates in nothing; the call still keeps the phase cursor advancing in order.
+      phase(PHASE.hold);
       const textOut = phase(PHASE.textOut);
       const armsErase = phase(PHASE.armsErase);
       const ringErase = phase(PHASE.ringErase);
       const blank = phase(PHASE.blank);
 
-      if (ringDraw < 1) {
-        ring = easeInOutSine(ringDraw);
-      } else if (ringErase > 0 && ringErase < 1) {
-        ring = 1 - easeInOutSine(ringErase);
-      } else if (blank > 0) {
-        ring = 0;
-      } else {
-        ring = 1;
-      }
-
-      for (let i = 0; i < arms.length; i += 1) {
-        // Each arm's window is offset within the draw phase, which is the stagger.
-        const stagger = i * 0.12;
-        if (armsDraw > 0 && armsDraw < 1) {
-          arms[i] = easeInOutSine(clamp01((armsDraw - stagger) / (1 - stagger * 0.8)));
-        } else if (armsErase > 0 && armsErase < 1) {
-          // Erased in reverse order, so the last arm drawn is the first to go.
-          const reverse = (arms.length - 1 - i) * 0.12;
-          arms[i] = 1 - easeInOutSine(clamp01((armsErase - reverse) / (1 - reverse * 0.8)));
-        } else if (armsDraw >= 1 && armsErase <= 0) {
-          arms[i] = 1;
-        } else {
-          arms[i] = 0;
-        }
-      }
-
-      if (textIn > 0 && textIn < 1) textAlpha = easeInOutSine(textIn);
-      else if (textIn >= 1 && textOut <= 0) textAlpha = 1;
-      else if (textOut > 0 && textOut < 1) textAlpha = 1 - easeInOutSine(textOut);
-      else textAlpha = 0;
-
-      // A whole-scene fade at the very start and the very end of the loop, so the sigil arrives and
-      // leaves rather than snapping.
-      if (ringDraw < 1) fade = clamp01(ringDraw * 3);
-      if (blank > 0) fade = 1 - blank;
-      // `hold` participates in nothing; reading it keeps the phase cursor advancing in order.
-      void hold;
-
-      return { ring, arms, text: textAlpha, fade };
+      return {
+        ring: ringProgressAt(ringDraw, ringErase, blank),
+        arms: armsProgressAt(armsDraw, armsErase),
+        text: textAlphaAt(textIn, textOut),
+        fade: fadeAt(ringDraw, blank),
+      };
     };
 
-    onFrame(scope, ctx.fpsCap, ({ dt }) => {
-      clock = (clock + dt * speed) % LOOP_LENGTH;
-
-      const w = stage.width;
-      const h = stage.height;
-      const shortSide = Math.min(w, h);
-      const scale = (shortSide * sizeFraction) / DESIGN_SIZE;
-
-      backgroundLayer.clear();
-      if (drawBackground) backgroundLayer.rect(0, 0, w, h).fill({ color: backgroundColor });
-
-      // ── Embers ──────────────────────────────────────────────────────────
+    /** Advances every ember one step, respawning the spent ones, and draws the survivors. */
+    const stepEmbers = (w: number, h: number, dt: number): void => {
       emberLayer.clear();
       if (embers.length !== emberCount) seedEmbers();
       for (let i = 0; i < embers.length; i += 1) {
@@ -439,6 +439,62 @@ const animatedLines = defineEffect({
           .circle(ember.x, ember.y, ember.size)
           .fill({ color: colorEmber, alpha: alpha * 0.9 });
       }
+    };
+
+    /**
+     * One arm as a partially-drawn polyline. The reveal walks the point list and interpolates
+     * within whichever edge it is currently on — the by-hand version of a dash-offset animation.
+     */
+    const drawArm = (points: readonly (readonly [number, number])[], amount: number): void => {
+      // Closed shape, so the last edge returns to the first point.
+      const edges = points.length;
+      const travelled = amount * edges;
+      const whole = Math.floor(travelled);
+      const partial = travelled - whole;
+
+      const first = points[0];
+      if (first === undefined) return;
+      sigilLayer.moveTo(first[0] - DESIGN_SIZE / 2, first[1] - DESIGN_SIZE / 2);
+
+      for (let i = 1; i <= Math.min(whole, edges - 1); i += 1) {
+        const p = points[i];
+        if (p === undefined) continue;
+        sigilLayer.lineTo(p[0] - DESIGN_SIZE / 2, p[1] - DESIGN_SIZE / 2);
+      }
+
+      if (whole < edges) {
+        const from = points[Math.min(whole, edges - 1)];
+        const to = points[(whole + 1) % edges];
+        if (from !== undefined && to !== undefined) {
+          sigilLayer.lineTo(
+            from[0] + (to[0] - from[0]) * partial - DESIGN_SIZE / 2,
+            from[1] + (to[1] - from[1]) * partial - DESIGN_SIZE / 2,
+          );
+        }
+      }
+
+      sigilLayer.stroke({
+        width: thickness,
+        color: colorInk,
+        alpha: 0.95,
+        cap: "round",
+        join: "round",
+      });
+    };
+
+    onFrame(scope, ctx.fpsCap, ({ dt }) => {
+      clock = (clock + dt * speed) % LOOP_LENGTH;
+
+      const w = stage.width;
+      const h = stage.height;
+      const shortSide = Math.min(w, h);
+      const scale = (shortSide * sizeFraction) / DESIGN_SIZE;
+
+      backgroundLayer.clear();
+      if (drawBackground) backgroundLayer.rect(0, 0, w, h).fill({ color: backgroundColor });
+
+      // ── Embers ──────────────────────────────────────────────────────────
+      stepEmbers(w, h, dt);
 
       // ── The sigil ───────────────────────────────────────────────────────
       const progress = progressAt(clock);
@@ -471,47 +527,11 @@ const animatedLines = defineEffect({
           .stroke({ width: thickness, color: colorInk, alpha: 0.95, cap: "round" });
       }
 
-      // Each arm as a partially-drawn polyline. The reveal walks the point list and interpolates
-      // within whichever edge it is currently on — the by-hand version of a dash-offset animation.
       for (let s = 0; s < SIGIL_SEGMENTS.length; s += 1) {
         const points = SIGIL_SEGMENTS[s];
         const amount = progress.arms[s] ?? 0;
         if (points === undefined || amount <= 0.001) continue;
-
-        // Closed shape, so the last edge returns to the first point.
-        const edges = points.length;
-        const travelled = amount * edges;
-        const whole = Math.floor(travelled);
-        const partial = travelled - whole;
-
-        const first = points[0];
-        if (first === undefined) continue;
-        sigilLayer.moveTo(first[0] - DESIGN_SIZE / 2, first[1] - DESIGN_SIZE / 2);
-
-        for (let i = 1; i <= Math.min(whole, edges - 1); i += 1) {
-          const p = points[i];
-          if (p === undefined) continue;
-          sigilLayer.lineTo(p[0] - DESIGN_SIZE / 2, p[1] - DESIGN_SIZE / 2);
-        }
-
-        if (whole < edges) {
-          const from = points[Math.min(whole, edges - 1)];
-          const to = points[(whole + 1) % edges];
-          if (from !== undefined && to !== undefined) {
-            sigilLayer.lineTo(
-              from[0] + (to[0] - from[0]) * partial - DESIGN_SIZE / 2,
-              from[1] + (to[1] - from[1]) * partial - DESIGN_SIZE / 2,
-            );
-          }
-        }
-
-        sigilLayer.stroke({
-          width: thickness,
-          color: colorInk,
-          alpha: 0.95,
-          cap: "round",
-          join: "round",
-        });
+        drawArm(points, amount);
       }
 
       // ── The title ───────────────────────────────────────────────────────

@@ -6,9 +6,9 @@ import {
   createEnvelopes,
   createPixiStage,
   onFrame,
-  useAudio,
   type EffectHandle,
   type Scope,
+  useAudio,
 } from "../sdk";
 
 /**
@@ -377,26 +377,33 @@ export function razerWaveformSetup(
     };
 
     /** A line drawn three times at decreasing width and increasing opacity, which reads as a glow. */
-    const glowLine = (
-      x0: number,
-      y0: number,
-      x1: number,
-      y1: number,
-      color: number,
-      alpha: number,
-      width: number,
-      glow: number,
-    ): void => {
-      const a = alpha * settings.opacity;
+    const glowLine = (options: {
+      x0: number;
+      y0: number;
+      x1: number;
+      y1: number;
+      color: number;
+      alpha: number;
+      width: number;
+      glow: number;
+    }): void => {
+      const a = options.alpha * settings.opacity;
       graphics
-        .moveTo(x0, y0)
-        .lineTo(x1, y1)
-        .stroke({ color, alpha: a * 0.12, width: width + glow });
+        .moveTo(options.x0, options.y0)
+        .lineTo(options.x1, options.y1)
+        .stroke({ color: options.color, alpha: a * 0.12, width: options.width + options.glow });
       graphics
-        .moveTo(x0, y0)
-        .lineTo(x1, y1)
-        .stroke({ color, alpha: a * 0.24, width: width + glow * 0.42 });
-      graphics.moveTo(x0, y0).lineTo(x1, y1).stroke({ color, alpha: a, width });
+        .moveTo(options.x0, options.y0)
+        .lineTo(options.x1, options.y1)
+        .stroke({
+          color: options.color,
+          alpha: a * 0.24,
+          width: options.width + options.glow * 0.42,
+        });
+      graphics
+        .moveTo(options.x0, options.y0)
+        .lineTo(options.x1, options.y1)
+        .stroke({ color: options.color, alpha: a, width: options.width });
     };
 
     const waveAt = (t: number, amp: number, cycles: number, phase: number): number => {
@@ -414,32 +421,32 @@ export function razerWaveformSetup(
       return (primary + secondary + tertiary) * amp * envelope * energy;
     };
 
-    const strokeWave = (
-      cy: number,
-      left: number,
-      span: number,
-      amp: number,
-      cycles: number,
-      phase: number,
-      color: number,
-      alpha: number,
-      width: number,
-    ): void => {
+    const strokeWave = (options: {
+      cy: number;
+      left: number;
+      span: number;
+      amp: number;
+      cycles: number;
+      phase: number;
+      color: number;
+      alpha: number;
+      width: number;
+    }): void => {
       for (let i = 0; i < SEGMENTS; i += 1) {
         const t0 = i / SEGMENTS;
         const t1 = (i + 1) / SEGMENTS;
-        const a = Math.min(edgeAlpha(t0), edgeAlpha(t1)) * alpha;
+        const a = Math.min(edgeAlpha(t0), edgeAlpha(t1)) * options.alpha;
         if (a <= 0.01) continue;
-        glowLine(
-          left + span * t0,
-          cy + waveAt(t0, amp, cycles, phase),
-          left + span * t1,
-          cy + waveAt(t1, amp, cycles, phase),
-          color,
-          a,
-          width,
-          10,
-        );
+        glowLine({
+          x0: options.left + options.span * t0,
+          y0: options.cy + waveAt(t0, options.amp, options.cycles, options.phase),
+          x1: options.left + options.span * t1,
+          y1: options.cy + waveAt(t1, options.amp, options.cycles, options.phase),
+          color: options.color,
+          alpha: a,
+          width: options.width,
+          glow: 10,
+        });
       }
     };
 
@@ -612,241 +619,300 @@ export function razerWaveformSetup(
       );
     };
 
+    /** Frame geometry shared by the variant drawers, updated in place by `draw`. */
+    const layout = { h: 0, cy: 0, left: 0, span: 0, amp: 0 };
+
+    /** Mirrored rainbow dot skyline. */
+    const drawPulse = (): void => {
+      const { h, cy, left, span, amp } = layout;
+      drawDotSkyline({
+        base: cy,
+        left,
+        span,
+        maxHeight: h * 0.22 * amp,
+        columns: 72,
+        rows: 28,
+        mirror: true,
+        dotRadius: 3.3,
+        colorMode: "rainbowVertical",
+        density: 0.86,
+        waveBias: 0.4,
+      });
+    };
+
+    /** Cyan dot columns under a fixed four-peak envelope. */
+    const drawPrism = (): void => {
+      const { h, cy, left, span, amp } = layout;
+      const columns = 68;
+      const rows = 22;
+      const colGap = span / Math.max(1, columns - 1);
+      const rowGap = (h * 0.18 * amp) / rows;
+      const calm = activity < 0.06;
+
+      for (let col = 0; col < columns; col += 1) {
+        const t = col / Math.max(1, columns - 1);
+        const envelope =
+          gauss(t, 0.24, 0.1) * 0.55 +
+          gauss(t, 0.42, 0.14) * 0.78 +
+          gauss(t, 0.58, 0.08) * 1.05 +
+          gauss(t, 0.76, 0.14) * 0.72;
+        const responsive =
+          rows *
+          clamp(
+            (0.06 + envelope * 0.72 * (0.48 + activity * 0.52)) * (0.24 + activity * 1.1) +
+              valueAt(t) * 0.28 * (0.35 + activity * 0.9) +
+              (calm
+                ? 0
+                : 0.1 *
+                  (0.5 +
+                    0.5 * Math.sin(time * (1.4 + (seeds[col % BARS] ?? 0) * 1.8) + col * 0.54)) *
+                  activity),
+            0.06,
+            1,
+          );
+        const height = calm ? 1 : Math.ceil(responsive);
+        const x = left + colGap * col;
+
+        for (let row = 0; row < height; row += 1) {
+          const p = row / rows;
+          graphics.circle(x, cy - row * rowGap, 3).fill({
+            color: dotColor("cyanDepth", p, false),
+            alpha: (0.28 + p * 0.7) * edgeAlpha(t) * settings.opacity,
+          });
+        }
+      }
+    };
+
+    /** Blue-to-cyan block spectrum analyser. */
+    const drawSpectrum = (): void => {
+      const { h, cy, left, span, amp } = layout;
+      const columns = 42;
+      const rows = 18;
+      const cellW = span / columns;
+      const cellH = h * 0.018 * amp;
+      const calm = activity < 0.06;
+      const tone = clamp(0.2 + bus.level * 0.8);
+
+      for (let i = 0; i < columns; i += 1) {
+        const t = i / (columns - 1);
+        const energy =
+          valueAt(t) * (0.28 + activity * 0.72) +
+          gauss(t, 0.48, 0.2) * (0.09 + envelopes.slow * activity * 0.42) * (0.4 + activity * 0.5);
+        const noise = calm
+          ? 0
+          : 0.05 * activity * (0.5 + 0.5 * Math.sin(time * 0.42 + i * 0.65 + wavePhase * 0.8));
+        const height = calm
+          ? 1
+          : Math.ceil(rows * clamp(0.06 + energy + noise + tone * 0.03, 0.08, 1));
+        const x = left + span * t;
+
+        for (let row = 0; row < height; row += 1) {
+          graphics.rect(x, cy - row * cellH, cellW * 0.74, cellH * 0.56).fill({
+            color: mixColor(BLUE, CYAN, row / rows),
+            alpha:
+              (calm
+                ? 0.22
+                : 0.16 + (row / rows) * (0.5 + activity * 0.12) * (0.55 + energy * 0.75)) *
+              settings.opacity,
+          });
+        }
+      }
+    };
+
+    /** A glowing zigzag whose teeth grow with the audio. */
+    const drawWeave = (): void => {
+      const { h, cy, left, span, amp } = layout;
+      const waveAmp = h * (0.045 + activity * 0.075 + bus.level * activity * 0.05) * amp;
+      const steps = 58;
+      for (let i = 0; i < steps; i += 1) {
+        const t0 = i / steps;
+        const t1 = (i + 1) / steps;
+        glowLine({
+          x0: left + span * t0,
+          y0: cy + zigzagAt(i, t0, waveAmp),
+          x1: left + span * t1,
+          y1: cy + zigzagAt(i + 1, t1, waveAmp),
+          color: paletteAt(t0, 0.25),
+          alpha: edgeAlpha(t0) * 0.88,
+          width: 1.6,
+          glow: 10,
+        });
+      }
+    };
+
+    /** Four interleaved cyan and magenta sine strands over a centre line. */
+    const drawHelix = (): void => {
+      const { h, cy, left, span, amp } = layout;
+      const waveAmp = h * (0.032 + activity * 0.048 + envelopes.mid * activity * 0.06) * amp;
+      for (let layer = 0; layer < 4; layer += 1) {
+        strokeWave({
+          cy,
+          left,
+          span,
+          amp: waveAmp * (0.6 + layer * 0.16),
+          cycles: 2.5 + layer * 0.36,
+          phase: layer * 0.62 + time * 0.58,
+          color: layer % 2 === 0 ? CYAN : MAGENTA,
+          alpha: 0.66,
+          width: 1.1,
+        });
+      }
+      glowLine({
+        x0: left,
+        y0: cy,
+        x1: left + span,
+        y1: cy,
+        color: BLUE,
+        alpha: 0.32,
+        width: 1,
+        glow: 12,
+      });
+    };
+
+    /** Seven organic ribbons with a white core ribbon on top. */
+    const drawRibbons = (): void => {
+      const { h, cy, left, span, amp } = layout;
+      const ribbonAmp = h * (0.055 + activity * 0.075 + bus.level * activity * 0.055) * amp;
+      glowLine({
+        x0: left,
+        y0: cy,
+        x1: left + span,
+        y1: cy,
+        color: WHITE,
+        alpha: 0.22,
+        width: 0.9,
+        glow: 12,
+      });
+      for (let layer = 0; layer < 7; layer += 1) {
+        drawBlobRibbon({
+          cy,
+          left,
+          span,
+          amp: ribbonAmp * (0.72 + layer * 0.07),
+          thickness: h * (0.052 + layer * 0.004),
+          row: 1,
+          layer,
+          color: paletteEntry(RIBBON_PALETTE, layer * 2),
+          alpha: 0.4,
+          lobeScale: 0.96,
+        });
+      }
+      drawBlobRibbon({
+        cy,
+        left,
+        span,
+        amp: ribbonAmp * 0.28,
+        thickness: h * 0.018,
+        row: 1,
+        layer: 8,
+        color: WHITE,
+        alpha: 0.76,
+        lobeScale: 0.62,
+      });
+    };
+
+    /** Eight thick, heavily lobed ribbons over a cyan centre line. */
+    const drawRibbonBands = (): void => {
+      const { h, cy, left, span, amp } = layout;
+      const ribbonAmp = h * (0.074 + activity * 0.11 + envelopes.slow * activity * 0.07) * amp;
+      glowLine({
+        x0: left,
+        y0: cy,
+        x1: left + span,
+        y1: cy,
+        color: CYAN,
+        alpha: 0.2,
+        width: 1,
+        glow: 14,
+      });
+      for (let layer = 0; layer < 8; layer += 1) {
+        drawBlobRibbon({
+          cy,
+          left,
+          span,
+          amp: ribbonAmp * (0.62 + layer * 0.075),
+          thickness: h * (0.075 + layer * 0.005),
+          row: 3,
+          layer,
+          color: paletteEntry(RIBBON_PALETTE, layer + 2),
+          alpha: 0.34,
+          lobeScale: 1.12,
+        });
+      }
+    };
+
+    /** Eight ribbons across four rows, laced with thin sine strands. */
+    const drawRibbonLattice = (): void => {
+      const { h, cy, left, span, amp } = layout;
+      const ribbonAmp = h * (0.06 + activity * 0.105 + envelopes.mid * activity * 0.065) * amp;
+      glowLine({
+        x0: left,
+        y0: cy,
+        x1: left + span,
+        y1: cy,
+        color: WHITE,
+        alpha: 0.22,
+        width: 1,
+        glow: 14,
+      });
+      for (let layer = 0; layer < 8; layer += 1) {
+        drawBlobRibbon({
+          cy,
+          left,
+          span,
+          amp: ribbonAmp * (0.44 + layer * 0.065),
+          thickness: h * (0.03 + layer * 0.0045),
+          row: layer % 4,
+          layer,
+          color: paletteEntry(RIBBON_PALETTE, layer),
+          alpha: 0.34,
+          lobeScale: 0.9,
+        });
+      }
+      for (let layer = 0; layer < 4; layer += 1) {
+        strokeWave({
+          cy,
+          left,
+          span,
+          amp: ribbonAmp * (0.32 + layer * 0.08),
+          cycles: 2.4 + layer * 0.55,
+          phase: time * 0.36 + layer * 1.7,
+          color: paletteEntry(RIBBON_PALETTE, layer * 2 + 1),
+          alpha: 0.42,
+          width: 0.9,
+        });
+      }
+    };
+
+    /** One drawer per look, picked once: an instance never changes look while it runs. */
+    const drawers: Record<WaveformVariant, () => void> = {
+      pulse: drawPulse,
+      prism: drawPrism,
+      spectrum: drawSpectrum,
+      weave: drawWeave,
+      helix: drawHelix,
+      ribbons: drawRibbons,
+      ribbonBands: drawRibbonBands,
+      ribbonLattice: drawRibbonLattice,
+    };
+    const drawVariant = drawers[look.variant];
+
     /** Draws whichever look this effect is. The only part that differs between the eight. */
     const draw = (): void => {
       const w = stage.width;
       const h = stage.height;
-      const cy = h * settings.centre;
-      const amp = settings.amplitude;
-      const span = w * settings.width;
-      const left = (w - span) * 0.5;
+      layout.h = h;
+      layout.cy = h * settings.centre;
+      layout.amp = settings.amplitude;
+      layout.span = w * settings.width;
+      layout.left = (w - layout.span) * 0.5;
 
       graphics.clear();
       if (settings.background) {
         graphics.rect(0, 0, w, h).fill({ color: settings.backgroundColor });
       }
 
-      switch (look.variant) {
-        case "pulse":
-          drawDotSkyline({
-            base: cy,
-            left,
-            span,
-            maxHeight: h * 0.22 * amp,
-            columns: 72,
-            rows: 28,
-            mirror: true,
-            dotRadius: 3.3,
-            colorMode: "rainbowVertical",
-            density: 0.86,
-            waveBias: 0.4,
-          });
-          break;
-
-        case "prism": {
-          const columns = 68;
-          const rows = 22;
-          const colGap = span / Math.max(1, columns - 1);
-          const rowGap = (h * 0.18 * amp) / rows;
-          const calm = activity < 0.06;
-
-          for (let col = 0; col < columns; col += 1) {
-            const t = col / Math.max(1, columns - 1);
-            const envelope =
-              gauss(t, 0.24, 0.1) * 0.55 +
-              gauss(t, 0.42, 0.14) * 0.78 +
-              gauss(t, 0.58, 0.08) * 1.05 +
-              gauss(t, 0.76, 0.14) * 0.72;
-            const responsive =
-              rows *
-              clamp(
-                (0.06 + envelope * 0.72 * (0.48 + activity * 0.52)) * (0.24 + activity * 1.1) +
-                  valueAt(t) * 0.28 * (0.35 + activity * 0.9) +
-                  (calm
-                    ? 0
-                    : 0.1 *
-                      (0.5 +
-                        0.5 *
-                          Math.sin(time * (1.4 + (seeds[col % BARS] ?? 0) * 1.8) + col * 0.54)) *
-                      activity),
-                0.06,
-                1,
-              );
-            const height = calm ? 1 : Math.ceil(responsive);
-            const x = left + colGap * col;
-
-            for (let row = 0; row < height; row += 1) {
-              const p = row / rows;
-              graphics.circle(x, cy - row * rowGap, 3).fill({
-                color: dotColor("cyanDepth", p, false),
-                alpha: (0.28 + p * 0.7) * edgeAlpha(t) * settings.opacity,
-              });
-            }
-          }
-          break;
-        }
-
-        case "spectrum": {
-          const columns = 42;
-          const rows = 18;
-          const cellW = span / columns;
-          const cellH = h * 0.018 * amp;
-          const calm = activity < 0.06;
-          const tone = clamp(0.2 + bus.level * 0.8);
-
-          for (let i = 0; i < columns; i += 1) {
-            const t = i / (columns - 1);
-            const energy =
-              valueAt(t) * (0.28 + activity * 0.72) +
-              gauss(t, 0.48, 0.2) *
-                (0.09 + envelopes.slow * activity * 0.42) *
-                (0.4 + activity * 0.5);
-            const noise = calm
-              ? 0
-              : 0.05 * activity * (0.5 + 0.5 * Math.sin(time * 0.42 + i * 0.65 + wavePhase * 0.8));
-            const height = calm
-              ? 1
-              : Math.ceil(rows * clamp(0.06 + energy + noise + tone * 0.03, 0.08, 1));
-            const x = left + span * t;
-
-            for (let row = 0; row < height; row += 1) {
-              graphics.rect(x, cy - row * cellH, cellW * 0.74, cellH * 0.56).fill({
-                color: mixColor(BLUE, CYAN, row / rows),
-                alpha:
-                  (calm
-                    ? 0.22
-                    : 0.16 + (row / rows) * (0.5 + activity * 0.12) * (0.55 + energy * 0.75)) *
-                  settings.opacity,
-              });
-            }
-          }
-          break;
-        }
-
-        case "weave": {
-          const waveAmp = h * (0.045 + activity * 0.075 + bus.level * activity * 0.05) * amp;
-          const steps = 58;
-          for (let i = 0; i < steps; i += 1) {
-            const t0 = i / steps;
-            const t1 = (i + 1) / steps;
-            glowLine(
-              left + span * t0,
-              cy + zigzagAt(i, t0, waveAmp),
-              left + span * t1,
-              cy + zigzagAt(i + 1, t1, waveAmp),
-              paletteAt(t0, 0.25),
-              edgeAlpha(t0) * 0.88,
-              1.6,
-              10,
-            );
-          }
-          break;
-        }
-
-        case "helix": {
-          const waveAmp = h * (0.032 + activity * 0.048 + envelopes.mid * activity * 0.06) * amp;
-          for (let layer = 0; layer < 4; layer += 1) {
-            strokeWave(
-              cy,
-              left,
-              span,
-              waveAmp * (0.6 + layer * 0.16),
-              2.5 + layer * 0.36,
-              layer * 0.62 + time * 0.58,
-              layer % 2 === 0 ? CYAN : MAGENTA,
-              0.66,
-              1.1,
-            );
-          }
-          glowLine(left, cy, left + span, cy, BLUE, 0.32, 1, 12);
-          break;
-        }
-
-        case "ribbons": {
-          const ribbonAmp = h * (0.055 + activity * 0.075 + bus.level * activity * 0.055) * amp;
-          glowLine(left, cy, left + span, cy, WHITE, 0.22, 0.9, 12);
-          for (let layer = 0; layer < 7; layer += 1) {
-            drawBlobRibbon({
-              cy,
-              left,
-              span,
-              amp: ribbonAmp * (0.72 + layer * 0.07),
-              thickness: h * (0.052 + layer * 0.004),
-              row: 1,
-              layer,
-              color: paletteEntry(RIBBON_PALETTE, layer * 2),
-              alpha: 0.4,
-              lobeScale: 0.96,
-            });
-          }
-          drawBlobRibbon({
-            cy,
-            left,
-            span,
-            amp: ribbonAmp * 0.28,
-            thickness: h * 0.018,
-            row: 1,
-            layer: 8,
-            color: WHITE,
-            alpha: 0.76,
-            lobeScale: 0.62,
-          });
-          break;
-        }
-
-        case "ribbonBands": {
-          const ribbonAmp = h * (0.074 + activity * 0.11 + envelopes.slow * activity * 0.07) * amp;
-          glowLine(left, cy, left + span, cy, CYAN, 0.2, 1, 14);
-          for (let layer = 0; layer < 8; layer += 1) {
-            drawBlobRibbon({
-              cy,
-              left,
-              span,
-              amp: ribbonAmp * (0.62 + layer * 0.075),
-              thickness: h * (0.075 + layer * 0.005),
-              row: 3,
-              layer,
-              color: paletteEntry(RIBBON_PALETTE, layer + 2),
-              alpha: 0.34,
-              lobeScale: 1.12,
-            });
-          }
-          break;
-        }
-
-        case "ribbonLattice": {
-          const ribbonAmp = h * (0.06 + activity * 0.105 + envelopes.mid * activity * 0.065) * amp;
-          glowLine(left, cy, left + span, cy, WHITE, 0.22, 1, 14);
-          for (let layer = 0; layer < 8; layer += 1) {
-            drawBlobRibbon({
-              cy,
-              left,
-              span,
-              amp: ribbonAmp * (0.44 + layer * 0.065),
-              thickness: h * (0.03 + layer * 0.0045),
-              row: layer % 4,
-              layer,
-              color: paletteEntry(RIBBON_PALETTE, layer),
-              alpha: 0.34,
-              lobeScale: 0.9,
-            });
-          }
-          for (let layer = 0; layer < 4; layer += 1) {
-            strokeWave(
-              cy,
-              left,
-              span,
-              ribbonAmp * (0.32 + layer * 0.08),
-              2.4 + layer * 0.55,
-              time * 0.36 + layer * 1.7,
-              paletteEntry(RIBBON_PALETTE, layer * 2 + 1),
-              0.42,
-              0.9,
-            );
-          }
-          break;
-        }
-      }
+      drawVariant();
     };
 
     onFrame(scope, ctx.fpsCap, ({ dt, now }) => {

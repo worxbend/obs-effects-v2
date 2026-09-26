@@ -1,7 +1,7 @@
 import * as THREE from "three";
 
 import { bool, int, num } from "../paramUtils";
-import { createThreeStage, defineEffect, onFrame } from "../sdk";
+import { createThreeStage, defineEffect, onFrame, random as randomUnit } from "../sdk";
 
 /**
  * Rain on Glass
@@ -82,12 +82,12 @@ interface Drop {
 
 /** `random(a, b, curve)` — a random number in [a, b), optionally biased by a shaping function. */
 function random(from: number, to: number, interp?: (n: number) => number): number {
-  const shaped = interp ? interp(Math.random()) : Math.random();
+  const shaped = interp ? interp(randomUnit()) : randomUnit();
   return from + shaped * (to - from);
 }
 
 function chance(c: number): boolean {
-  return Math.random() <= c;
+  return randomUnit() <= c;
 }
 
 function createCanvas(w: number, h: number): HTMLCanvasElement {
@@ -121,7 +121,7 @@ function generateDropAlpha(size: number): HTMLCanvasElement {
       const dx = (px - cx) / cx;
       let dy = (py - cy) / cy;
       dy *= 1.0 + dy * 0.15; // pull the bottom half down: a drop hangs, it is not a circle
-      const dist = Math.sqrt(dx * dx + dy * dy);
+      const dist = Math.hypot(dx, dy);
       if (dist > 1.0) continue;
 
       const alpha = Math.max(0, 1.0 - Math.pow(dist / 0.35, 6)) * 255;
@@ -154,7 +154,7 @@ function generateDropColor(size: number): HTMLCanvasElement {
       const dx = (px - cx) / cx;
       let dy = (py - cy) / cy;
       dy *= 1.0 + dy * 0.15;
-      const dist = Math.sqrt(dx * dx + dy * dy);
+      const dist = Math.hypot(dx, dy);
       if (dist > 1.0) continue;
 
       const nx = dist > 0.001 ? dx / dist : 0;
@@ -175,6 +175,87 @@ function generateDropColor(size: number): HTMLCanvasElement {
   }
   ctx.putImageData(imgData, 0, 0);
   return c;
+}
+
+/** A seeded random generator returning [0, 1). */
+type SeededRandom = () => number;
+
+/**
+ * The lit-window colours, keyed by a `warmth` roll: most are warm tungsten, some a deeper orange,
+ * and the rare remainder a cool fluorescent blue. The second random draw sets the opacity.
+ */
+function windowStyle(warmth: number, srand: SeededRandom): string {
+  if (warmth > 0.3) return `rgba(255, 200, 120, ${0.4 + srand() * 0.5})`;
+  if (warmth > 0.1) return `rgba(255, 160, 80, ${0.3 + srand() * 0.4})`;
+  return `rgba(180, 220, 255, ${0.2 + srand() * 0.3})`;
+}
+
+/** Randomly lit windows over one building's rectangle. */
+function paintWindows(
+  ctx: CanvasRenderingContext2D,
+  srand: SeededRandom,
+  building: { x: number; y: number; w: number; h: number },
+  w: number,
+  h: number,
+): void {
+  const wRows = Math.floor(building.h / (h * 0.04));
+  const wCols = Math.floor(building.w / (w * 0.02));
+  for (let wr = 0; wr < wRows; wr += 1) {
+    for (let wc = 0; wc < wCols; wc += 1) {
+      if (srand() <= 0.45) continue;
+      const wx = building.x + w * 0.005 + wc * (w * 0.02);
+      const wy = building.y + h * 0.01 + wr * (h * 0.04);
+      ctx.fillStyle = windowStyle(srand(), srand);
+      ctx.fillRect(wx, wy, w * 0.008, h * 0.02);
+    }
+  }
+}
+
+/**
+ * The bokeh hue families as cumulative probability bands, each with a base and a random span for
+ * hue, saturation and lightness: mostly amber, then orange, gold, the occasional blue, and
+ * magenta for whatever is left.
+ */
+const BOKEH_TINTS: readonly {
+  below: number;
+  hue: readonly [number, number];
+  sat: readonly [number, number];
+  lit: readonly [number, number];
+}[] = [
+  { below: 0.45, hue: [25, 20], sat: [80, 20], lit: [55, 35] },
+  { below: 0.7, hue: [10, 15], sat: [85, 15], lit: [50, 30] },
+  { below: 0.85, hue: [40, 15], sat: [75, 25], lit: [60, 30] },
+  { below: 0.93, hue: [200, 30], sat: [60, 30], lit: [50, 30] },
+  { below: Infinity, hue: [330, 25], sat: [65, 25], lit: [55, 25] },
+];
+
+/** One soft bokeh circle at a random place, size and tint. */
+function paintBokeh(
+  ctx: CanvasRenderingContext2D,
+  srand: SeededRandom,
+  w: number,
+  h: number,
+): void {
+  const bkx = srand() * w;
+  const bky = h * 0.1 + srand() * h * 0.85;
+  const bkr = w * 0.02 + srand() * w * 0.15;
+  const rndC = srand();
+  const tint = BOKEH_TINTS.find((t) => rndC < t.below) ?? BOKEH_TINTS[0];
+  if (tint === undefined) return;
+  // Drawn in this order — hue, saturation, lightness — to keep the seeded sequence unchanged.
+  const hue = tint.hue[0] + srand() * tint.hue[1];
+  const sat = tint.sat[0] + srand() * tint.sat[1];
+  const lit = tint.lit[0] + srand() * tint.lit[1];
+  const alpha = 0.08 + srand() * 0.25;
+  const g = ctx.createRadialGradient(bkx, bky, 0, bkx, bky, bkr);
+  g.addColorStop(0, `hsla(${hue},${sat}%,${lit}%,${alpha * 1.3})`);
+  g.addColorStop(0.3, `hsla(${hue},${sat}%,${lit}%,${alpha * 0.6})`);
+  g.addColorStop(0.6, `hsla(${hue},${sat}%,${lit}%,${alpha * 0.15})`);
+  g.addColorStop(1, `hsla(${hue},${sat}%,${lit}%,0)`);
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  ctx.arc(bkx, bky, bkr, 0, Math.PI * 2);
+  ctx.fill();
 }
 
 /**
@@ -220,69 +301,11 @@ function generateCityBg(w: number, h: number, blurPx: number, seed: number): HTM
     const by = h - bh + srand() * h * 0.05;
     ctx.fillStyle = bColors[b % bColors.length] ?? "#08060e";
     ctx.fillRect(bx, by, bw, bh);
-
-    const wRows = Math.floor(bh / (h * 0.04));
-    const wCols = Math.floor(bw / (w * 0.02));
-    for (let wr = 0; wr < wRows; wr += 1) {
-      for (let wc = 0; wc < wCols; wc += 1) {
-        if (srand() > 0.45) {
-          const wx = bx + w * 0.005 + wc * (w * 0.02);
-          const wy = by + h * 0.01 + wr * (h * 0.04);
-          const warmth = srand();
-          if (warmth > 0.3) {
-            ctx.fillStyle = `rgba(255, 200, 120, ${0.4 + srand() * 0.5})`;
-          } else if (warmth > 0.1) {
-            ctx.fillStyle = `rgba(255, 160, 80, ${0.3 + srand() * 0.4})`;
-          } else {
-            ctx.fillStyle = `rgba(180, 220, 255, ${0.2 + srand() * 0.3})`;
-          }
-          ctx.fillRect(wx, wy, w * 0.008, h * 0.02);
-        }
-      }
-    }
+    paintWindows(ctx, srand, { x: bx, y: by, w: bw, h: bh }, w, h);
   }
 
   // Soft bokeh circles in warm hues (with occasional blue and magenta accents).
-  for (let i = 0; i < 80; i += 1) {
-    const bkx = srand() * w;
-    const bky = h * 0.1 + srand() * h * 0.85;
-    const bkr = w * 0.02 + srand() * w * 0.15;
-    const rndC = srand();
-    let hue: number;
-    let sat: number;
-    let lit: number;
-    if (rndC < 0.45) {
-      hue = 25 + srand() * 20;
-      sat = 80 + srand() * 20;
-      lit = 55 + srand() * 35;
-    } else if (rndC < 0.7) {
-      hue = 10 + srand() * 15;
-      sat = 85 + srand() * 15;
-      lit = 50 + srand() * 30;
-    } else if (rndC < 0.85) {
-      hue = 40 + srand() * 15;
-      sat = 75 + srand() * 25;
-      lit = 60 + srand() * 30;
-    } else if (rndC < 0.93) {
-      hue = 200 + srand() * 30;
-      sat = 60 + srand() * 30;
-      lit = 50 + srand() * 30;
-    } else {
-      hue = 330 + srand() * 25;
-      sat = 65 + srand() * 25;
-      lit = 55 + srand() * 25;
-    }
-    const alpha = 0.08 + srand() * 0.25;
-    const g = ctx.createRadialGradient(bkx, bky, 0, bkx, bky, bkr);
-    g.addColorStop(0, `hsla(${hue},${sat}%,${lit}%,${alpha * 1.3})`);
-    g.addColorStop(0.3, `hsla(${hue},${sat}%,${lit}%,${alpha * 0.6})`);
-    g.addColorStop(0.6, `hsla(${hue},${sat}%,${lit}%,${alpha * 0.15})`);
-    g.addColorStop(1, `hsla(${hue},${sat}%,${lit}%,0)`);
-    ctx.fillStyle = g;
-    ctx.beginPath();
-    ctx.arc(bkx, bky, bkr, 0, Math.PI * 2);
-    ctx.fill();
-  }
+  for (let i = 0; i < 80; i += 1) paintBokeh(ctx, srand, w, h);
 
   // Bright point lights: street lamps and signs.
   for (let p = 0; p < 25; p += 1) {
@@ -768,8 +791,7 @@ export default defineEffect({
 
     const deltaR = (): number => options.maxR - options.minR;
     // Spawn rates were tuned on a 1024×768 window; this keeps drop density constant per area.
-    const areaMultiplier = (): number =>
-      Math.sqrt((rdWidth * rdHeight) / rdScale / (1024 * 768));
+    const areaMultiplier = (): number => Math.sqrt((rdWidth * rdHeight) / rdScale / (1024 * 768));
 
     const createDrop = (opts: Partial<Drop>): Drop | null => {
       if (drops.length >= options.maxDrops * areaMultiplier()) return null;
@@ -847,7 +869,10 @@ export default defineEffect({
       const rainAmount = options.rainAmount;
       const limit = options.rainLimit * timeScale * areaMultiplier() * rainAmount;
       let count = 0;
-      while (chance(options.rainChance * timeScale * areaMultiplier() * rainAmount) && count < limit) {
+      while (
+        chance(options.rainChance * timeScale * areaMultiplier() * rainAmount) &&
+        count < limit
+      ) {
         count += 1;
         // Cubing the random value biases spawns towards small drops; big drops are rare events.
         const r = random(options.minR, options.maxR, (n) => Math.pow(n, 3));
@@ -881,13 +906,13 @@ export default defineEffect({
       // Clustering is what makes it read as condensation rather than uniform noise.
       while (toSpawn > 0) {
         if (chance(0.8) && toSpawn >= 4) {
-          const clusterSize = Math.min(toSpawn, 4 + Math.floor(Math.random() * 5));
+          const clusterSize = Math.min(toSpawn, 4 + Math.floor(randomUnit() * 5));
           const cx = random(0, w);
           const cy = random(0, h);
-          const clusterSpread = 4 + Math.random() * 8;
+          const clusterSpread = 4 + randomUnit() * 8;
           for (let ci = 0; ci < clusterSize; ci += 1) {
-            const angle = Math.random() * Math.PI * 2;
-            const dist = Math.random() * clusterSpread;
+            const angle = randomUnit() * Math.PI * 2;
+            const dist = randomUnit() * clusterSpread;
             drawDroplet(cx + Math.cos(angle) * dist, cy + Math.sin(angle) * dist, dropletR());
           }
           toSpawn -= clusterSize;
@@ -897,6 +922,137 @@ export default defineEffect({
         }
       }
       rdCtx.drawImage(dropletsCanvas, 0, 0, rdWidth, rdHeight);
+    };
+
+    /**
+     * Random momentum bursts and evaporation for one drop. Returns `false` once the drop has
+     * shrunk away, having marked it killed.
+     */
+    const ageDrop = (drop: Drop, timeScale: number): boolean => {
+      // Occasional random momentum bursts: a stuck drop suddenly finding its way down.
+      if (
+        chance(
+          (drop.r - options.minR * options.dropFallMultiplier) *
+            (0.1 / Math.max(1e-6, deltaR())) *
+            timeScale,
+        )
+      ) {
+        drop.momentum += random(0, (drop.r / options.maxR) * 4);
+      }
+      // Small stationary drops evaporate.
+      if (options.autoShrink && drop.r <= options.minR && chance(0.05 * timeScale)) {
+        drop.shrink += 0.01;
+      }
+      drop.r -= drop.shrink * timeScale;
+      if (drop.r > 0) return true;
+      drop.killed = true;
+      return false;
+    };
+
+    /** A moving drop periodically sheds a small trailing drop and loses a little mass to it. */
+    const shedTrail = (drop: Drop, timeScale: number, newDrops: Drop[]): void => {
+      drop.lastSpawn += drop.momentum * timeScale * options.trailRate;
+      if (drop.lastSpawn <= drop.nextSpawn) return;
+      const trail = createDrop({
+        x: drop.x + random(-drop.r, drop.r) * 0.1,
+        y: drop.y - drop.r * 0.01,
+        r: drop.r * random(options.trailScaleMin, options.trailScaleMax),
+        spreadY: drop.momentum * 0.1,
+        parent: drop,
+      });
+      if (trail === null) return;
+      newDrops.push(trail);
+      drop.r *= Math.pow(0.97, timeScale);
+      drop.lastSpawn = 0;
+      drop.nextSpawn =
+        random(options.minR, options.maxR) -
+        drop.momentum * 2 * options.trailRate +
+        (options.maxR - drop.r);
+    };
+
+    /** Whether `other` is a candidate for `drop` to absorb: smaller, unrelated and still alive. */
+    const canAbsorb = (drop: Drop, other: Drop | undefined): other is Drop =>
+      other !== undefined &&
+      drop !== other &&
+      drop.r > other.r &&
+      drop.parent !== other &&
+      other.parent !== drop &&
+      !other.killed;
+
+    /**
+     * Merges by area (the smaller drop only contributes 80% — some water is lost to the glass) and
+     * gives the survivor a burst of speed. `dx` is how far `other` sits to the right of `drop`.
+     */
+    const merge = (drop: Drop, other: Drop, dx: number): void => {
+      const a1 = Math.PI * drop.r * drop.r;
+      const a2 = Math.PI * other.r * other.r;
+      const targetR = Math.min(options.maxR, Math.sqrt((a1 + a2 * 0.8) / Math.PI));
+      drop.r = targetR;
+      drop.momentumX += dx * 0.1;
+      drop.spreadX = 0;
+      drop.spreadY = 0;
+      other.killed = true;
+      drop.momentum = Math.max(
+        other.momentum,
+        Math.min(
+          40,
+          drop.momentum + targetR * options.collisionBoostMultiplier + options.collisionBoost,
+        ),
+      );
+    };
+
+    /** Merges `other` into `drop` if they touch. */
+    const tryMerge = (drop: Drop, other: Drop, timeScale: number): void => {
+      const dx = other.x - drop.x;
+      const dy = other.y - drop.y;
+      const dist = Math.hypot(dx, dy);
+      const reach =
+        (drop.r + other.r) *
+        (options.collisionRadius + drop.momentum * options.collisionRadiusIncrease * timeScale);
+      if (dist < reach) merge(drop, other, dx);
+    };
+
+    /** Checks `drop`, at sorted index `i`, against the next 70 drops for merges. */
+    const collide = (drop: Drop, i: number, timeScale: number): void => {
+      const end = Math.min(i + 70, drops.length);
+      for (let j = i + 1; j < end; j += 1) {
+        const other = drops[j];
+        if (canAbsorb(drop, other)) tryMerge(drop, other, timeScale);
+      }
+    };
+
+    /** One drop's whole step: ageing, trail, movement, collisions, friction and drawing. */
+    const updateDrop = (drop: Drop, i: number, timeScale: number, newDrops: Drop[]): void => {
+      if (!ageDrop(drop, timeScale)) return;
+
+      shedTrail(drop, timeScale, newDrops);
+
+      // The spread of a fresh (or just-merged) drop settles quickly.
+      drop.spreadX *= Math.pow(0.4, timeScale);
+      drop.spreadY *= Math.pow(0.7, timeScale);
+
+      const moved = drop.momentum > 0;
+      if (moved && !drop.killed) {
+        drop.y += drop.momentum * options.globalTimeScale;
+        drop.x += drop.momentumX * options.globalTimeScale;
+        if (drop.y > rdHeight / rdScale + drop.r) drop.killed = true;
+      }
+
+      const checkCollision = (moved || drop.isNew) && !drop.killed;
+      drop.isNew = false;
+      if (checkCollision) collide(drop, i, timeScale);
+
+      // Friction: momentum decays, faster for small drops, and sideways drift dies quickly.
+      drop.momentum -= Math.max(1, options.minR * 0.5 - drop.momentum) * 0.1 * timeScale;
+      if (drop.momentum < 0) drop.momentum = 0;
+      drop.momentumX *= Math.pow(0.7, timeScale);
+
+      if (drop.killed) return;
+      newDrops.push(drop);
+      if (moved && options.dropletsRate > 0) {
+        clearDroplets(drop.x, drop.y, drop.r * options.dropletsCleaningRadiusMultiplier);
+      }
+      drawDrop(rdCtx, drop.x, drop.y, drop.r, drop.spreadX, drop.spreadY);
     };
 
     const updateDrops = (timeScale: number): void => {
@@ -909,119 +1065,7 @@ export default defineEffect({
 
       for (let i = 0; i < drops.length; i += 1) {
         const drop = drops[i];
-        if (!drop || drop.killed) continue;
-
-        // Occasional random momentum bursts: a stuck drop suddenly finding its way down.
-        if (
-          chance(
-            (drop.r - options.minR * options.dropFallMultiplier) *
-              (0.1 / Math.max(1e-6, deltaR())) *
-              timeScale,
-          )
-        ) {
-          drop.momentum += random(0, (drop.r / options.maxR) * 4);
-        }
-        // Small stationary drops evaporate.
-        if (options.autoShrink && drop.r <= options.minR && chance(0.05 * timeScale)) {
-          drop.shrink += 0.01;
-        }
-        drop.r -= drop.shrink * timeScale;
-        if (drop.r <= 0) {
-          drop.killed = true;
-          continue;
-        }
-
-        // A moving drop periodically sheds a small trailing drop and loses a little mass to it.
-        drop.lastSpawn += drop.momentum * timeScale * options.trailRate;
-        if (drop.lastSpawn > drop.nextSpawn) {
-          const trail = createDrop({
-            x: drop.x + random(-drop.r, drop.r) * 0.1,
-            y: drop.y - drop.r * 0.01,
-            r: drop.r * random(options.trailScaleMin, options.trailScaleMax),
-            spreadY: drop.momentum * 0.1,
-            parent: drop,
-          });
-          if (trail !== null) {
-            newDrops.push(trail);
-            drop.r *= Math.pow(0.97, timeScale);
-            drop.lastSpawn = 0;
-            drop.nextSpawn =
-              random(options.minR, options.maxR) -
-              drop.momentum * 2 * options.trailRate +
-              (options.maxR - drop.r);
-          }
-        }
-
-        // The spread of a fresh (or just-merged) drop settles quickly.
-        drop.spreadX *= Math.pow(0.4, timeScale);
-        drop.spreadY *= Math.pow(0.7, timeScale);
-
-        const moved = drop.momentum > 0;
-        if (moved && !drop.killed) {
-          drop.y += drop.momentum * options.globalTimeScale;
-          drop.x += drop.momentumX * options.globalTimeScale;
-          if (drop.y > rdHeight / rdScale + drop.r) drop.killed = true;
-        }
-
-        const checkCollision = (moved || drop.isNew) && !drop.killed;
-        drop.isNew = false;
-
-        if (checkCollision) {
-          const end = Math.min(i + 70, drops.length);
-          for (let j = i + 1; j < end; j += 1) {
-            const other = drops[j];
-            if (
-              !other ||
-              drop === other ||
-              drop.r <= other.r ||
-              drop.parent === other ||
-              other.parent === drop ||
-              other.killed
-            ) {
-              continue;
-            }
-            const dx = other.x - drop.x;
-            const dy = other.y - drop.y;
-            const dist = Math.sqrt(dx * dx + dy * dy);
-            if (
-              dist <
-              (drop.r + other.r) *
-                (options.collisionRadius +
-                  drop.momentum * options.collisionRadiusIncrease * timeScale)
-            ) {
-              // Merge by area (the smaller drop only contributes 80% — some water is lost to the
-              // glass) and give the survivor a burst of speed.
-              const a1 = Math.PI * drop.r * drop.r;
-              const a2 = Math.PI * other.r * other.r;
-              const targetR = Math.min(options.maxR, Math.sqrt((a1 + a2 * 0.8) / Math.PI));
-              drop.r = targetR;
-              drop.momentumX += dx * 0.1;
-              drop.spreadX = 0;
-              drop.spreadY = 0;
-              other.killed = true;
-              drop.momentum = Math.max(
-                other.momentum,
-                Math.min(
-                  40,
-                  drop.momentum + targetR * options.collisionBoostMultiplier + options.collisionBoost,
-                ),
-              );
-            }
-          }
-        }
-
-        // Friction: momentum decays, faster for small drops, and sideways drift dies quickly.
-        drop.momentum -= Math.max(1, options.minR * 0.5 - drop.momentum) * 0.1 * timeScale;
-        if (drop.momentum < 0) drop.momentum = 0;
-        drop.momentumX *= Math.pow(0.7, timeScale);
-
-        if (!drop.killed) {
-          newDrops.push(drop);
-          if (moved && options.dropletsRate > 0) {
-            clearDroplets(drop.x, drop.y, drop.r * options.dropletsCleaningRadiusMultiplier);
-          }
-          drawDrop(rdCtx, drop.x, drop.y, drop.r, drop.spreadX, drop.spreadY);
-        }
+        if (drop && !drop.killed) updateDrop(drop, i, timeScale, newDrops);
       }
 
       drops = newDrops;
@@ -1127,13 +1171,13 @@ export default defineEffect({
 
       // Satellite drops flung out around the impact.
       for (let i = 0; i < 8; i += 1) {
-        const angle = Math.random() * Math.PI * 2;
-        const dist = 10 + Math.random() * 30;
+        const angle = randomUnit() * Math.PI * 2;
+        const dist = 10 + randomUnit() * 30;
         const sat = createDrop({
           x: x + Math.cos(angle) * dist,
           y: y + Math.sin(angle) * dist,
           r: random(options.minR * 0.5, options.minR * 1.2),
-          momentum: 0.5 + Math.random() * 1.5,
+          momentum: 0.5 + randomUnit() * 1.5,
           spreadX: 1.0,
           spreadY: 1.0,
         });
@@ -1141,8 +1185,8 @@ export default defineEffect({
       }
       // A dusting of mist in the splash area.
       for (let j = 0; j < 20; j += 1) {
-        const sa = Math.random() * Math.PI * 2;
-        const sd = 5 + Math.random() * 25;
+        const sa = randomUnit() * Math.PI * 2;
+        const sd = 5 + randomUnit() * 25;
         drawDroplet(
           x + Math.cos(sa) * sd,
           y + Math.sin(sa) * sd,
@@ -1161,7 +1205,7 @@ export default defineEffect({
         if (!d) continue;
         const dx = d.x - x;
         const dy = d.y - y;
-        const dist = Math.sqrt(dx * dx + dy * dy);
+        const dist = Math.hypot(dx, dy);
         if (dist < killR) {
           drops.splice(i, 1);
         } else if (dist < pushR) {

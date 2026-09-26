@@ -48,6 +48,7 @@ import type { ChatMessage, ChatPart, ChatWsFrame, TwitchConnectionStatus } from 
 import { publishDebug, unpublishDebug } from "./debug";
 import { createSharedResource, type SharedResource } from "./lease";
 import type { Scope } from "./scope";
+import { random } from "./random";
 
 /** How many messages the ring keeps. Matches the server's snapshot size, so a fresh connection
  * and a long-lived one agree about how much history `recent()` can return. */
@@ -177,16 +178,8 @@ function emojiClusterAt(
 ): { cluster: string; end: number } | null {
   const first = chars[start] ?? "";
   const firstCodePoint = first.codePointAt(0) ?? -1;
-  let end = start + 1;
 
-  if ("0123456789#*".includes(first)) {
-    let maybeEnd = end;
-    if (maybeEnd < chars.length && chars[maybeEnd]?.codePointAt(0) === 0xfe0f) maybeEnd += 1;
-    if (maybeEnd < chars.length && chars[maybeEnd]?.codePointAt(0) === 0x20e3) {
-      return { cluster: chars.slice(start, maybeEnd + 1).join(""), end: maybeEnd + 1 };
-    }
-    return null;
-  }
+  if ("0123456789#*".includes(first)) return keycapClusterAt(chars, start);
 
   if (!isEmojiBase(firstCodePoint)) return null;
 
@@ -194,24 +187,41 @@ function emojiClusterAt(
   // U+1F1FA U+1F1F8 and nothing else. Pair them here, before the modifier loop, which would
   // otherwise stop after the first indicator and split the flag into two letter tiles.
   if (isRegionalIndicator(firstCodePoint)) {
+    let end = start + 1;
     const next = chars[end]?.codePointAt(0) ?? -1;
     if (isRegionalIndicator(next)) end += 1;
     return { cluster: chars.slice(start, end).join(""), end };
   }
 
+  const end = emojiSequenceEnd(chars, start + 1);
+  return { cluster: chars.slice(start, end).join(""), end };
+}
+
+/** A keycap cluster starting at the digit, `#` or `*` at `start` — the character, an optional
+ * U+FE0F, then U+20E3 — or `null` when the combining keycap mark is missing. */
+function keycapClusterAt(
+  chars: readonly string[],
+  start: number,
+): { cluster: string; end: number } | null {
+  let maybeEnd = start + 1;
+  if (maybeEnd < chars.length && chars[maybeEnd]?.codePointAt(0) === 0xfe0f) maybeEnd += 1;
+  if (maybeEnd < chars.length && chars[maybeEnd]?.codePointAt(0) === 0x20e3) {
+    return { cluster: chars.slice(start, maybeEnd + 1).join(""), end: maybeEnd + 1 };
+  }
+  return null;
+}
+
+/** Where an emoji cluster whose base ends just before `from` stops: extends over modifiers, and
+ * over another base character whenever the previous one was a zero-width joiner. */
+function emojiSequenceEnd(chars: readonly string[], from: number): number {
+  let end = from;
   while (end < chars.length) {
     const codePoint = chars[end]?.codePointAt(0) ?? -1;
-    if (isEmojiModifier(codePoint)) {
-      end += 1;
-      continue;
-    }
-    if (chars[end - 1]?.codePointAt(0) === 0x200d && isEmojiBase(codePoint)) {
-      end += 1;
-      continue;
-    }
-    break;
+    const joined = chars[end - 1]?.codePointAt(0) === 0x200d && isEmojiBase(codePoint);
+    if (!isEmojiModifier(codePoint) && !joined) break;
+    end += 1;
   }
-  return { cluster: chars.slice(start, end).join(""), end };
+  return end;
 }
 
 /** The Twemoji image URL for one emoji cluster: the code points in hex, joined with dashes.
@@ -232,8 +242,8 @@ function twemojiUrl(cluster: string): string {
  * so "a🎉b" becomes three parts, not "a", image, "", "b". */
 function appendTextPart(parts: ChatPart[], text: string): void {
   if (text === "") return;
-  const last = parts[parts.length - 1];
-  if (last !== undefined && last.type === "text") {
+  const last = parts.at(-1);
+  if (last?.type === "text") {
     last.text += text;
     return;
   }
@@ -280,34 +290,39 @@ function splitTextEmojis(text: string): ChatPart[] {
  * object is returned unchanged, which keeps the common no-emoji message allocation-free.
  */
 function withTwemoji(message: ChatMessage): ChatMessage {
-  const source: ChatPart[] =
-    message.parts.length > 0
-      ? message.parts
-      : message.text !== ""
-        ? [{ type: "text", text: message.text }]
-        : [];
+  let source: ChatPart[];
+  if (message.parts.length > 0) {
+    source = message.parts;
+  } else if (message.text !== "") {
+    source = [{ type: "text", text: message.text }];
+  } else {
+    source = [];
+  }
 
   const parts: ChatPart[] = [];
   let changed = message.parts.length === 0 && source.length > 0;
   for (const part of source) {
-    if (part.type !== "text") {
-      parts.push(part);
-      continue;
-    }
-    const split = splitTextEmojis(part.text);
-    if (split.length === 1 && split[0]?.type === "text") {
-      appendTextPart(parts, part.text);
-      continue;
-    }
-    changed = true;
-    for (const piece of split) {
-      if (piece.type === "text") appendTextPart(parts, piece.text);
-      else parts.push(piece);
-    }
+    if (part.type === "text") changed = appendSplitText(parts, part.text) || changed;
+    else parts.push(part);
   }
 
   if (!changed) return message;
   return { ...message, parts };
+}
+
+/** Appends one text run to `parts` with its emoji split out as image parts. Returns whether any
+ * emoji was found — `false` means the run went in as plain text, exactly as it came. */
+function appendSplitText(parts: ChatPart[], text: string): boolean {
+  const split = splitTextEmojis(text);
+  if (split.length === 1 && split[0]?.type === "text") {
+    appendTextPart(parts, text);
+    return false;
+  }
+  for (const piece of split) {
+    if (piece.type === "text") appendTextPart(parts, piece.text);
+    else parts.push(piece);
+  }
+  return true;
 }
 
 /* ------------------------------------------------------------------ */
@@ -500,14 +515,10 @@ function createFeed(): ChatFeed {
     if (ws === null) return;
     const now = performance.now();
     if (
-      ws.readyState === WebSocket.OPEN &&
-      lastFrameAt >= 0 &&
-      now - lastFrameAt > STALE_AFTER_MS
-    ) {
-      ws.close();
-    } else if (
-      ws.readyState === WebSocket.CONNECTING &&
-      now - connectStartedAt > CONNECT_TIMEOUT_MS
+      (ws.readyState === WebSocket.OPEN &&
+        lastFrameAt >= 0 &&
+        now - lastFrameAt > STALE_AFTER_MS) ||
+      (ws.readyState === WebSocket.CONNECTING && now - connectStartedAt > CONNECT_TIMEOUT_MS)
     ) {
       ws.close();
     }
@@ -523,8 +534,7 @@ function createFeed(): ChatFeed {
   let simTimer: ReturnType<typeof setTimeout> | null = null;
   const scheduleSimulated = (): void => {
     if (closed) return;
-    const gap =
-      SIMULATED_MIN_GAP_MS + Math.random() * (SIMULATED_MAX_GAP_MS - SIMULATED_MIN_GAP_MS);
+    const gap = SIMULATED_MIN_GAP_MS + random() * (SIMULATED_MAX_GAP_MS - SIMULATED_MIN_GAP_MS);
     simTimer = setTimeout(() => {
       if (closed) return;
       if (!fresh()) {
@@ -533,7 +543,7 @@ function createFeed(): ChatFeed {
         // Rotate through the cast in order (stable identity), pick the line at random (variety).
         const user = SIMULATED_USERS[simSeq % SIMULATED_USERS.length] ?? SIMULATED_USERS[0];
         const text =
-          SIMULATED_LINES[Math.floor(Math.random() * SIMULATED_LINES.length)] ?? SIMULATED_LINES[0];
+          SIMULATED_LINES[Math.floor(random() * SIMULATED_LINES.length)] ?? SIMULATED_LINES[0];
         push({
           id: `sim-${simSeq}`,
           at: Date.now(),

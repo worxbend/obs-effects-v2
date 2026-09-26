@@ -1,7 +1,7 @@
 import * as PIXI from "pixi.js";
 
 import { bool, colorHex, num } from "../paramUtils";
-import { createPixiStage, defineEffect, onFrame } from "../sdk";
+import { createPixiStage, defineEffect, onFrame, random } from "../sdk";
 
 /**
  * Glitch Overlay
@@ -45,7 +45,7 @@ const PALETTE = {
 } as const;
 
 function rand(min: number, max: number): number {
-  return min + Math.random() * (max - min);
+  return min + random() * (max - min);
 }
 
 function randInt(min: number, max: number): number {
@@ -53,7 +53,7 @@ function randInt(min: number, max: number): number {
 }
 
 function pick<T>(items: readonly T[], fallback: T): T {
-  return items[Math.floor(Math.random() * items.length)] ?? fallback;
+  return items[Math.floor(random() * items.length)] ?? fallback;
 }
 
 const glitchOverlay = defineEffect({
@@ -267,7 +267,7 @@ const glitchOverlay = defineEffect({
 
       // The head-switch artefact: a faint bright stripe near the very bottom, which on a real tape
       // is where the drum hands over. It appears about two times in five.
-      if (Math.random() < 0.4) {
+      if (random() < 0.4) {
         bandLayer
           .rect(0, h * rand(0.86, 0.98), w, rand(1, 3))
           .fill({ color: PALETTE.white, alpha: rand(0.15, 0.5) });
@@ -325,13 +325,7 @@ const glitchOverlay = defineEffect({
       }
     };
 
-    onFrame(scope, ctx.fpsCap, ({ dt }) => {
-      time += dt;
-      const w = stage.width;
-      const h = stage.height;
-      const s = intensity;
-
-      // ── Displaced bands ─────────────────────────────────────────────────
+    const stepBands = (dt: number, s: number): void => {
       bandTimer -= dt * frequency;
       if (!bandActive && bandTimer <= 0 && s > 0) {
         bandActive = true;
@@ -349,8 +343,9 @@ const glitchOverlay = defineEffect({
           drawBands(bandStrength);
         }
       }
+    };
 
-      // ── RGB separation ──────────────────────────────────────────────────
+    const stepRgbSplit = (dt: number, s: number): void => {
       rgbTimer -= dt * frequency;
       if (!rgbActive && rgbTimer <= 0 && s > 0) {
         rgbActive = true;
@@ -366,8 +361,9 @@ const glitchOverlay = defineEffect({
           drawRgbSplit(rgbStrength);
         }
       }
+    };
 
-      // ── Noise ───────────────────────────────────────────────────────────
+    const stepNoise = (dt: number, s: number): void => {
       noiseTimer -= dt * frequency;
       if (!noiseActive && noiseTimer <= 0 && s > 0) {
         noiseActive = true;
@@ -382,44 +378,65 @@ const glitchOverlay = defineEffect({
           drawNoise(s);
         }
       }
+    };
+
+    const stepTapeHead = (dt: number, h: number): void => {
+      if (!showTapeHead) return;
+      headTimer -= dt * frequency;
+      if (!headActive && headTimer <= 0) {
+        headActive = true;
+        headY = 0;
+        headTimer = rand(5, 14);
+      }
+      if (!headActive) return;
+      headY += dt * h * 1.3;
+      if (headY > h) {
+        headActive = false;
+        bandLayer.clear();
+      } else {
+        drawTapeHead(headY);
+      }
+    };
+
+    const drawFlicker = (w: number, h: number): void => {
+      flickerLayer.clear();
+      if (!showFlicker) return;
+      // A slow swell and a fast shimmer summed, plus a rare hard spike. Two frequencies rather
+      // than one is what keeps it from reading as a sine wave.
+      const slow = Math.sin(time * 4.7) * 0.5 + 0.5;
+      const fast = Math.sin(time * 53.1) * 0.5 + 0.5;
+      const spike = random() < 0.015 ? rand(0.08, 0.28) : 0;
+      const a = slow * 0.025 + fast * 0.005 + spike;
+      if (a > 0.003) flickerLayer.rect(0, 0, w, h).fill({ color: "#ffffff", alpha: a });
+
+      // A stray electron-beam line, roughly once every fourteen frames.
+      if (random() < 0.07) {
+        flickerLayer
+          .rect(0, rand(0, h), w, 1)
+          .fill({ color: PALETTE.white, alpha: rand(0.04, 0.18) });
+      }
+    };
+
+    onFrame(scope, ctx.fpsCap, ({ dt }) => {
+      time += dt;
+      const w = stage.width;
+      const h = stage.height;
+      const s = intensity;
+
+      // ── Displaced bands ─────────────────────────────────────────────────
+      stepBands(dt, s);
+
+      // ── RGB separation ──────────────────────────────────────────────────
+      stepRgbSplit(dt, s);
+
+      // ── Noise ───────────────────────────────────────────────────────────
+      stepNoise(dt, s);
 
       // ── Tape head sweep ─────────────────────────────────────────────────
-      if (showTapeHead) {
-        headTimer -= dt * frequency;
-        if (!headActive && headTimer <= 0) {
-          headActive = true;
-          headY = 0;
-          headTimer = rand(5, 14);
-        }
-        if (headActive) {
-          headY += dt * h * 1.3;
-          if (headY > h) {
-            headActive = false;
-            bandLayer.clear();
-          } else {
-            drawTapeHead(headY);
-          }
-        }
-      }
+      stepTapeHead(dt, h);
 
       // ── Flicker ─────────────────────────────────────────────────────────
-      flickerLayer.clear();
-      if (showFlicker) {
-        // A slow swell and a fast shimmer summed, plus a rare hard spike. Two frequencies rather
-        // than one is what keeps it from reading as a sine wave.
-        const slow = Math.sin(time * 4.7) * 0.5 + 0.5;
-        const fast = Math.sin(time * 53.1) * 0.5 + 0.5;
-        const spike = Math.random() < 0.015 ? rand(0.08, 0.28) : 0;
-        const a = slow * 0.025 + fast * 0.005 + spike;
-        if (a > 0.003) flickerLayer.rect(0, 0, w, h).fill({ color: "#ffffff", alpha: a });
-
-        // A stray electron-beam line, roughly once every fourteen frames.
-        if (Math.random() < 0.07) {
-          flickerLayer
-            .rect(0, rand(0, h), w, 1)
-            .fill({ color: PALETTE.white, alpha: rand(0.04, 0.18) });
-        }
-      }
+      drawFlicker(w, h);
 
       stage.render();
     });

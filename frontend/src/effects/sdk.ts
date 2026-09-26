@@ -64,3 +64,4 @@ export * from "./sdk/palette";
 export * from "./sdk/glsl/index";
 export * from "./sdk/defineEffect";
 export * from "./sdk/debug";
+export * from "./sdk/random";

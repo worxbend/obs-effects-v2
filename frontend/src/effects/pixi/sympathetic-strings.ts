@@ -682,12 +682,10 @@ const sympatheticStrings = defineEffect({
       g.stroke({ color, width, alpha });
     };
 
-    onFrame(scope, ctx.fpsCap, ({ dt, now }) => {
-      // `sample` refreshes the shared analysis at most once per tick however many effects ask for
-      // it, which is why it takes the frame's `now` instead of reading the clock itself.
-      bus.sample(now);
-      envelopes.update(dt);
-
+    /**
+     * Beat sustain, the fixed-step physics and the brightness decay for one frame of `dt` seconds.
+     */
+    const advance = (dt: number): void => {
       if (beatSustain && envelopes.beat) sustainLeft = BEAT_SUSTAIN_S;
       sustainLeft = Math.max(0, sustainLeft - dt);
       const damperOpen = sustainLeft > 0;
@@ -713,7 +711,27 @@ const sympatheticStrings = defineEffect({
       // back to ivory, and it is decayed per second so a capped route fades at the same rate.
       const ringKeep = Math.exp((-dt * RING_SHAPE) / ringSeconds);
       for (const state of strings) state.ring *= ringKeep;
+    };
 
+    /**
+     * This frame's geometry and hum, filled in place by `layOut` so the frame loop allocates
+     * nothing. Every field is overwritten each frame.
+     */
+    const frame = {
+      inset: 0,
+      span: 0,
+      gap: 0,
+      firstCross: 0,
+      crossLength: 0,
+      bridgeThick: 0,
+      bridgeLong: 0,
+      swingCeiling: 0,
+      humAmplitude: 0,
+      grainAmplitude: 0,
+      humAudible: false,
+    };
+
+    const layOut = (dt: number): void => {
       /*
        * Geometry, recomputed every frame from the live canvas size. Nothing here is cached, so the
        * effect needs no resize hook: a stage resize simply produces different numbers next frame.
@@ -724,15 +742,18 @@ const sympatheticStrings = defineEffect({
       const crossLength = horizontal ? height : width;
       // Never let the two bridges meet, however large the inset is on a small source.
       const inset = Math.min(margin, alongLength * 0.45);
-      const span = Math.max(1, alongLength - inset * 2);
       const band = crossLength * spread;
       const gap = strings.length > 1 ? band / (strings.length - 1) : crossLength * 0.1;
-      const firstCross = crossLength / 2 - band / 2;
+      frame.inset = inset;
+      frame.span = Math.max(1, alongLength - inset * 2);
+      frame.gap = gap;
+      frame.firstCross = crossLength / 2 - band / 2;
+      frame.crossLength = crossLength;
 
       // The bridge blocks are sized from the two things the operator already controls — the gap
       // between strings and the line width — so they always look proportionate to the harp.
-      const bridgeThick = Math.max(3, Math.min(18, gap * 0.42));
-      const bridgeLong = Math.max(3, lineWidth * 5);
+      frame.bridgeThick = Math.max(3, Math.min(18, gap * 0.42));
+      frame.bridgeLong = Math.max(3, lineWidth * 5);
 
       /*
        * The swing ceiling — see MAX_SWING_STACK and `limitSwing`. It is the smaller of two limits:
@@ -740,7 +761,7 @@ const sympatheticStrings = defineEffect({
        * sense of scale), and half the short side of the frame (so no combination of a 60-pixel
        * pluck and a 6× event boost can drive a string clean out of a small browser source).
        */
-      const swingCeiling = Math.min(
+      frame.swingCeiling = Math.min(
         pluckStrength * eventBoost * MAX_SWING_STACK,
         crossLength * 0.5,
       );
@@ -753,86 +774,118 @@ const sympatheticStrings = defineEffect({
        * bank of audio waveforms, which is the one thing this effect is not.
        */
       const humRoom = Math.min(gap * 0.07, pluckStrength * 0.5);
-      const humAmplitude = resonance * humRoom * envelopes.slow;
-      const grainAmplitude = resonance * humRoom * 0.3 * envelopes.fast;
-      const speed = safeSpeed();
+      frame.humAmplitude = resonance * humRoom * envelopes.slow;
+      frame.grainAmplitude = resonance * humRoom * 0.3 * envelopes.fast;
 
       // Silence — Resonance at 0, or nobody talking — skips the two sines per drawn point entirely.
-      const humAudible = humAmplitude > HUM_SILENCE_PX || grainAmplitude > HUM_SILENCE_PX;
+      frame.humAudible =
+        frame.humAmplitude > HUM_SILENCE_PX || frame.grainAmplitude > HUM_SILENCE_PX;
 
       // See `humClock`: the phase integrates the speed instead of being recomputed from `elapsed`,
       // and wraps at 2 because every term below has an integer number of half-cycles per unit.
-      humClock += dt * speed;
+      humClock += dt * safeSpeed();
       if (humClock >= 2) humClock %= 2;
+    };
+
+    /** Writes one point of the polyline into the scratch arrays, in along/cross coordinates. */
+    const putPoint = (count: number, along: number, cross: number): void => {
+      pathX[count] = horizontal ? along : cross;
+      pathY[count] = horizontal ? cross : along;
+    };
+
+    /**
+     * Samples string `s` — its displacement plus the sympathetic hum — into the scratch arrays and
+     * returns how many points were written.
+     */
+    const samplePath = (state: StringState, s: number, baseCross: number): number => {
+      const nodes = state.u.length;
+      const { inset, span, humAudible } = frame;
+      const harmonic = s + 1;
+      /*
+       * A string of unit length carrying waves at `speed` has a fundamental of `speed / 2` cycles
+       * per second, and its nth harmonic is n times that. Multiplying by 2π turns cycles per
+       * second into radians per second, which is what `sin` wants — so each string hums at its
+       * own true pitch and the bank reads as a chord rather than as a single tone.
+       */
+      const humPhase = Math.sin(Math.PI * harmonic * humClock);
+      const grainPhase = Math.sin(Math.PI * harmonic * 3 * humClock + harmonic);
+      const humNow = frame.humAmplitude * humPhase;
+      const grainNow = frame.grainAmplitude * grainPhase;
+
+      let count = 0;
+      for (let n = 0; n < nodes; n += SAMPLE_STRIDE) {
+        const index = Math.min(n, nodes - 1);
+        const t = index / (nodes - 1);
+        const hum = humAudible
+          ? Math.sin(Math.PI * harmonic * t) * humNow +
+            Math.sin(Math.PI * harmonic * 3 * t) * grainNow
+          : 0;
+        putPoint(count, inset + t * span, baseCross + at(state.u, index) + hum);
+        count += 1;
+      }
+      // Always finish exactly on the far bridge, whatever the stride left over.
+      if ((nodes - 1) % SAMPLE_STRIDE !== 0) {
+        putPoint(count, inset + span, baseCross + at(state.u, nodes - 1));
+        count += 1;
+      }
+      return count;
+    };
+
+    /**
+     * The bridges. Two small blocks per string, drawn a little more solidly than the string itself
+     * so the harp reads as terminated rather than as lines running off the edge.
+     */
+    const drawBridges = (baseCross: number, lit: number): void => {
+      const { inset, span, bridgeLong, bridgeThick } = frame;
+      const blockAlpha = Math.min(1, idleOpacity * 2.2 + lit * 0.4);
+      const blockW = horizontal ? bridgeLong : bridgeThick;
+      const blockH = horizontal ? bridgeThick : bridgeLong;
+      for (let e = 0; e < 2; e += 1) {
+        const end = e === 0 ? inset : inset + span;
+        const cx = horizontal ? end : baseCross;
+        const cy = horizontal ? baseCross : end;
+        core
+          .rect(cx - blockW / 2, cy - blockH / 2, blockW, blockH)
+          .fill({ color: restColor, alpha: blockAlpha });
+      }
+    };
+
+    const drawString = (state: StringState, s: number): void => {
+      if (state.u.length < 2) return;
+
+      // Done here, in the pass that is already walking this string's samples, rather than as a
+      // separate loop over every string.
+      limitSwing(state, frame.swingCeiling);
+
+      const baseCross =
+        strings.length > 1 ? frame.firstCross + s * frame.gap : frame.crossLength / 2;
+      const count = samplePath(state, s, baseCross);
+
+      const lit = Math.min(1, state.ring);
+      const color = mixColor(restColor, state.tint, lit);
+      const alpha = Math.min(1, idleOpacity + (1 - idleOpacity) * lit);
+
+      strokePath(bloom, count, color, lineWidth * 3, glow * (0.15 + 0.85 * lit));
+      strokePath(core, count, color, lineWidth, alpha);
+
+      drawBridges(baseCross, lit);
+    };
+
+    onFrame(scope, ctx.fpsCap, ({ dt, now }) => {
+      // `sample` refreshes the shared analysis at most once per tick however many effects ask for
+      // it, which is why it takes the frame's `now` instead of reading the clock itself.
+      bus.sample(now);
+      envelopes.update(dt);
+
+      advance(dt);
+      layOut(dt);
 
       core.clear();
       bloom.clear();
 
       for (let s = 0; s < strings.length; s += 1) {
         const state = strings[s];
-        if (state === undefined) continue;
-        const nodes = state.u.length;
-        if (nodes < 2) continue;
-
-        // Done here, in the pass that is already walking this string's samples, rather than as a
-        // separate loop over every string.
-        limitSwing(state, swingCeiling);
-
-        const baseCross = strings.length > 1 ? firstCross + s * gap : crossLength / 2;
-        const harmonic = s + 1;
-        /*
-         * A string of unit length carrying waves at `speed` has a fundamental of `speed / 2` cycles
-         * per second, and its nth harmonic is n times that. Multiplying by 2π turns cycles per
-         * second into radians per second, which is what `sin` wants — so each string hums at its
-         * own true pitch and the bank reads as a chord rather than as a single tone.
-         */
-        const humPhase = Math.sin(Math.PI * harmonic * humClock);
-        const grainPhase = Math.sin(Math.PI * harmonic * 3 * humClock + harmonic);
-        const humNow = humAmplitude * humPhase;
-        const grainNow = grainAmplitude * grainPhase;
-
-        let count = 0;
-        for (let n = 0; n < nodes; n += SAMPLE_STRIDE) {
-          const index = Math.min(n, nodes - 1);
-          const t = index / (nodes - 1);
-          const hum = humAudible
-            ? Math.sin(Math.PI * harmonic * t) * humNow +
-              Math.sin(Math.PI * harmonic * 3 * t) * grainNow
-            : 0;
-          const along = inset + t * span;
-          const cross = baseCross + at(state.u, index) + hum;
-          pathX[count] = horizontal ? along : cross;
-          pathY[count] = horizontal ? cross : along;
-          count += 1;
-        }
-        // Always finish exactly on the far bridge, whatever the stride left over.
-        if ((nodes - 1) % SAMPLE_STRIDE !== 0) {
-          const cross = baseCross + at(state.u, nodes - 1);
-          pathX[count] = horizontal ? inset + span : cross;
-          pathY[count] = horizontal ? cross : inset + span;
-          count += 1;
-        }
-
-        const lit = Math.min(1, state.ring);
-        const color = mixColor(restColor, state.tint, lit);
-        const alpha = Math.min(1, idleOpacity + (1 - idleOpacity) * lit);
-
-        strokePath(bloom, count, color, lineWidth * 3, glow * (0.15 + 0.85 * lit));
-        strokePath(core, count, color, lineWidth, alpha);
-
-        // The bridges. Two small blocks per string, drawn a little more solidly than the string
-        // itself so the harp reads as terminated rather than as lines running off the edge.
-        const blockAlpha = Math.min(1, idleOpacity * 2.2 + lit * 0.4);
-        const blockW = horizontal ? bridgeLong : bridgeThick;
-        const blockH = horizontal ? bridgeThick : bridgeLong;
-        for (let e = 0; e < 2; e += 1) {
-          const end = e === 0 ? inset : inset + span;
-          const cx = horizontal ? end : baseCross;
-          const cy = horizontal ? baseCross : end;
-          core
-            .rect(cx - blockW / 2, cy - blockH / 2, blockW, blockH)
-            .fill({ color: restColor, alpha: blockAlpha });
-        }
+        if (state !== undefined) drawString(state, s);
       }
 
       // Pixi's own ticker is switched off by `createPixiStage` so the project has exactly one

@@ -50,7 +50,11 @@ import type {
   TwitchView,
   ValidationIssue,
 } from "~/types/contract";
-import { newTwitchOauthState, rememberTwitchOauthState, twitchRedirectUri } from "~/auth/twitchOauth";
+import {
+  newTwitchOauthState,
+  rememberTwitchOauthState,
+  twitchRedirectUri,
+} from "~/auth/twitchOauth";
 import { compileSoundboard, matchRule } from "~/effects/sdk/soundboard";
 import { Banner } from "~/components/Banner";
 
@@ -222,17 +226,17 @@ function ObsAudioForm(props: { view: ObsAudioView; onSaved: () => void }): JSX.E
       </div>
 
       <div class="field">
-        <label class="field-label" for="obs-url">
-          WebSocket URL
+        <label for="obs-url">
+          <span class="field-label">WebSocket URL</span>
+          <input
+            id="obs-url"
+            type="text"
+            value={url()}
+            spellcheck={false}
+            onInput={(event) => setUrl(event.currentTarget.value)}
+            placeholder="ws://host.docker.internal:4455"
+          />
         </label>
-        <input
-          id="obs-url"
-          type="text"
-          value={url()}
-          spellcheck={false}
-          onInput={(event) => setUrl(event.currentTarget.value)}
-          placeholder="ws://host.docker.internal:4455"
-        />
         <p class="field-help">
           In OBS: <strong>Tools → WebSocket Server Settings</strong>. The port there is the one to
           use; 4455 is the default. The host is almost never <code>localhost</code>: this backend
@@ -242,21 +246,21 @@ function ObsAudioForm(props: { view: ObsAudioView; onSaved: () => void }): JSX.E
       </div>
 
       <div class="field">
-        <label class="field-label" for="obs-password">
-          Password
+        <label for="obs-password">
+          <span class="field-label">Password</span>
+          <input
+            id="obs-password"
+            type="password"
+            value={password() ?? ""}
+            autocomplete="off"
+            onInput={(event) => setPassword(event.currentTarget.value)}
+            placeholder={
+              props.view.settings.passwordSet
+                ? "A password is saved — type to replace it"
+                : "No password saved"
+            }
+          />
         </label>
-        <input
-          id="obs-password"
-          type="password"
-          value={password() ?? ""}
-          autocomplete="off"
-          onInput={(event) => setPassword(event.currentTarget.value)}
-          placeholder={
-            props.view.settings.passwordSet
-              ? "A password is saved — type to replace it"
-              : "No password saved"
-          }
-        />
         <p class="field-help">
           From the same OBS dialog, under <strong>Show Connect Info</strong>. It is stored so the
           server can present it to OBS, which means it cannot be hashed — so it is never sent back
@@ -270,30 +274,30 @@ function ObsAudioForm(props: { view: ObsAudioView; onSaved: () => void }): JSX.E
       </div>
 
       <div class="field">
-        <label class="field-label" for="obs-input">
-          Audio input
-        </label>
-        <Show
-          when={status().inputs.length > 0}
-          fallback={
-            <input
-              id="obs-input"
-              type="text"
-              value={inputName()}
-              onInput={(event) => setInputName(event.currentTarget.value)}
-              placeholder="All inputs"
-            />
-          }
-        >
-          <select
-            id="obs-input"
-            value={inputName()}
-            onChange={(event) => setInputName(event.currentTarget.value)}
+        <label for="obs-input">
+          <span class="field-label">Audio input</span>
+          <Show
+            when={status().inputs.length > 0}
+            fallback={
+              <input
+                id="obs-input"
+                type="text"
+                value={inputName()}
+                onInput={(event) => setInputName(event.currentTarget.value)}
+                placeholder="All inputs"
+              />
+            }
           >
-            <option value="">All inputs (summed)</option>
-            <For each={status().inputs}>{(name) => <option value={name}>{name}</option>}</For>
-          </select>
-        </Show>
+            <select
+              id="obs-input"
+              value={inputName()}
+              onChange={(event) => setInputName(event.currentTarget.value)}
+            >
+              <option value="">All inputs (summed)</option>
+              <For each={status().inputs}>{(name) => <option value={name}>{name}</option>}</For>
+            </select>
+          </Show>
+        </label>
         <p class="field-help">
           Which OBS audio source to follow. "All inputs" takes the loudest of everything, which is
           usually what you want. The dropdown lists the inputs OBS has actually reported since
@@ -424,9 +428,13 @@ function LevelMeterCard(): JSX.Element {
         OBS, the whole path works.
       </p>
 
-      <div class="meter" role="img" aria-label={`Audio peak ${Math.round(peak() * 100)} percent`}>
+      {/* The styled bar is decoration; the native <meter> beside it is what assistive tech reads. */}
+      <div class="meter" aria-hidden="true">
         <div class="meter-fill" style={{ width: `${Math.round(peak() * 100)}%` }} />
       </div>
+      <meter class="sr-only" min={0} max={1} value={peak()} aria-label="Audio peak">
+        {Math.round(peak() * 100)}%
+      </meter>
 
       <Show
         when={!stale()}
@@ -570,17 +578,17 @@ function TwitchForm(props: { view: TwitchView; onSaved: () => void }): JSX.Eleme
       </div>
 
       <div class="field">
-        <label class="field-label" for="twitch-channel">
-          Channel
+        <label for="twitch-channel">
+          <span class="field-label">Channel</span>
+          <input
+            id="twitch-channel"
+            type="text"
+            value={channel()}
+            spellcheck={false}
+            onInput={(event) => setChannel(event.currentTarget.value)}
+            placeholder="worxbend"
+          />
         </label>
-        <input
-          id="twitch-channel"
-          type="text"
-          value={channel()}
-          spellcheck={false}
-          onInput={(event) => setChannel(event.currentTarget.value)}
-          placeholder="worxbend"
-        />
         <p class="field-help">
           The channel whose chat the overlays should follow — the name from{" "}
           <code>twitch.tv/&lt;name&gt;</code>. A channel alone is enough: Twitch allows anonymous
@@ -589,17 +597,17 @@ function TwitchForm(props: { view: TwitchView; onSaved: () => void }): JSX.Eleme
       </div>
 
       <div class="field">
-        <label class="field-label" for="twitch-client-id">
-          Client ID
+        <label for="twitch-client-id">
+          <span class="field-label">Client ID</span>
+          <input
+            id="twitch-client-id"
+            type="text"
+            value={clientId()}
+            spellcheck={false}
+            onInput={(event) => setClientId(event.currentTarget.value)}
+            placeholder="Optional — only needed to sign the connection in"
+          />
         </label>
-        <input
-          id="twitch-client-id"
-          type="text"
-          value={clientId()}
-          spellcheck={false}
-          onInput={(event) => setClientId(event.currentTarget.value)}
-          placeholder="Optional — only needed to sign the connection in"
-        />
         <p class="field-help">
           From a Twitch application registered at <code>dev.twitch.tv/console</code>, with{" "}
           <code>{oauthRedirectUri()}</code> as an OAuth redirect URL. The client ID is not a secret
@@ -608,21 +616,21 @@ function TwitchForm(props: { view: TwitchView; onSaved: () => void }): JSX.Eleme
       </div>
 
       <div class="field">
-        <label class="field-label" for="twitch-client-secret">
-          Client secret
+        <label for="twitch-client-secret">
+          <span class="field-label">Client secret</span>
+          <input
+            id="twitch-client-secret"
+            type="password"
+            value={clientSecret() ?? ""}
+            autocomplete="off"
+            onInput={(event) => setClientSecret(event.currentTarget.value)}
+            placeholder={
+              props.view.settings.clientSecretSet
+                ? "A secret is saved — type to replace it"
+                : "No secret saved"
+            }
+          />
         </label>
-        <input
-          id="twitch-client-secret"
-          type="password"
-          value={clientSecret() ?? ""}
-          autocomplete="off"
-          onInput={(event) => setClientSecret(event.currentTarget.value)}
-          placeholder={
-            props.view.settings.clientSecretSet
-              ? "A secret is saved — type to replace it"
-              : "No secret saved"
-          }
-        />
         <p class="field-help">
           From the same Twitch application page. It is stored so the server can exchange and refresh
           OAuth tokens, which means it cannot be hashed — so it is never sent back to this page, and
@@ -874,25 +882,25 @@ function TwitchAuthPanel(props: { view: TwitchView; onChanged: () => void }): JS
 
       <form onSubmit={(event) => void submitTokens(event)}>
         <div class="field">
-          <label class="field-label" for="twitch-access-token">
-            Or paste tokens obtained elsewhere
+          <label for="twitch-access-token">
+            <span class="field-label">Or paste tokens obtained elsewhere</span>
+            <input
+              id="twitch-access-token"
+              type="password"
+              value={accessToken()}
+              autocomplete="off"
+              onInput={(event) => setAccessToken(event.currentTarget.value)}
+              placeholder="Access token"
+            />
+            <input
+              id="twitch-refresh-token"
+              type="password"
+              value={refreshToken()}
+              autocomplete="off"
+              onInput={(event) => setRefreshToken(event.currentTarget.value)}
+              placeholder="Refresh token (optional)"
+            />
           </label>
-          <input
-            id="twitch-access-token"
-            type="password"
-            value={accessToken()}
-            autocomplete="off"
-            onInput={(event) => setAccessToken(event.currentTarget.value)}
-            placeholder="Access token"
-          />
-          <input
-            id="twitch-refresh-token"
-            type="password"
-            value={refreshToken()}
-            autocomplete="off"
-            onInput={(event) => setRefreshToken(event.currentTarget.value)}
-            placeholder="Refresh token (optional)"
-          />
           <p class="field-help">
             For tokens from the Twitch CLI or a token generator. They go straight to the server and
             are stored there; without a refresh token the connection falls back to anonymous when
@@ -1144,7 +1152,10 @@ function SoundList(props: { sounds: SoundInfo[]; onChanged: () => void }): JSX.E
                  * `preload="none"` keeps the page from downloading every clip on load — the bytes
                  * only travel when the operator presses play on that row.
                  */}
-                <audio controls preload="none" src={soundAudioUrl(sound.id)} />
+                <audio controls preload="none" src={soundAudioUrl(sound.id)}>
+                  {/* Sound effects carry no speech, so the captions track is intentionally empty. */}
+                  <track kind="captions" />
+                </audio>
                 <Show when={!sound.builtin}>
                   <button
                     type="button"
@@ -1199,9 +1210,9 @@ function SoundboardCard(): JSX.Element {
         <h2>Soundboard</h2>
       </div>
       <p>
-        Rules for the Soundboard effect: when a chat message matches a rule's conditions, the
-        chosen sound plays on the overlay. Rules are checked top to bottom over enabled rules only,
-        and the first match wins — order the specific ones above the broad ones.
+        Rules for the Soundboard effect: when a chat message matches a rule's conditions, the chosen
+        sound plays on the overlay. Rules are checked top to bottom over enabled rules only, and the
+        first match wins — order the specific ones above the broad ones.
       </p>
       <Errored
         fallback={(error: unknown) => <Banner kind="error" message={describeError(error)} />}
@@ -1256,7 +1267,7 @@ const LEAF_TYPE_LABELS: Record<SoundboardLeafType, string> = {
 const LEAF_PLACEHOLDERS: Record<SoundboardLeafType, string> = {
   command: "!drum",
   contains: "hype",
-  regex: "\\bhype\\b",
+  regex: String.raw`\bhype\b`,
   emote: "(any emote)",
   emoji: "(any emoji)",
   event: "",
@@ -1581,59 +1592,58 @@ function SoundboardEditor(props: {
       <p class="field-help">
         Each rule fires when its conditions hold for a message: <em>Command</em> compares the first
         word case-insensitively ("!drum" as chat would type it), <em>Contains text</em> looks for a
-        case-insensitive substring, <em>Regex</em> is a JavaScript regular expression over the
-        whole text, <em>Has emote</em>/<em>Has emoji</em> match any (or one named) emote or emoji,
-        and groups nest with And/Or and NOT. Running overlays pick up a save within a minute.
+        case-insensitive substring, <em>Regex</em> is a JavaScript regular expression over the whole
+        text, <em>Has emote</em>/<em>Has emoji</em> match any (or one named) emote or emoji, and
+        groups nest with And/Or and NOT. Running overlays pick up a save within a minute.
       </p>
 
       <div class="field sb-test">
-        <label class="field-label" for="sb-test-text">
-          Try a message against the rules
+        <label for="sb-test-text">
+          <span class="field-label">Try a message against the rules</span>
+          <div class="sb-test-row">
+            <input
+              id="sb-test-text"
+              type="text"
+              value={testText()}
+              spellcheck={false}
+              onInput={(event) => setTestText(event.currentTarget.value)}
+              placeholder="type a test message…"
+            />
+            <select
+              value={testEvent()}
+              onChange={(event) => {
+                const raw = event.currentTarget.value;
+                setTestEvent(
+                  (SOUNDBOARD_EVENTS as string[]).includes(raw)
+                    ? (raw as SoundboardEventValue)
+                    : "chat",
+                );
+              }}
+              aria-label="Test event kind"
+            >
+              <For each={SOUNDBOARD_EVENTS}>{(kind) => <option value={kind}>{kind}</option>}</For>
+            </select>
+            <button
+              type="button"
+              class={["btn", "btn-sm", "sb-chip", { "sb-chip-on": testEmote() }]}
+              onClick={() => setTestEmote((on) => !on)}
+            >
+              has emote
+            </button>
+            <button
+              type="button"
+              class={["btn", "btn-sm", "sb-chip", { "sb-chip-on": testEmoji() }]}
+              onClick={() => setTestEmoji((on) => !on)}
+            >
+              has emoji
+            </button>
+          </div>
         </label>
-        <div class="sb-test-row">
-          <input
-            id="sb-test-text"
-            type="text"
-            value={testText()}
-            spellcheck={false}
-            onInput={(event) => setTestText(event.currentTarget.value)}
-            placeholder="type a test message…"
-          />
-          <select
-            value={testEvent()}
-            onChange={(event) => {
-              const raw = event.currentTarget.value;
-              setTestEvent(
-                (SOUNDBOARD_EVENTS as string[]).includes(raw)
-                  ? (raw as SoundboardEventValue)
-                  : "chat",
-              );
-            }}
-            aria-label="Test event kind"
-          >
-            <For each={SOUNDBOARD_EVENTS}>{(kind) => <option value={kind}>{kind}</option>}</For>
-          </select>
-          <button
-            type="button"
-            class={["btn", "btn-sm", "sb-chip", { "sb-chip-on": testEmote() }]}
-            onClick={() => setTestEmote((on) => !on)}
-          >
-            has emote
-          </button>
-          <button
-            type="button"
-            class={["btn", "btn-sm", "sb-chip", { "sb-chip-on": testEmoji() }]}
-            onClick={() => setTestEmoji((on) => !on)}
-          >
-            has emoji
-          </button>
-        </div>
         <p class="field-help">
           Evaluated with the exact matcher the overlay runs, so a "match" badge on a rule above
-          means the overlay would react — and "plays" marks the one that wins (first enabled
-          match). The chips stand in for a message carrying <em>some</em> emote or emoji;
-          conditions naming a specific one only match real messages that carry it. The test sender
-          is "TestUser".
+          means the overlay would react — and "plays" marks the one that wins (first enabled match).
+          The chips stand in for a message carrying <em>some</em> emote or emoji; conditions naming
+          a specific one only match real messages that carry it. The test sender is "TestUser".
         </p>
       </div>
 
@@ -1693,6 +1703,12 @@ function SoundboardRuleEditor(props: {
 
   const field = (suffix: string): string => `rules[${props.index}].${suffix}`;
   const rootGroup = (): SoundboardGroupCondition => asGroup(props.rule().condition);
+  const testBadge = (): string => {
+    if (props.testResult() !== true) {
+      return "no match";
+    }
+    return props.fires() ? "match · plays" : "match";
+  };
 
   return (
     <div class="field sb-rule">
@@ -1732,7 +1748,9 @@ function SoundboardRuleEditor(props: {
             aria-label="Sound"
           >
             <option value="">— pick a sound —</option>
-            <For each={props.sounds}>{(sound) => <option value={sound.name}>{sound.name}</option>}</For>
+            <For each={props.sounds}>
+              {(sound) => <option value={sound.name}>{sound.name}</option>}
+            </For>
           </select>
         </Show>
         <button
@@ -1766,7 +1784,7 @@ function SoundboardRuleEditor(props: {
         </label>
         <Show when={props.testResult() !== null}>
           <span class={["sb-badge", { "sb-badge-match": props.testResult() === true }]}>
-            {props.testResult() === true ? (props.fires() ? "match · plays" : "match") : "no match"}
+            {testBadge()}
           </span>
         </Show>
         <button
@@ -1920,7 +1938,12 @@ function SoundboardGroupEditor(props: {
       </div>
 
       <div class="btn-row sb-group-foot">
-        <button type="button" class="btn btn-sm" onClick={() => addChild(emptyLeaf())} disabled={full()}>
+        <button
+          type="button"
+          class="btn btn-sm"
+          onClick={() => addChild(emptyLeaf())}
+          disabled={full()}
+        >
           + Add condition
         </button>
         {/* Hidden (not disabled) at the depth cap: at level 5 a subgroup is not a thing that can
@@ -1957,8 +1980,10 @@ function SoundboardConditionRow(props: {
     // The typed value survives a kind switch (retyping "!drum" because the dropdown moved would
     // be hostile), except into "event", whose value must be one of the five kinds.
     const kept = props.condition().value;
-    const value =
-      type === "event" ? ((SOUNDBOARD_EVENTS as string[]).includes(kept) ? kept : "chat") : kept;
+    let value = kept;
+    if (type === "event" && !(SOUNDBOARD_EVENTS as string[]).includes(kept)) {
+      value = "chat";
+    }
     props.onChange({ type, value });
   };
 
@@ -2065,40 +2090,40 @@ function SoundUploadForm(props: { onUploaded: () => void }): JSX.Element {
   return (
     <form onSubmit={(event) => void upload(event)}>
       <div class="field">
-        <label class="field-label" for="sound-file">
-          Upload a sound
+        <label for="sound-file">
+          <span class="field-label">Upload a sound</span>
+          <input
+            id="sound-file"
+            type="file"
+            ref={(el) => {
+              fileInput = el;
+            }}
+            accept="audio/mpeg,audio/ogg,audio/wav,audio/webm,.mp3,.ogg,.wav,.webm"
+            onChange={(event) => pick(event.currentTarget.files?.[0] ?? null)}
+          />
         </label>
-        <input
-          id="sound-file"
-          type="file"
-          ref={(el) => {
-            fileInput = el;
-          }}
-          accept="audio/mpeg,audio/ogg,audio/wav,audio/webm,.mp3,.ogg,.wav,.webm"
-          onChange={(event) => pick(event.currentTarget.files?.[0] ?? null)}
-        />
         <p class="field-help">
           MP3, Ogg, WAV or WebM, up to 5 MB. Keep clips short — they play over the stream.
         </p>
       </div>
       <div class="field">
-        <label class="field-label" for="sound-name">
-          Name
+        <label for="sound-name">
+          <span class="field-label">Name</span>
+          <input
+            id="sound-name"
+            type="text"
+            value={name()}
+            spellcheck={false}
+            onInput={(event) => {
+              setNameTouched(true);
+              setName(event.currentTarget.value);
+            }}
+            placeholder="Defaults to the file name"
+          />
         </label>
-        <input
-          id="sound-name"
-          type="text"
-          value={name()}
-          spellcheck={false}
-          onInput={(event) => {
-            setNameTouched(true);
-            setName(event.currentTarget.value);
-          }}
-          placeholder="Defaults to the file name"
-        />
         <p class="field-help">
-          How effects refer to this clip. The playback URL accepts this name directly, so renaming
-          a clip means updating any effect configured to use the old name.
+          How effects refer to this clip. The playback URL accepts this name directly, so renaming a
+          clip means updating any effect configured to use the old name.
         </p>
       </div>
       <div class="btn-row">

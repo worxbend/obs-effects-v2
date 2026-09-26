@@ -135,36 +135,36 @@ export default function TwitchCallbackPage(): JSX.Element {
             >
               <Errored
                 fallback={(error: unknown) => (
-                <>
-                  <Banner kind="error" message={describeError(error)} />
-                  <p class="muted">
-                    The code Twitch sent could not be exchanged for tokens. Codes are single-use and
-                    expire within minutes, so reloading this page cannot help — go back to Settings
-                    and start the flow again.
-                  </p>
-                </>
-              )}
-            >
-              <Loading fallback={<p class="muted">Exchanging the code with Twitch…</p>}>
-                <Show when={exchanged()} keyed>
-                  {(view: TwitchView) => (
-                    <>
-                      <Banner
-                        kind="ok"
-                        message={
-                          view.settings.botLogin
-                            ? `Connected as ${view.settings.botLogin}. The server stored the tokens and is reconnecting to chat.`
-                            : "Connected. The server stored the tokens and is reconnecting to chat."
-                        }
-                      />
-                      <p class="muted">
-                        The tokens never appeared in this browser — Twitch handed this page a
-                        single-use code, and the server exchanged it directly.
-                      </p>
-                    </>
-                  )}
-                </Show>
-              </Loading>
+                  <>
+                    <Banner kind="error" message={describeError(error)} />
+                    <p class="muted">
+                      The code Twitch sent could not be exchanged for tokens. Codes are single-use
+                      and expire within minutes, so reloading this page cannot help — go back to
+                      Settings and start the flow again.
+                    </p>
+                  </>
+                )}
+              >
+                <Loading fallback={<p class="muted">Exchanging the code with Twitch…</p>}>
+                  <Show when={exchanged()} keyed>
+                    {(view: TwitchView) => (
+                      <>
+                        <Banner
+                          kind="ok"
+                          message={
+                            view.settings.botLogin
+                              ? `Connected as ${view.settings.botLogin}. The server stored the tokens and is reconnecting to chat.`
+                              : "Connected. The server stored the tokens and is reconnecting to chat."
+                          }
+                        />
+                        <p class="muted">
+                          The tokens never appeared in this browser — Twitch handed this page a
+                          single-use code, and the server exchanged it directly.
+                        </p>
+                      </>
+                    )}
+                  </Show>
+                </Loading>
               </Errored>
             </Show>
           </Show>

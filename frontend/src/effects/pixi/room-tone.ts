@@ -760,7 +760,11 @@ const roomTone = defineEffect({
     const emitSeries = (read: (age: number) => number, asArea: boolean): void => {
       const last = slots - 1;
       const bucketWidth = plotWidth / Math.max(1, last);
-      const clampK = (k: number): number => (k < 0 ? 0 : k > last ? last : k);
+      const clampK = (k: number): number => {
+        if (k < 0) return 0;
+        if (k > last) return last;
+        return k;
+      };
       const kx = (k: number): number => sampleX(last - clampK(k), bucketWidth);
       const ky = (k: number): number => sampleY(read(last - clampK(k)));
 
@@ -828,6 +832,91 @@ const roomTone = defineEffect({
       return "";
     };
 
+    /** Advances the ring by however many whole samples `dt` completes. */
+    const advanceRing = (dt: number): void => {
+      /*
+       * The elapsed time is accumulated from `dt`, which the frame clock clamps to a tenth of a
+       * second, rather than measured against the wall clock: a browser source that was throttled
+       * in the background then wakes up with an enormous gap, and reading the wall clock would make
+       * the chart lurch through dozens of empty samples. The loop is bounded by the buffer length
+       * for the same reason.
+       */
+      bucketElapsed += dt * 1000;
+      let advanced = 0;
+      while (bucketElapsed >= bucketMs && advanced < slots) {
+        bucketElapsed -= bucketMs;
+        head = (head + 1) % slots;
+        histCombined[head] = liveCombined;
+        histAudio[head] = liveAudio;
+        histMsgs[head] = bucketMsgs;
+        bucketMsgs = 0;
+        advanced += 1;
+      }
+      if (bucketElapsed >= bucketMs) bucketElapsed = 0;
+      fraction = clamp01(bucketElapsed / bucketMs);
+    };
+
+    /** The time markers and the baseline, into `chart`. */
+    const drawGrid = (bucketWidth: number): void => {
+      /*
+       * The vertical markers are anchored to elapsed time rather than to sample indices, so they
+       * travel at exactly the same speed as the data and never drift against it. `phase` is how
+       * far past the last whole interval we are; each marker is then that much plus a whole
+       * number of intervals into the past.
+       */
+      const intervalMs = gridEverySeconds * 1000;
+      const phase = (elapsedSeconds * 1000) % intervalMs;
+      const windowMs = slots * bucketMs;
+      // Every marker goes into one path and is stroked once, because they all share a style.
+      // Stroking each line on its own would be one draw call per marker for an identical result.
+      let markers = 0;
+      for (let ageMs = phase; ageMs <= windowMs; ageMs += intervalMs) {
+        const x = Math.round(plotRight - (ageMs / bucketMs) * bucketWidth) + 0.5;
+        if (x < -bucketWidth) break;
+        chart.moveTo(x, plotTop);
+        chart.lineTo(x, baseline);
+        markers += 1;
+      }
+      if (markers > 0) chart.stroke({ width: 1, color: curveColor, alpha: GRID_ALPHA });
+
+      const baseY = Math.round(baseline) - 0.5;
+      chart.moveTo(-bucketWidth, baseY);
+      chart.lineTo(plotRight, baseY);
+      chart.stroke({ width: 1, color: curveColor, alpha: BASELINE_ALPHA });
+    };
+
+    /** The dot at the live end of the curve and its transient-following ring. */
+    const drawLeadDot = (bucketWidth: number): void => {
+      const leadX = sampleX(0, bucketWidth);
+      const leadY = sampleY(liveCombined);
+      // The ring is the one thing in the panel that moves faster than the scroll: it follows the
+      // fast envelope, which snaps to transients, so a sudden sound registers instantly even
+      // though the curve itself takes a second to show it.
+      const ringRadius = leadDotSize + 1 + envelopes.fast * leadRingGain;
+      chart.circle(leadX, leadY, ringRadius).stroke({
+        width: 1,
+        color: accentColor,
+        alpha: LEAD_RING_ALPHA,
+      });
+      chart.circle(leadX, leadY, leadDotSize).fill({ color: curveColor, alpha: 0.95 });
+    };
+
+    /** Refreshes the caption and the readout, at most once per `READOUT_INTERVAL`. */
+    const updateText = (dt: number): void => {
+      readoutTimer += dt;
+      if (readoutTimer < READOUT_INTERVAL) return;
+      readoutTimer = 0;
+      if (labelText !== lastCaption) {
+        caption.text = labelText;
+        lastCaption = labelText;
+      }
+      const next = formatReadout();
+      if (next !== lastReadout) {
+        readout.text = next;
+        lastReadout = next;
+      }
+    };
+
     /* ── The frame loop ───────────────────────────────────────────────────────────────────── */
 
     onFrame(scope, ctx.fpsCap, ({ dt, now }) => {
@@ -848,26 +937,7 @@ const roomTone = defineEffect({
       const liveChat = clamp01(chatEnergy / msgsFullScale);
       liveCombined = clamp01(chatWeight * liveChat + (1 - chatWeight) * liveAudio);
 
-      /*
-       * Advance the ring. The elapsed time is accumulated from `dt`, which the frame clock clamps
-       * to a tenth of a second, rather than measured against the wall clock: a browser source that
-       * was throttled in the background then wakes up with an enormous gap, and reading the wall
-       * clock would make the chart lurch through dozens of empty samples. The loop is bounded by
-       * the buffer length for the same reason.
-       */
-      bucketElapsed += dt * 1000;
-      let advanced = 0;
-      while (bucketElapsed >= bucketMs && advanced < slots) {
-        bucketElapsed -= bucketMs;
-        head = (head + 1) % slots;
-        histCombined[head] = liveCombined;
-        histAudio[head] = liveAudio;
-        histMsgs[head] = bucketMsgs;
-        bucketMsgs = 0;
-        advanced += 1;
-      }
-      if (bucketElapsed >= bucketMs) bucketElapsed = 0;
-      fraction = clamp01(bucketElapsed / bucketMs);
+      advanceRing(dt);
 
       // The intro wipe. Ease-out expo starts fast and settles gently, which reads as the chart
       // arriving rather than sliding. `introMs` of 0 skips it entirely.
@@ -887,33 +957,7 @@ const roomTone = defineEffect({
 
       const bucketWidth = plotWidth / Math.max(1, slots - 1);
 
-      if (showGrid) {
-        /*
-         * The vertical markers are anchored to elapsed time rather than to sample indices, so they
-         * travel at exactly the same speed as the data and never drift against it. `phase` is how
-         * far past the last whole interval we are; each marker is then that much plus a whole
-         * number of intervals into the past.
-         */
-        const intervalMs = gridEverySeconds * 1000;
-        const phase = (elapsedSeconds * 1000) % intervalMs;
-        const windowMs = slots * bucketMs;
-        // Every marker goes into one path and is stroked once, because they all share a style.
-        // Stroking each line on its own would be one draw call per marker for an identical result.
-        let markers = 0;
-        for (let ageMs = phase; ageMs <= windowMs; ageMs += intervalMs) {
-          const x = Math.round(plotRight - (ageMs / bucketMs) * bucketWidth) + 0.5;
-          if (x < -bucketWidth) break;
-          chart.moveTo(x, plotTop);
-          chart.lineTo(x, baseline);
-          markers += 1;
-        }
-        if (markers > 0) chart.stroke({ width: 1, color: curveColor, alpha: GRID_ALPHA });
-
-        const baseY = Math.round(baseline) - 0.5;
-        chart.moveTo(-bucketWidth, baseY);
-        chart.lineTo(plotRight, baseY);
-        chart.stroke({ width: 1, color: curveColor, alpha: BASELINE_ALPHA });
-      }
+      if (showGrid) drawGrid(bucketWidth);
 
       if (showFill && fillAlpha > 0 && areaGradient !== null) {
         emitSeries(readCombined, true);
@@ -941,36 +985,11 @@ const roomTone = defineEffect({
         join: "round",
       });
 
-      if (leadDotSize > 0) {
-        const leadX = sampleX(0, bucketWidth);
-        const leadY = sampleY(liveCombined);
-        // The ring is the one thing in the panel that moves faster than the scroll: it follows the
-        // fast envelope, which snaps to transients, so a sudden sound registers instantly even
-        // though the curve itself takes a second to show it.
-        const ringRadius = leadDotSize + 1 + envelopes.fast * leadRingGain;
-        chart.circle(leadX, leadY, ringRadius).stroke({
-          width: 1,
-          color: accentColor,
-          alpha: LEAD_RING_ALPHA,
-        });
-        chart.circle(leadX, leadY, leadDotSize).fill({ color: curveColor, alpha: 0.95 });
-      }
+      if (leadDotSize > 0) drawLeadDot(bucketWidth);
 
       /* ── Text ────────────────────────────────────────────────────────────────────────── */
 
-      readoutTimer += dt;
-      if (readoutTimer >= READOUT_INTERVAL) {
-        readoutTimer = 0;
-        if (labelText !== lastCaption) {
-          caption.text = labelText;
-          lastCaption = labelText;
-        }
-        const next = formatReadout();
-        if (next !== lastReadout) {
-          readout.text = next;
-          lastReadout = next;
-        }
-      }
+      updateText(dt);
       // Kept outside the throttle: it is a property assignment with no glyph work behind it, and
       // doing it every frame means the readout is never left hanging in the wrong place for a
       // quarter of a second after the panel is resized.

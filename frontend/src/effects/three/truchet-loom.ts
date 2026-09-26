@@ -4,15 +4,16 @@ import type { ChatMessage } from "~/types/contract";
 import { bool, int, num, str } from "../paramUtils";
 import type { Palette } from "../sdk";
 import {
+  FULLSCREEN_VERTEX,
   assembleFragment,
   createEnvelopes,
   createThreeStage,
   defineEffect,
-  FULLSCREEN_VERTEX,
   onFrame,
   palette,
   paletteAt01,
   paletteParam,
+  random,
   useAudio,
   useChat,
 } from "../sdk";
@@ -361,7 +362,7 @@ function readSettings(p: Record<string, unknown>): Settings {
     cellSize: num(p, "cellSize", 64, 24, 160),
     lineWidth: num(p, "lineWidthPx", 1.6, 0.5, 5),
     opacity: num(p, "lineOpacity", 0.85, 0, 1),
-    arcStyle: styleIndex < 0 ? 0 : styleIndex,
+    arcStyle: Math.max(0, styleIndex),
     subdivideChance: num(p, "subdivideChance", 0.32, 0, 1),
     subdivideBrightness: num(p, "subdivideBrightness", 1.3, 0, 2),
     gridAngle: num(p, "gridAngle", 0, 0, 90),
@@ -403,7 +404,7 @@ function originFor(message: ChatMessage, mode: string): readonly [number, number
 
   switch (mode) {
     case "random":
-      return [Math.random() * 2 - 1, Math.random() * 2 - 1];
+      return [random() * 2 - 1, random() * 2 - 1];
     case "centre":
       return [0, 0];
     case "edge":
@@ -743,6 +744,65 @@ const truchetLoom = defineEffect({
       }),
     );
 
+    /**
+     * Once every tile has finished its turn, the lattice moves on to the next generation and the
+     * slots are freed. The picture does not change across this frame: every tile had turned all
+     * the way into its next value, and that value is what the new generation draws directly. See
+     * the file header.
+     */
+    const retireFinishedWaves = (lifetime: number): void => {
+      const allFinished = waves.every(
+        (wave) => clock >= wave.start + lifetime + settings.flipDuration,
+      );
+      if (!allFinished) return;
+      waves.length = 0;
+      generation = (generation + 1) % TILING_CYCLE;
+    };
+
+    /**
+     * Nothing refers to the old zero point, so the clock and every timestamp measured against it
+     * slide back together. Shifting rather than zeroing keeps the cooldowns exactly where they
+     * were.
+     */
+    const rewindClock = (): void => {
+      const shift = clock;
+      clock = 0;
+      lastChatWaveAt -= shift;
+      lastBeatWaveAt -= shift;
+      lastIdleWaveAt -= shift;
+    };
+
+    const maybeFireIdleWave = (): void => {
+      if (settings.idleInterval <= 0 || clock - lastIdleWaveAt < settings.idleInterval) return;
+      const point = IDLE_POINTS[idleIndex % IDLE_POINTS.length] ?? ([0, 0] as const);
+      idleIndex += 1;
+      fireWave(point[0], point[1]);
+      // The timestamp moves whether or not the wave was accepted, so a frame that hits the
+      // concurrent-wave limit waits a full interval instead of retrying every frame.
+      lastIdleWaveAt = clock;
+    };
+
+    const maybeFireBeatWave = (): void => {
+      if (!settings.flipOnBeat || !envelopes.beat) return;
+      if (clock - lastBeatWaveAt < settings.beatCooldown) return;
+      if (fireWave(random() * 2 - 1, random() * 2 - 1)) {
+        lastBeatWaveAt = clock;
+        lastIdleWaveAt = clock;
+      }
+    };
+
+    /** Copies the live waves into the uniform slots, clearing the unused ones. */
+    const uploadWaves = (): void => {
+      for (let i = 0; i < MAX_WAVES; i += 1) {
+        const slot = uniforms.uWaves.value[i];
+        if (slot === undefined) continue;
+        const wave = waves[i];
+        // The fourth component is the active flag the shader tests; an empty slot is skipped there.
+        if (wave === undefined) slot.set(0, 0, 0, 0);
+        else slot.set(wave.nx, wave.ny, wave.start, 1);
+      }
+    };
+
     onFrame(scope, ctx.fpsCap, ({ dt, now }) => {
       bus.sample(now);
       envelopes.update(dt);
@@ -760,52 +820,11 @@ const truchetLoom = defineEffect({
       const reachPx = Math.hypot(Math.max(1, stage.width), frameHeight) + settings.cellSize;
       const lifetime = reachPx / speedPx;
 
-      if (waves.length > 0) {
-        let allFinished = true;
-        for (const wave of waves) {
-          if (clock < wave.start + lifetime + settings.flipDuration) {
-            allFinished = false;
-            break;
-          }
-        }
-        if (allFinished) {
-          // Every tile has finished its turn, so the lattice moves on to the next generation and
-          // the slots are freed. The picture does not change across this frame: every tile had
-          // turned all the way into its next value, and that value is what the new generation
-          // draws directly. See the file header.
-          waves.length = 0;
-          generation = (generation + 1) % TILING_CYCLE;
-        }
-      } else if (clock > CLOCK_REWIND_SECONDS) {
-        // Nothing refers to the old zero point, so the clock and every timestamp measured against
-        // it slide back together. Shifting rather than zeroing keeps the cooldowns exactly where
-        // they were.
-        const shift = clock;
-        clock = 0;
-        lastChatWaveAt -= shift;
-        lastBeatWaveAt -= shift;
-        lastIdleWaveAt -= shift;
-      }
+      if (waves.length > 0) retireFinishedWaves(lifetime);
+      else if (clock > CLOCK_REWIND_SECONDS) rewindClock();
 
-      if (settings.idleInterval > 0 && clock - lastIdleWaveAt >= settings.idleInterval) {
-        const point = IDLE_POINTS[idleIndex % IDLE_POINTS.length] ?? ([0, 0] as const);
-        idleIndex += 1;
-        fireWave(point[0], point[1]);
-        // The timestamp moves whether or not the wave was accepted, so a frame that hits the
-        // concurrent-wave limit waits a full interval instead of retrying every frame.
-        lastIdleWaveAt = clock;
-      }
-
-      if (
-        settings.flipOnBeat &&
-        envelopes.beat &&
-        clock - lastBeatWaveAt >= settings.beatCooldown
-      ) {
-        if (fireWave(Math.random() * 2 - 1, Math.random() * 2 - 1)) {
-          lastBeatWaveAt = clock;
-          lastIdleWaveAt = clock;
-        }
-      }
+      maybeFireIdleWave();
+      maybeFireBeatWave();
 
       uniforms.uTime.value = clock;
       uniforms.uGeneration.value = generation;
@@ -821,14 +840,7 @@ const truchetLoom = defineEffect({
         ? Math.min(1, Math.max(0, glow)) * settings.audioGlow
         : 0;
 
-      for (let i = 0; i < MAX_WAVES; i += 1) {
-        const slot = uniforms.uWaves.value[i];
-        if (slot === undefined) continue;
-        const wave = waves[i];
-        // The fourth component is the active flag the shader tests; an empty slot is skipped there.
-        if (wave === undefined) slot.set(0, 0, 0, 0);
-        else slot.set(wave.nx, wave.ny, wave.start, 1);
-      }
+      uploadWaves();
 
       stage.render();
     });

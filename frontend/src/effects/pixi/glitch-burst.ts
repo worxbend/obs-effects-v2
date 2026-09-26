@@ -1,7 +1,7 @@
 import * as PIXI from "pixi.js";
 
 import { int, num } from "../paramUtils";
-import { createPixiStage, defineEffect, onFrame, useChat } from "../sdk";
+import { createPixiStage, defineEffect, onFrame, random, useChat } from "../sdk";
 
 /**
  * Glitch Burst
@@ -65,11 +65,11 @@ interface SweepLine {
 }
 
 function randInt(min: number, max: number): number {
-  return Math.floor(Math.random() * (max - min + 1)) + min;
+  return Math.floor(random() * (max - min + 1)) + min;
 }
 
 function pickColors(count: number): number[] {
-  return [...NEON_PALETTE].sort(() => Math.random() - 0.5).slice(0, count);
+  return [...NEON_PALETTE].sort(() => random() - 0.5).slice(0, count);
 }
 
 const glitchBurst = defineEffect({
@@ -194,12 +194,95 @@ const glitchBurst = defineEffect({
 
     const snap = (value: number): number => Math.round(value / pixelSize) * pixelSize;
 
+    // Segment widths vary: mostly narrow or medium, occasionally very wide. The mix is what
+    // makes the band read as torn signal rather than as a dashed line.
+    const rollSegmentWidth = (px: number): number => {
+      const segRoll = random();
+      if (segRoll < 0.4) {
+        return px * randInt(1, 3);
+      }
+      if (segRoll < 0.75) {
+        return px * randInt(4, 10);
+      }
+      return px * randInt(11, 22);
+    };
+
+    // Heights weighted towards a single grid row, with rarer 2-, 3- and 4-row segments.
+    const rollSegmentHeight = (px: number): number => {
+      const hRoll = random();
+      if (hRoll < 0.5) {
+        return px;
+      }
+      if (hRoll < 0.76) {
+        return px * 2;
+      }
+      if (hRoll < 0.91) {
+        return px * 3;
+      }
+      return px * 4;
+    };
+
+    const buildBlocks = (
+      width: number,
+      bandY: number,
+      rowCount: number,
+      colors: number[],
+    ): PixelBlock[] => {
+      const px = pixelSize;
+      const blocks: PixelBlock[] = [];
+
+      for (let row = 0; row < rowCount; row += 1) {
+        const rowY = bandY + row * px;
+        // Each row starts at a random horizontal displacement — the VHS tear look, where every
+        // scanline of the band is shoved sideways by a different amount.
+        let x = snap((random() - 0.5) * 40);
+
+        while (x < width) {
+          const segW = rollSegmentWidth(px);
+          const clampedX = Math.max(0, snap(x));
+          const clampedW = Math.min(segW, width - clampedX);
+          const segH = rollSegmentHeight(px);
+          if (clampedW > 0) {
+            blocks.push({
+              x: clampedX,
+              y: rowY,
+              w: clampedW,
+              h: segH,
+              phase: random() * colors.length,
+              speed: 1.8 + random() * 4.0,
+            });
+          }
+
+          x += segW;
+          // Occasional small gap between segments, so rows are broken rather than continuous.
+          if (random() < 0.18) x += px;
+        }
+      }
+
+      return blocks;
+    };
+
+    // Thin full-width scan lines sweeping away from the band — the CRT-losing-sync artifact.
+    const spawnSweepLines = (bandY: number, rowCount: number): void => {
+      if (sweepLinesMax <= 0) return;
+      const px = pixelSize;
+      const lineCount = randInt(1, sweepLinesMax);
+      for (let i = 0; i < lineCount; i += 1) {
+        const dir = random() < 0.5 ? -1 : 1;
+        const startY = snap(bandY + dir * randInt(0, rowCount) * px);
+        const lineView = stage.stage.addChild(new PIXI.Graphics());
+        lines.push({
+          view: lineView,
+          y: startY,
+          speed: dir * randInt(4, 10),
+          life: 0,
+          maxLife: randInt(14, 24),
+        });
+      }
+    };
+
     /** Builds one tear band plus its sweep lines. A direct port of the original `trigger()`. */
     const trigger = (): void => {
-      const width = stage.width;
-      const height = stage.height;
-      const px = pixelSize;
-
       // Drop the oldest burst rather than exceed the cap — chat can be far busier than the old
       // scene's occasional events, and unbounded stacking would turn the overlay into noise.
       while (bursts.length >= maxBursts) {
@@ -208,51 +291,12 @@ const glitchBurst = defineEffect({
       }
 
       // Random Y position for the horizontal glitch band, kept off the very edges.
-      const bandY = snap(randInt(40, Math.max(41, height - 40)));
+      const bandY = snap(randInt(40, Math.max(41, stage.height - 40)));
       const lowRows = Math.min(rowsMin, rowsMax);
       const highRows = Math.max(rowsMin, rowsMax);
       const rowCount = randInt(lowRows, highRows);
       const colors = pickColors(randInt(5, 9));
-      const blocks: PixelBlock[] = [];
-
-      for (let row = 0; row < rowCount; row += 1) {
-        const rowY = bandY + row * px;
-        // Each row starts at a random horizontal displacement — the VHS tear look, where every
-        // scanline of the band is shoved sideways by a different amount.
-        let x = snap((Math.random() - 0.5) * 40);
-
-        while (x < width) {
-          // Segment widths vary: mostly narrow or medium, occasionally very wide. The mix is what
-          // makes the band read as torn signal rather than as a dashed line.
-          const segRoll = Math.random();
-          const segW =
-            segRoll < 0.4
-              ? px * randInt(1, 3)
-              : segRoll < 0.75
-                ? px * randInt(4, 10)
-                : px * randInt(11, 22);
-
-          const clampedX = Math.max(0, snap(x));
-          const clampedW = Math.min(segW, width - clampedX);
-          // Heights weighted towards a single grid row, with rarer 2-, 3- and 4-row segments.
-          const hRoll = Math.random();
-          const segH = hRoll < 0.5 ? px : hRoll < 0.76 ? px * 2 : hRoll < 0.91 ? px * 3 : px * 4;
-          if (clampedW > 0) {
-            blocks.push({
-              x: clampedX,
-              y: rowY,
-              w: clampedW,
-              h: segH,
-              phase: Math.random() * colors.length,
-              speed: 1.8 + Math.random() * 4.0,
-            });
-          }
-
-          x += segW;
-          // Occasional small gap between segments, so rows are broken rather than continuous.
-          if (Math.random() < 0.18) x += px;
-        }
-      }
+      const blocks = buildBlocks(stage.width, bandY, rowCount, colors);
 
       const view = stage.stage.addChild(new PIXI.Graphics());
       // The original's lifetime was 38–60 frames around a 49-frame centre; scale that spread to
@@ -263,25 +307,10 @@ const glitchBurst = defineEffect({
         blocks,
         colors,
         life: 0,
-        maxLife: lifeFrames * (0.78 + Math.random() * 0.44),
+        maxLife: lifeFrames * (0.78 + random() * 0.44),
       });
 
-      // Thin full-width scan lines sweeping away from the band — the CRT-losing-sync artifact.
-      if (sweepLinesMax > 0) {
-        const lineCount = randInt(1, sweepLinesMax);
-        for (let i = 0; i < lineCount; i += 1) {
-          const dir = Math.random() < 0.5 ? -1 : 1;
-          const startY = snap(bandY + dir * randInt(0, rowCount) * px);
-          const lineView = stage.stage.addChild(new PIXI.Graphics());
-          lines.push({
-            view: lineView,
-            y: startY,
-            speed: dir * randInt(4, 10),
-            life: 0,
-            maxLife: randInt(14, 24),
-          });
-        }
-      }
+      spawnSweepLines(bandY, rowCount);
     };
 
     const chat = await useChat(scope);
@@ -314,23 +343,18 @@ const glitchBurst = defineEffect({
         // abruptly and leave smoothly, which is what makes them read as a fault.
         const fadeStart = burst.maxLife - 14;
         const fadeFactor =
-          burst.life >= fadeStart
-            ? Math.min(1, Math.max(0, (burst.maxLife - burst.life) / 14))
-            : 1;
+          burst.life >= fadeStart ? Math.min(1, Math.max(0, (burst.maxLife - burst.life) / 14)) : 1;
 
         burst.view.clear();
         for (const block of burst.blocks) {
-          const colorIndex =
-            Math.floor(elapsed * block.speed + block.phase) % burst.colors.length;
+          const colorIndex = Math.floor(elapsed * block.speed + block.phase) % burst.colors.length;
           // Each block flickers on its own sine wave; the phase term stops the whole band
           // pulsing in unison.
           const alpha = Math.min(
             1,
             Math.max(
               0,
-              (0.62 + Math.sin(elapsed * 1.6 + block.phase * 2.9) * 0.36) *
-                fadeFactor *
-                intensity,
+              (0.62 + Math.sin(elapsed * 1.6 + block.phase * 2.9) * 0.36) * fadeFactor * intensity,
             ),
           );
           burst.view

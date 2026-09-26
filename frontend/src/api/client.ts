@@ -68,7 +68,9 @@ function resolveApiBase(): string {
   if (!configured) return "/api";
   // Strip trailing slashes so that a configured "http://host:8080/api/" and the paths below
   // ("/routes") do not join into "http://host:8080/api//routes".
-  return configured.replace(/\/+$/, "");
+  let trimmed = configured;
+  while (trimmed.endsWith("/")) trimmed = trimmed.slice(0, -1);
+  return trimmed;
 }
 
 /** Base URL every request below is built on. */
@@ -753,7 +755,12 @@ export function listSounds(signal?: AbortSignal): Promise<SoundInfo[]> {
  */
 export function uploadSound(name: string, file: Blob, signal?: AbortSignal): Promise<SoundInfo> {
   const query = new URLSearchParams({ name }).toString();
-  return requestJson<SoundInfo>({ method: "POST", path: `/sounds?${query}`, rawBody: file, signal });
+  return requestJson<SoundInfo>({
+    method: "POST",
+    path: `/sounds?${query}`,
+    rawBody: file,
+    signal,
+  });
 }
 
 /**
@@ -913,7 +920,8 @@ export function describeError(error: unknown): string {
   if (error instanceof ApiError) {
     const issues = error.issues;
     if (issues.length > 0) {
-      return `${error.message} (${issues.map((i) => `${i.field}: ${i.message}`).join("; ")})`;
+      const detail = issues.map((i) => `${i.field}: ${i.message}`).join("; ");
+      return `${error.message} (${detail})`;
     }
     return error.message;
   }

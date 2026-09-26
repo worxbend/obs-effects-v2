@@ -112,8 +112,7 @@ export default function LoginPage(): JSX.Element {
     <div class="login-page">
       <div class="login-card">
         <div class="login-brand">
-          <span class="brand-dot" aria-hidden="true" />
-          OBS Effects
+          <span class="brand-dot" aria-hidden="true" /> OBS Effects
         </div>
 
         <h1>Sign in</h1>
@@ -136,28 +135,28 @@ export default function LoginPage(): JSX.Element {
               <div class="field">
                 <label class="field-label" for="admin-password">
                   Admin password
+                  <input
+                    id="admin-password"
+                    type="password"
+                    /*
+                     * `autocomplete="current-password"` is what tells a password manager that this
+                     * is a sign-in field rather than a "choose a new password" one, so it offers
+                     * the saved entry instead of generating a fresh one.
+                     */
+                    autocomplete="current-password"
+                    spellcheck={false}
+                    autofocus
+                    value={password()}
+                    disabled={submitting()}
+                    onInput={(e) => {
+                      setPassword(e.currentTarget.value);
+                      setError(null);
+                    }}
+                  />
                 </label>
-                <input
-                  id="admin-password"
-                  type="password"
-                  /*
-                   * `autocomplete="current-password"` is what tells a password manager that this
-                   * is a sign-in field rather than a "choose a new password" one, so it offers the
-                   * saved entry instead of generating a fresh one.
-                   */
-                  autocomplete="current-password"
-                  spellcheck={false}
-                  autofocus
-                  value={password()}
-                  disabled={submitting()}
-                  onInput={(e) => {
-                    setPassword(e.currentTarget.value);
-                    setError(null);
-                  }}
-                />
                 <p class="field-help">
-                  This is the password whose bcrypt hash the backend was started with, in
-                  <code> ADMIN_PASSWORD_HASH</code>. It is not stored anywhere in the browser: a
+                  This is the password whose bcrypt hash the backend was started with, in{" "}
+                  <code>ADMIN_PASSWORD_HASH</code>. It is not stored anywhere in the browser: a
                   successful sign-in leaves only a cookie that JavaScript cannot read.
                 </p>
               </div>

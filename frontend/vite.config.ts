@@ -37,7 +37,9 @@ export default defineConfig({
        * relative path "/api" and this proxy does the rest.
        */
       "/api": {
-        target: "http://backend:8080",
+        // Plain HTTP on purpose: this hop stays inside the Compose network, where the backend
+        // container serves no TLS; nothing leaves the host.
+        target: "http://backend:8080", // NOSONAR typescript:S5332
         changeOrigin: true,
         /*
          * Also forward WebSocket upgrades. Plain HTTP proxying does not cover them: a WebSocket

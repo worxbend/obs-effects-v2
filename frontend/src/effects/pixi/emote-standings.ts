@@ -9,6 +9,7 @@ import {
   palette,
   paletteAtInt,
   paletteParam,
+  random,
   useAudio,
   useChat,
   useFont,
@@ -666,20 +667,26 @@ const emoteStandings = defineEffect({
     /** Reused by the frame loop so deciding "is this emote already listed?" allocates nothing. */
     const placed = new Set<string>();
 
+    /** The image URLs a row is still waiting on or drawing, which must never be unloaded. */
+    const heldTextureUrls = (): Set<string> => {
+      const held = new Set<string>();
+      for (const row of rows) if (row.textureUrl !== null) held.add(row.textureUrl);
+      return held;
+    };
+
+    /** The index of the oldest cached image nothing still needs, or -1 when there is none. */
+    const evictionCandidate = (held: Set<string>): number => {
+      for (let i = 0; i < cachedUrls.length; i += 1) {
+        const url = cachedUrls[i];
+        if (url !== undefined && !scores.has(url) && !held.has(url)) return i;
+      }
+      return -1;
+    };
+
     /** Releases cached emote images once too many are held, skipping any still in use. */
     const trimTextureCache = (): void => {
       while (cachedUrls.length > TEXTURE_CACHE_LIMIT) {
-        const held = new Set<string>();
-        for (const row of rows) if (row.textureUrl !== null) held.add(row.textureUrl);
-
-        let victim = -1;
-        for (let i = 0; i < cachedUrls.length; i += 1) {
-          const url = cachedUrls[i];
-          if (url !== undefined && !scores.has(url) && !held.has(url)) {
-            victim = i;
-            break;
-          }
-        }
+        const victim = evictionCandidate(heldTextureUrls());
         // Everything cached is still scored or still on screen. The cap is a target, not a promise;
         // giving up here is correct, because unloading a texture in use would blank a row.
         if (victim < 0) return;
@@ -961,52 +968,58 @@ const emoteStandings = defineEffect({
     /* The frame                                                         */
     /* ---------------------------------------------------------------- */
 
-    onFrame(scope, ctx.fpsCap, ({ dt, now }) => {
-      bus.sample(now);
-      env.update(dt);
-
-      // ── Cached geometry ─────────────────────────────────────────────
-      // The empty square behind each emote is the same square on every row and changes only when
-      // the Emote Size parameter does, so all twelve are redrawn together on the rare frame that
-      // happens rather than each of them being rebuilt on every frame.
-      if (drawnSlotSize !== emoteSize) {
-        drawnSlotSize = emoteSize;
-        for (const row of rows) {
-          row.slot
-            .clear()
-            .rect(0, 0, emoteSize, emoteSize)
-            .stroke({ color: 0xffffff, alpha: 0.14, width: 1 });
-        }
+    /**
+     * The empty square behind each emote is the same square on every row and changes only when
+     * the Emote Size parameter does, so all twelve are redrawn together on the rare frame that
+     * happens rather than each of them being rebuilt on every frame.
+     */
+    const redrawSlots = (): void => {
+      if (drawnSlotSize === emoteSize) return;
+      drawnSlotSize = emoteSize;
+      for (const row of rows) {
+        row.slot
+          .clear()
+          .rect(0, 0, emoteSize, emoteSize)
+          .stroke({ color: 0xffffff, alpha: 0.14, width: 1 });
       }
+    };
 
-      // ── The placeholder standings ───────────────────────────────────
+    /** Bump one placeholder at random so the preview visibly reorders itself. */
+    const bumpPreview = (): void => {
+      // This is the one behaviour an operator most needs to see before putting this on air.
+      const pick = PREVIEW_NAMES[Math.floor(random() * PREVIEW_NAMES.length)];
+      const entry = pick === undefined ? undefined : scores.get(`preview:${pick}`);
+      if (entry !== undefined) {
+        entry.weight += minWeight * 0.9;
+        entry.count += 1;
+      }
+    };
+
+    /** Shows the placeholder standings while the chat is quiet, and retires them once it is not. */
+    const updatePreview = (dt: number): void => {
       const wantPreview = previewWhenQuiet && !sawRealEmote && chat.source === "simulated";
-      if (wantPreview) {
-        seedPreview();
-        previewSeconds += dt;
-        if (previewSeconds >= PREVIEW_TICK_SECONDS) {
-          previewSeconds = 0;
-          // Bump one placeholder at random so the preview visibly reorders itself, which is the one
-          // behaviour an operator most needs to see before putting this on air.
-          const pick = PREVIEW_NAMES[Math.floor(Math.random() * PREVIEW_NAMES.length)];
-          const entry = pick === undefined ? undefined : scores.get(`preview:${pick}`);
-          if (entry !== undefined) {
-            entry.weight += minWeight * 0.9;
-            entry.count += 1;
-          }
+      if (!wantPreview) {
+        if (previewActive) {
+          retirePreview();
+          previewActive = false;
         }
-        previewActive = true;
-      } else if (previewActive) {
-        retirePreview();
-        previewActive = false;
+        return;
       }
+      seedPreview();
+      previewSeconds += dt;
+      if (previewSeconds >= PREVIEW_TICK_SECONDS) {
+        previewSeconds = 0;
+        bumpPreview();
+      }
+      previewActive = true;
+    };
 
-      // ── Decay ───────────────────────────────────────────────────────
-      /*
-       * One multiplication per emote per frame. Raising a half to the power of "how much of a
-       * half-life has elapsed" is what makes the decay frame-rate independent: at 30 fps each step
-       * is twice as large as at 60 fps, and the score after a second is identical either way.
-       */
+    /*
+     * One multiplication per emote per frame. Raising a half to the power of "how much of a
+     * half-life has elapsed" is what makes the decay frame-rate independent: at 30 fps each step
+     * is twice as large as at 60 fps, and the score after a second is identical either way.
+     */
+    const decayScores = (dt: number): void => {
       const decay = Math.pow(0.5, dt / halfLife);
       const previewFloor = minWeight * 1.1;
       for (const [key, entry] of scores) {
@@ -1018,106 +1031,167 @@ const emoteStandings = defineEffect({
           scores.delete(key);
         }
       }
+    };
 
-      // ── The standings ───────────────────────────────────────────────
+    /** Where in the standings an emote of this weight belongs: before the first lighter one. */
+    const insertionIndex = (weight: number): number => {
+      for (let i = 0; i < order.length; i += 1) {
+        const otherKey = order[i];
+        const other = otherKey === undefined ? undefined : scores.get(otherKey);
+        if (other === undefined || other.weight < weight) return i;
+      }
+      return order.length;
+    };
+
+    /**
+     * Anything that has earned the entry threshold and is not already listed takes the position
+     * its score deserves. Entering is an insertion, not a swap, so it needs no margin.
+     */
+    const insertContenders = (): void => {
       placed.clear();
       for (const key of order) placed.add(key);
-
-      // Anything that has earned the entry threshold and is not already listed takes the position
-      // its score deserves. Entering is an insertion, not a swap, so it needs no margin.
       for (const [key, entry] of scores) {
         if (entry.weight < minWeight || placed.has(key)) continue;
-        let index = order.length;
-        for (let i = 0; i < order.length; i += 1) {
-          const otherKey = order[i];
-          const other = otherKey === undefined ? undefined : scores.get(otherKey);
-          if (other === undefined || other.weight < entry.weight) {
-            index = i;
-            break;
-          }
-        }
-        order.splice(index, 0, key);
+        order.splice(insertionIndex(entry.weight), 0, key);
         placed.add(key);
       }
+    };
 
-      // One overtake at a time. Both rows must be on screen and settled, and the challenger must be
-      // clearly ahead — see SWAP_MARGIN — or near-equal scores would trade places every frame.
+    /** Whether a row is on screen and settled, so it may take part in an overtake. */
+    const isSettled = (row: Row | undefined): boolean =>
+      row !== undefined && !row.closing && row.tween >= 1;
+
+    /**
+     * Whether the lower of two adjacent emotes should overtake the upper. Both rows must be on
+     * screen and settled, and the challenger must be clearly ahead — see SWAP_MARGIN — or
+     * near-equal scores would trade places every frame.
+     */
+    const shouldOvertake = (upperKey: string, lowerKey: string): boolean => {
+      const upper = scores.get(upperKey);
+      const lower = scores.get(lowerKey);
+      if (upper === undefined || lower === undefined) return false;
+      if (!isSettled(rowOf.get(upperKey)) || !isSettled(rowOf.get(lowerKey))) return false;
+      return lower.weight > upper.weight * (1 + SWAP_MARGIN);
+    };
+
+    /** One overtake at a time per pair; a row that has just moved is not considered again. */
+    const applyOvertakes = (): void => {
       for (let i = 0; i + 1 < order.length; i += 1) {
         const upperKey = order[i];
         const lowerKey = order[i + 1];
         if (upperKey === undefined || lowerKey === undefined) continue;
-        const upper = scores.get(upperKey);
-        const lower = scores.get(lowerKey);
-        if (upper === undefined || lower === undefined) continue;
-        const upperRow = rowOf.get(upperKey);
-        const lowerRow = rowOf.get(lowerKey);
-        if (upperRow === undefined || lowerRow === undefined) continue;
-        if (upperRow.closing || lowerRow.closing) continue;
-        if (upperRow.tween < 1 || lowerRow.tween < 1) continue;
-        if (lower.weight > upper.weight * (1 + SWAP_MARGIN)) {
+        if (shouldOvertake(upperKey, lowerKey)) {
           order[i] = lowerKey;
           order[i + 1] = upperKey;
           i += 1;
         }
       }
+    };
 
-      // Hand out and take back rows. A listed emote that has dropped below the exit threshold, or
-      // that has been pushed past the last visible place, closes rather than vanishing.
-      const exitWeight = minWeight * EXIT_FACTOR;
+    /** Gives a newly listed emote a free row, if there is one. */
+    const claimRow = (key: string, entry: Entry): Row | undefined => {
+      const free = takeRow();
+      if (free === null) return undefined;
+      free.key = key;
+      rowOf.set(key, free);
+      dressRow(free, entry);
+      return free;
+    };
+
+    /**
+     * Hand out and take back rows. A listed emote that has dropped below the exit threshold, or
+     * that has been pushed past the last visible place, closes rather than vanishing.
+     */
+    const assignRows = (exitWeight: number): void => {
       for (let i = 0; i < order.length; i += 1) {
         const key = order[i];
         if (key === undefined) continue;
         const entry = scores.get(key);
         const live = entry !== undefined && entry.weight >= exitWeight && i < maxRows;
         let row = rowOf.get(key);
-        if (live && row === undefined) {
-          const free = takeRow();
-          if (free !== null && entry !== undefined) {
-            free.key = key;
-            rowOf.set(key, free);
-            dressRow(free, entry);
-            row = free;
-          }
-        }
+        if (live && row === undefined) row = claimRow(key, entry);
         if (row !== undefined) row.closing = !live;
       }
+    };
 
-      // ── Animation and drawing ───────────────────────────────────────
-      const openSeconds = reorderSeconds * 0.72;
-      const closeSeconds = reorderSeconds * 1.43;
-
-      // The leader's score sets the length of every rule, so it is found before anything is drawn.
+    /** The leader's score sets the length of every rule, so it is found before anything is drawn. */
+    const leaderWeightOf = (): number => {
       let leaderWeight = 0;
       for (const key of order) {
         const entry = scores.get(key);
         if (entry !== undefined && entry.weight > leaderWeight) leaderWeight = entry.weight;
       }
+      return leaderWeight;
+    };
 
-      flash = Math.max(0, flash - dt / FLASH_SECONDS);
-      if (env.beat && leaderFlash) flash = 1;
-
-      let offset = 0;
-      let rank = 0;
+    /**
+     * A listed emote with no row is a contender waiting for a place. It stays listed only while
+     * it is near enough the visible table to matter; the rest are dropped so the list is bounded.
+     */
+    const pruneOrder = (exitWeight: number): void => {
       for (let i = order.length - 1; i >= 0; i -= 1) {
         const key = order[i];
         if (key === undefined) {
           order.splice(i, 1);
-          continue;
-        }
-        // A listed emote with no row is a contender waiting for a place. It stays listed only while
-        // it is near enough the visible table to matter; the rest are dropped so the list is bounded.
-        if (!rowOf.has(key)) {
+        } else if (!rowOf.has(key)) {
           const entry = scores.get(key);
           if (entry === undefined || entry.weight < exitWeight || i >= maxRows + 4) {
             order.splice(i, 1);
           }
         }
       }
+    };
 
+    /**
+     * Moves a row toward where it should be. Because the target grows by each row's *animated*
+     * height, opening a row above pushes this one down smoothly.
+     */
+    const moveRow = (row: Row, target: number, dt: number, rowsTop: number): void => {
+      if (!row.positioned) {
+        row.positioned = true;
+        row.y = target;
+        row.yFrom = target;
+        row.yTo = target;
+        row.tween = 1;
+      } else if (Math.abs(target - row.yTo) > 0.5) {
+        row.yFrom = row.y;
+        row.yTo = target;
+        row.tween = 0;
+      }
+
+      row.tween = clamp01(row.tween + dt / reorderSeconds);
+      row.y = lerp(row.yFrom, row.yTo, easeInOutCubic(row.tween));
+      row.view.y = rowsTop + row.y;
+      // While a row is moving it is lifted above its neighbours, and a row moving *upward* is
+      // lifted highest, so an overtake is one row visibly crossing in front of another.
+      let zIndex = 0;
+      if (row.tween < 1) {
+        zIndex = row.yTo < row.yFrom ? 2 : 1;
+      }
+      row.view.zIndex = zIndex;
+    };
+
+    /** Keeps a row's tally current, popping the numeral whenever it changes. */
+    const updateCount = (row: Row, entry: Entry | undefined, dt: number): void => {
+      if (entry !== undefined && entry.count !== row.shownCount) {
+        row.shownCount = entry.count;
+        row.count.text = String(entry.count);
+        row.pop = POP_SECONDS;
+      }
+      row.pop = Math.max(0, row.pop - dt);
+      // The pop is on the numeral alone — the row does not move, only the number swells and
+      // settles, which is enough to catch the eye without disturbing the line of type.
+      row.count.scale.set(1 + POP_SCALE * (row.pop / POP_SECONDS));
+    };
+
+    /** Animates and lays out every row that holds a listed emote, top to bottom. */
+    const drawRows = (dt: number, leaderWeight: number): void => {
+      const openSeconds = reorderSeconds * 0.72;
+      const closeSeconds = reorderSeconds * 1.43;
       const rowsTop = headerHeight();
-      for (let i = 0; i < order.length; i += 1) {
-        const key = order[i];
-        if (key === undefined) continue;
+      let offset = 0;
+      let rank = 0;
+      for (const key of order) {
         const row = rowOf.get(key);
         if (row === undefined) continue;
 
@@ -1134,50 +1208,23 @@ const emoteStandings = defineEffect({
           continue;
         }
 
-        // Where this row should be: directly under everything above it. Because the offset grows by
-        // each row's *animated* height, opening a row above pushes this one down smoothly.
-        const target = offset;
+        // Where this row should be: directly under everything above it.
+        moveRow(row, offset, dt, rowsTop);
         offset += rowHeight * openness;
-
-        if (!row.positioned) {
-          row.positioned = true;
-          row.y = target;
-          row.yFrom = target;
-          row.yTo = target;
-          row.tween = 1;
-        } else if (Math.abs(target - row.yTo) > 0.5) {
-          row.yFrom = row.y;
-          row.yTo = target;
-          row.tween = 0;
-        }
-
-        row.tween = clamp01(row.tween + dt / reorderSeconds);
-        row.y = lerp(row.yFrom, row.yTo, easeInOutCubic(row.tween));
-        row.view.y = rowsTop + row.y;
         row.view.alpha = openness;
-        // While a row is moving it is lifted above its neighbours, and a row moving *upward* is
-        // lifted highest, so an overtake is one row visibly crossing in front of another.
-        row.view.zIndex = row.tween < 1 ? (row.yTo < row.yFrom ? 2 : 1) : 0;
 
         const entry = scores.get(key);
         const weight = entry === undefined ? 0 : entry.weight;
         const share = leaderWeight > 0 ? weight / leaderWeight : 0;
-
-        if (entry !== undefined && entry.count !== row.shownCount) {
-          row.shownCount = entry.count;
-          row.count.text = String(entry.count);
-          row.pop = POP_SECONDS;
-        }
-        row.pop = Math.max(0, row.pop - dt);
-        // The pop is on the numeral alone — the row does not move, only the number swells and
-        // settles, which is enough to catch the eye without disturbing the line of type.
-        row.count.scale.set(1 + POP_SCALE * (row.pop / POP_SECONDS));
+        updateCount(row, entry, dt);
 
         layoutRow(row, rank, share, openness);
         rank += 1;
       }
+    };
 
-      // ── The heading and the panel itself ────────────────────────────
+    /** The heading and the panel itself. */
+    const drawPanel = (): void => {
       const width = effectiveWidth();
       const ruleY = title.length > 0 ? Math.round(fontSize * 1.9) : 0;
 
@@ -1208,6 +1255,31 @@ const emoteStandings = defineEffect({
       // The only other place audio is allowed to touch this effect: a percent or two of swell on the
       // whole panel, anchored to the edge it hangs from so it never drifts off the frame.
       panel.scale.set(1 + env.slow * audioBreath);
+    };
+
+    onFrame(scope, ctx.fpsCap, ({ dt, now }) => {
+      bus.sample(now);
+      env.update(dt);
+
+      redrawSlots();
+      updatePreview(dt);
+      decayScores(dt);
+
+      // ── The standings ───────────────────────────────────────────────
+      insertContenders();
+      applyOvertakes();
+      const exitWeight = minWeight * EXIT_FACTOR;
+      assignRows(exitWeight);
+
+      // ── Animation and drawing ───────────────────────────────────────
+      const leaderWeight = leaderWeightOf();
+
+      flash = Math.max(0, flash - dt / FLASH_SECONDS);
+      if (env.beat && leaderFlash) flash = 1;
+
+      pruneOrder(exitWeight);
+      drawRows(dt, leaderWeight);
+      drawPanel();
 
       stage.render();
     });

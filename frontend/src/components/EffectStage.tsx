@@ -214,7 +214,7 @@ export function EffectStage(props: EffectStageProps): JSX.Element {
     module: EffectModule,
     token: string,
   ): { module: EffectModule; token: string } => {
-    if (lastTarget && lastTarget.module === module && lastTarget.token === token) return lastTarget;
+    if (lastTarget?.module === module && lastTarget.token === token) return lastTarget;
     lastTarget = { module, token };
     return lastTarget;
   };

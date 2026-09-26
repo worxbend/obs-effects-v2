@@ -15,13 +15,20 @@ export function Banner(props: {
   return (
     <Show when={props.message}>
       {(text) => (
-        <div
-          class={`banner banner-${props.kind}`}
-          role={props.kind === "error" ? "alert" : "status"}
+        <Show
+          when={props.kind === "error"}
+          fallback={
+            <output class={`banner banner-${props.kind}`}>
+              {text()}
+              {props.children}
+            </output>
+          }
         >
-          {text()}
-          {props.children}
-        </div>
+          <div class={`banner banner-${props.kind}`} role="alert">
+            {text()}
+            {props.children}
+          </div>
+        </Show>
       )}
     </Show>
   );

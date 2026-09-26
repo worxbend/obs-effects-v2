@@ -2,7 +2,7 @@ import * as PIXI from "pixi.js";
 
 import type { ChatMessage, ChatPart } from "~/types/contract";
 import { bool, int, num } from "../paramUtils";
-import { createPixiStage, defineEffect, onFrame, useChat } from "../sdk";
+import { createPixiStage, defineEffect, onFrame, random, useChat } from "../sdk";
 
 /**
  * Fluid Chat
@@ -89,7 +89,7 @@ function clamp(value: number, min: number, max: number): number {
 /** A tiny deterministic random generator (linear congruential), so the same seed always draws the
  * same blob shape and the same mascot. */
 function seedRng(seed: number): () => number {
-  let s = (seed >>> 0) || 1;
+  let s = seed >>> 0 || 1;
   return () => {
     s = (Math.imul(1664525, s) + 1013904223) >>> 0;
     return s / 0xffffffff;
@@ -100,7 +100,7 @@ function seedRng(seed: number): () => number {
 function hashSeed(input: string): number {
   let hash = 2166136261;
   for (let i = 0; i < input.length; i++) {
-    hash ^= input.charCodeAt(i);
+    hash ^= input.codePointAt(i) ?? 0;
     hash = Math.imul(hash, 16777619);
   }
   return hash >>> 0;
@@ -131,9 +131,7 @@ function hslToRgb(h: number, s: number, l: number): number {
   else [r, g, b] = [c, 0, x];
 
   return (
-    (Math.round((r + m) * 255) << 16) |
-    (Math.round((g + m) * 255) << 8) |
-    Math.round((b + m) * 255)
+    (Math.round((r + m) * 255) << 16) | (Math.round((g + m) * 255) << 8) | Math.round((b + m) * 255)
   );
 }
 
@@ -321,9 +319,7 @@ class WobblyBlob {
     g.ellipse(w * 0.3 + Math.sin(time * 0.018) * 8, h * 0.18, w * 0.24, 18).fill(
       rgba(this.palette.foam, 0.16),
     );
-    g.circle(w * 0.86, h * 0.22 + Math.sin(time * 0.02) * 4, 8).fill(
-      rgba(this.palette.warm, 0.5),
-    );
+    g.circle(w * 0.86, h * 0.22 + Math.sin(time * 0.02) * 4, 8).fill(rgba(this.palette.warm, 0.5));
     g.circle(w * 0.91, h * 0.58 + Math.cos(time * 0.016) * 4, 5).fill(
       rgba(this.palette.cool, 0.48),
     );
@@ -533,6 +529,15 @@ interface CardSettings {
   showEmotes: boolean;
 }
 
+/** The per-user randomness a card is drawn from: the droplet avatar seed and accent color, the
+ * mascot seed, and the wobbly plate seed. */
+interface CardSeeds {
+  userSeed: number;
+  userAccent: number;
+  mascotSeed: number;
+  plateSeed: number;
+}
+
 /**
  * One message's card: the wobbling blob plate, the sender's mascot on the left, the name and
  * event tag, the wrapped message content (text runs and inline emote images), and the procedural
@@ -553,10 +558,7 @@ class ChatCard {
     msg: ChatMessage,
     width: number,
     palette: FluidPalette,
-    userSeed: number,
-    userAccent: number,
-    mascotSeed: number,
-    plateSeed: number,
+    seeds: CardSeeds,
     settings: CardSettings,
   ) {
     this.lifetime = settings.lifetime;
@@ -572,8 +574,8 @@ class ChatCard {
     const content = this.makeMessageContent(msg, palette, wrap, settings);
 
     this.height = Math.max(94, Math.ceil(content.height + 68));
-    this.blob = new WobblyBlob(width, this.height, palette, plateSeed);
-    this.mascot = new BlobMascot(palette, userAccent, mascotSeed);
+    this.blob = new WobblyBlob(width, this.height, palette, seeds.plateSeed);
+    this.mascot = new BlobMascot(palette, seeds.userAccent, seeds.mascotSeed);
     this.mascot.view.x = 14;
     this.mascot.view.y = Math.max(22, this.height - 72);
 
@@ -600,7 +602,7 @@ class ChatCard {
         stroke: { color: 0x05060b, width: 2 },
       },
     });
-    const avatar = this.makeAvatar(userSeed, palette, userAccent);
+    const avatar = this.makeAvatar(seeds.userSeed, palette, seeds.userAccent);
 
     name.x = textX;
     name.y = 18;
@@ -965,7 +967,7 @@ const fluidChat = defineEffect({
     // blobs — only the accent colour and the mascot are stable per user.
     const nextPlateSeed = (msg: ChatMessage, key: string, userSeed: number): number => {
       messageSerial += 1;
-      const randomBits = Math.floor(Math.random() * 0xffffffff);
+      const randomBits = Math.floor(random() * 0xffffffff);
       return hashSeed(
         ["fluid", key, userSeed, msg.event, msg.text, messageSerial, randomBits].join(":"),
       );
@@ -1005,12 +1007,19 @@ const fluidChat = defineEffect({
       const creatureSeed = mascotSeed(key);
       const plateSeed = nextPlateSeed(msg, key, userSeed);
       const palette = makePalette(plateSeed, accent);
-      const card = new ChatCard(cardLayer, msg, cardWidth(), palette, userSeed, accent, creatureSeed, plateSeed, {
-        lifetime: lifetimeSec * FRAME_UNITS_PER_SECOND,
-        nameFontSize,
-        textFontSize,
-        showEmotes,
-      });
+      const card = new ChatCard(
+        cardLayer,
+        msg,
+        cardWidth(),
+        palette,
+        { userSeed, userAccent: accent, mascotSeed: creatureSeed, plateSeed },
+        {
+          lifetime: lifetimeSec * FRAME_UNITS_PER_SECOND,
+          nameFontSize,
+          textFontSize,
+          showEmotes,
+        },
+      );
       cards.unshift(card);
 
       while (cards.length > maxCards) {

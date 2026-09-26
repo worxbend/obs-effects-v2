@@ -1,7 +1,7 @@
 import * as PIXI from "pixi.js";
 
 import { colorInt, num } from "../paramUtils";
-import { createPixiStage, defineEffect, onFrame, useChat } from "../sdk";
+import { createPixiStage, defineEffect, onFrame, random, useChat } from "../sdk";
 
 /**
  * Grunge Film
@@ -256,13 +256,13 @@ const grungeFilm = defineEffect({
 
     const debris: DebrisMote[] = [];
     const spawnMote = (): DebrisMote => ({
-      x: Math.random() * stage.width,
-      y: Math.random() * stage.height,
-      vx: (Math.random() - 0.5) * 0.18,
-      vy: -(0.25 + Math.random() * 0.55),
-      r: 0.6 + Math.random() * 1.4,
-      alpha: 0.06 + Math.random() * 0.18,
-      phase: Math.random() * Math.PI * 2,
+      x: random() * stage.width,
+      y: random() * stage.height,
+      vx: (random() - 0.5) * 0.18,
+      vy: -(0.25 + random() * 0.55),
+      r: 0.6 + random() * 1.4,
+      alpha: 0.06 + random() * 0.18,
+      phase: random() * Math.PI * 2,
     });
 
     const scratches: Scratch[] = [];
@@ -286,32 +286,32 @@ const grungeFilm = defineEffect({
 
       // Aggressive horizontal distortion bands. The original used 4..8; the parameter shifts the
       // whole range while keeping the same +0..4 spread of randomness.
-      const count = Math.max(1, Math.round(eventBands - 2)) + Math.floor(Math.random() * 5);
+      const count = Math.max(1, Math.round(eventBands - 2)) + Math.floor(random() * 5);
       for (let i = 0; i < count; i += 1) {
         distortions.push({
-          y: Math.random() * h,
-          h: 4 + Math.floor(Math.random() * 6) * 4,
-          shiftX: (Math.random() - 0.5) * 130,
+          y: random() * h,
+          h: 4 + Math.floor(random() * 6) * 4,
+          shiftX: (random() - 0.5) * 130,
           // Mostly white; roughly one band in seven takes the acid accent, which is what makes
           // the burst read as an industrial fault rather than plain interference.
-          color: Math.random() > 0.15 ? WHITE : colorAccent,
-          alpha: (0.22 + Math.random() * 0.44) * eventStrength,
+          color: random() > 0.15 ? WHITE : colorAccent,
+          alpha: (0.22 + random() * 0.44) * eventStrength,
           life: 0,
-          maxLife: 12 + Math.random() * 20,
+          maxLife: 12 + random() * 20,
         });
       }
 
       // Extra burst of vertical scratches, harder and brighter than the ambient ones.
       for (let i = 0; i < 3; i += 1) {
         scratches.push({
-          x: Math.random() * w,
+          x: random() * w,
           y: 0,
-          length: h * (0.5 + Math.random() * 0.5),
+          length: h * (0.5 + random() * 0.5),
           width: 1,
           color: WHITE,
-          alpha: (0.3 + Math.random() * 0.4) * eventStrength,
+          alpha: (0.3 + random() * 0.4) * eventStrength,
           life: 0,
-          maxLife: 8 + Math.random() * 10,
+          maxLife: 8 + random() * 10,
         });
       }
 
@@ -329,15 +329,7 @@ const grungeFilm = defineEffect({
     const off = chat.onMessage(() => trigger());
     scope.defer(off);
 
-    onFrame(scope, ctx.fpsCap, ({ dt }) => {
-      // The one seconds→frames conversion. Everything below is verbatim original arithmetic.
-      const delta = dt * 60;
-      elapsed += delta;
-      grainClock += delta;
-
-      const w = stage.width;
-      const h = stage.height;
-
+    const drawStatic = (w: number, h: number): void => {
       // Drifting horizontal static lines: four thin bars whose position, length and shimmer all
       // derive from `elapsed`, so they wander rather than loop.
       staticGfx.clear();
@@ -349,23 +341,29 @@ const grungeFilm = defineEffect({
           .rect(lx, y, lw, 1)
           .fill({ color: GREY_LITE, alpha: 0.04 + Math.sin(elapsed * 0.03 + i) * 0.02 });
       }
+    };
 
+    const drawGrain = (w: number, h: number): void => {
       // Grain regenerates every ~3 frames rather than every frame: the brief persistence is what
       // reads as film grain instead of television static.
-      if (grainClock >= 3) {
-        grainClock = 0;
-        grainGfx.clear();
-        const count = Math.round(((w * h) / 720) * grainDensity);
-        for (let i = 0; i < count; i += 1) {
-          const r = Math.random();
-          const size = r < 0.55 ? 2 : r < 0.82 ? 3 : 4;
-          const color = Math.random() < 0.55 ? GREY_DARK : GREY_MID;
-          grainGfx
-            .rect(Math.random() * w, Math.random() * h, size, size)
-            .fill({ color, alpha: 0.1 + Math.random() * 0.22 });
-        }
+      if (grainClock < 3) return;
+      grainClock = 0;
+      grainGfx.clear();
+      const count = Math.round(((w * h) / 720) * grainDensity);
+      for (let i = 0; i < count; i += 1) {
+        const r = random();
+        let size: number;
+        if (r < 0.55) size = 2;
+        else if (r < 0.82) size = 3;
+        else size = 4;
+        const color = random() < 0.55 ? GREY_DARK : GREY_MID;
+        grainGfx
+          .rect(random() * w, random() * h, size, size)
+          .fill({ color, alpha: 0.1 + random() * 0.22 });
       }
+    };
 
+    const stepDust = (w: number, h: number, delta: number): void => {
       // Dust motes drift upward with a sinusoidal sway, wrapping at the edges. The pool grows or
       // shrinks lazily towards the parameter so retuning it mid-run needs no reset.
       const wantMotes = Math.round(dustCount);
@@ -377,30 +375,32 @@ const grungeFilm = defineEffect({
         d.y += d.vy * delta;
         if (d.y < -4) {
           d.y = h + 4;
-          d.x = Math.random() * w;
+          d.x = random() * w;
         }
         if (d.x < -4) d.x = w + 4;
         if (d.x > w + 4) d.x = -4;
         const a = d.alpha * (0.65 + Math.sin(elapsed * 0.025 + d.phase) * 0.35);
         dustGfx.circle(d.x, d.y, d.r).fill({ color: GREY_LITE, alpha: clamp(a, 0, 1) });
       }
+    };
 
+    const stepScratches = (w: number, h: number, delta: number): void => {
       // Ambient scratches on a randomised timer. The original waited 140..340 frames (about
       // 2.3..5.7 seconds); the Scratch Gap parameter recentres that window around its value.
       scratchTimer -= delta;
       if (scratchTimer <= 0) {
         scratches.push({
-          x: Math.random() * w,
-          y: Math.random() * h * 0.4,
-          length: h * (0.18 + Math.random() * 0.55),
-          width: Math.random() > 0.75 ? 2 : 1,
-          color: Math.random() > 0.1 ? GREY_LITE : WHITE,
-          alpha: 0.12 + Math.random() * 0.22,
+          x: random() * w,
+          y: random() * h * 0.4,
+          length: h * (0.18 + random() * 0.55),
+          width: random() > 0.75 ? 2 : 1,
+          color: random() > 0.1 ? GREY_LITE : WHITE,
+          alpha: 0.12 + random() * 0.22,
           life: 0,
-          maxLife: 7 + Math.random() * 14,
+          maxLife: 7 + random() * 14,
         });
         const gapFrames = scratchGap * 60;
-        scratchTimer = gapFrames * 0.6 + Math.random() * gapFrames * 0.8;
+        scratchTimer = gapFrames * 0.6 + random() * gapFrames * 0.8;
       }
 
       scratchGfx.clear();
@@ -417,7 +417,9 @@ const grungeFilm = defineEffect({
           .rect(s.x, s.y, s.width, s.length)
           .fill({ color: s.color, alpha: clamp(s.alpha * fade, 0, 1) });
       }
+    };
 
+    const stepDistortions = (w: number, delta: number): void => {
       // Event distortion bands: full-width bars shoved sideways, clipped so the shift shortens
       // the bar from one edge instead of running off both.
       distortGfx.clear();
@@ -432,27 +434,47 @@ const grungeFilm = defineEffect({
         const fade = 1 - d.life / d.maxLife;
         const bx = Math.max(0, d.shiftX);
         const bw = w - Math.abs(d.shiftX);
-        distortGfx.rect(bx, d.y, bw, d.h).fill({ color: d.color, alpha: clamp(d.alpha * fade, 0, 1) });
+        distortGfx
+          .rect(bx, d.y, bw, d.h)
+          .fill({ color: d.color, alpha: clamp(d.alpha * fade, 0, 1) });
       }
+    };
 
+    const drawFlicker = (w: number, h: number, delta: number): void => {
       // Flicker: a roughly one-in-ten chance per frame of a brief whole-frame darken, plus the
       // event flash (white on impact, then a longer dark afterburn).
       flickerGfx.clear();
-      if (Math.random() < 0.1) {
-        flickerGfx.rect(0, 0, w, h).fill({ color: BLACK, alpha: 0.04 + Math.random() * 0.07 });
+      if (random() < 0.1) {
+        flickerGfx.rect(0, 0, w, h).fill({ color: BLACK, alpha: 0.04 + random() * 0.07 });
       }
-      if (flashActive) {
-        flashAge += delta;
-        if (flashAge <= 4) {
-          const a = (1 - flashAge / 4) * 0.28 * eventStrength;
-          flickerGfx.rect(0, 0, w, h).fill({ color: WHITE, alpha: clamp(a, 0, 1) });
-        } else if (flashAge <= 16) {
-          const a = clamp((1 - (flashAge - 4) / 12) * 0.1 * eventStrength, 0, 1);
-          flickerGfx.rect(0, 0, w, h).fill({ color: BLACK, alpha: a });
-        } else {
-          flashActive = false;
-        }
+      if (!flashActive) return;
+      flashAge += delta;
+      if (flashAge <= 4) {
+        const a = (1 - flashAge / 4) * 0.28 * eventStrength;
+        flickerGfx.rect(0, 0, w, h).fill({ color: WHITE, alpha: clamp(a, 0, 1) });
+      } else if (flashAge <= 16) {
+        const a = clamp((1 - (flashAge - 4) / 12) * 0.1 * eventStrength, 0, 1);
+        flickerGfx.rect(0, 0, w, h).fill({ color: BLACK, alpha: a });
+      } else {
+        flashActive = false;
       }
+    };
+
+    onFrame(scope, ctx.fpsCap, ({ dt }) => {
+      // The one seconds→frames conversion. Everything below is verbatim original arithmetic.
+      const delta = dt * 60;
+      elapsed += delta;
+      grainClock += delta;
+
+      const w = stage.width;
+      const h = stage.height;
+
+      drawStatic(w, h);
+      drawGrain(w, h);
+      stepDust(w, h, delta);
+      stepScratches(w, h, delta);
+      stepDistortions(w, delta);
+      drawFlicker(w, h, delta);
 
       stage.render();
     });

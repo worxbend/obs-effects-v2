@@ -312,6 +312,12 @@ function PresetEditor(props: {
   const canSave = () =>
     trimmedName() !== "" && nameIssue() === null && descriptor() !== undefined && !busy();
 
+  const submitLabel = () => {
+    if (busy()) return "Saving…";
+    if (props.preset) return "Save preset";
+    return "Create preset";
+  };
+
   /*
    * Choosing a different effect resets the parameters to that effect's defaults. Keeping the old
    * values would send keys the new effect does not declare, which the backend rejects with 422 —
@@ -386,21 +392,21 @@ function PresetEditor(props: {
       <div class="field">
         <label class="field-label" for="preset-editor-name">
           Name
+          <input
+            id="preset-editor-name"
+            type="text"
+            autocomplete="off"
+            spellcheck={false}
+            placeholder="Neon night"
+            maxlength={MAX_PRESET_NAME}
+            class={nameIssue() ? "invalid" : undefined}
+            value={name()}
+            onInput={(e) => {
+              setName(e.currentTarget.value);
+              setError(null);
+            }}
+          />
         </label>
-        <input
-          id="preset-editor-name"
-          type="text"
-          autocomplete="off"
-          spellcheck={false}
-          placeholder="Neon night"
-          maxlength={MAX_PRESET_NAME}
-          class={nameIssue() ? "invalid" : undefined}
-          value={name()}
-          onInput={(e) => {
-            setName(e.currentTarget.value);
-            setError(null);
-          }}
-        />
         <Show when={nameIssue()}>{(message) => <p class="field-error">{message()}</p>}</Show>
         <p class="field-help">
           Up to {MAX_PRESET_NAME} characters. Two presets of the <em>same effect</em> cannot share a
@@ -451,7 +457,7 @@ function PresetEditor(props: {
 
       <div class="btn-row">
         <button type="submit" class="btn btn-primary" disabled={!canSave()}>
-          {busy() ? "Saving…" : props.preset ? "Save preset" : "Create preset"}
+          {submitLabel()}
         </button>
         <button type="button" class="btn" disabled={busy()} onClick={() => props.onCancel()}>
           Cancel

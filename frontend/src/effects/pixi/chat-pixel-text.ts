@@ -282,7 +282,8 @@ const chatPixelText = defineEffect({
         label: "Text Colour",
         kind: "color",
         default: "#e8f0e0",
-        description: "The message body glyphs. A slightly warm off-white reads like an old monitor.",
+        description:
+          "The message body glyphs. A slightly warm off-white reads like an old monitor.",
       },
       {
         key: "plateInk",
@@ -339,7 +340,8 @@ const chatPixelText = defineEffect({
      * Turns a message's parts into word-sized tokens for wrapping. Text splits on spaces; an image
      * part is one token. Wrapping whole words (not characters) is what keeps lines readable.
      */
-    type Token = { kind: "word"; text: string } | { kind: "image"; part: ChatPart & { type: "image" } };
+    type Token =
+      { kind: "word"; text: string } | { kind: "image"; part: ChatPart & { type: "image" } };
     const tokenize = (parts: ChatPart[]): Token[] => {
       const tokens: Token[] = [];
       for (const part of parts) {
@@ -352,6 +354,99 @@ const chatPixelText = defineEffect({
         }
       }
       return tokens;
+    };
+
+    /**
+     * The pen and surfaces of one message being laid out. The body wraps after the plate: the
+     * first line starts beside it, continuation lines return to the left edge.
+     */
+    interface Pen {
+      x: number;
+      y: number;
+      readonly px: number;
+      readonly maxWidth: number;
+      readonly lineH: number;
+      readonly glyphH: number;
+      readonly emoteW: number;
+      readonly bodyColor: string;
+      readonly container: PIXI.Container;
+      readonly shadow: PIXI.Graphics;
+      readonly ink: PIXI.Graphics;
+      readonly spriteLayer: PIXI.Container;
+    }
+
+    const newline = (pen: Pen): void => {
+      pen.x = 0;
+      pen.y += pen.lineH;
+    };
+
+    /** A message's parts, or its plain text as a single part when it carries no parts. */
+    const messageParts = (message: ChatMessage): ChatPart[] => {
+      if (message.parts.length > 0) return message.parts;
+      if (message.text !== "") return [{ type: "text", text: message.text }];
+      return [];
+    };
+
+    /** Places one emote: its name in glyphs now, covered by its picture when that arrives. */
+    const placeEmote = (pen: Pen, part: ChatPart & { type: "image" }): void => {
+      const { px, emoteW, glyphH, container, spriteLayer } = pen;
+      if (pen.x + emoteW > pen.maxWidth && pen.x > 0) newline(pen);
+      const slotX = pen.x;
+      const slotY = pen.y;
+      // The slot is reserved with the emote's *name* in glyphs, then the sprite covers it when
+      // the image arrives — layout never depends on the network. See the header.
+      const fallback = spriteLayer.addChild(new PIXI.Graphics());
+      const shownName = part.name.slice(0, 8);
+      const fallbackW = Math.max(emoteW, shownName.length * GLYPH_ADVANCE * px);
+      drawGlyphText(fallback, shownName, slotX, slotY, px, pen.bodyColor);
+      pen.x = slotX + fallbackW + px;
+
+      const url = part.url;
+      void PIXI.Assets.load<PIXI.Texture>(url)
+        .then((texture) => {
+          // The message may have aged out (or the effect been disposed) before the CDN
+          // answered; a destroyed container throws on addChild.
+          if (scope.disposed || container.destroyed) return;
+          // Nearest-neighbour is the whole trick: downscaling with smoothing would produce a
+          // blurry smudge that breaks the pixel-art illusion.
+          texture.source.scaleMode = "nearest";
+          const sprite = new PIXI.Sprite(texture);
+          const scale = glyphH / Math.max(1, texture.height);
+          sprite.scale.set(scale);
+          sprite.x = slotX;
+          sprite.y = slotY;
+          fallback.visible = false;
+          spriteLayer.addChild(sprite);
+        })
+        .catch(() => {
+          // Load failed: the glyph name is already on screen, so there is nothing to do.
+        });
+    };
+
+    /** Draws some text at the pen, shadow first, without moving the pen. */
+    const drawAtPen = (pen: Pen, text: string): void => {
+      drawGlyphText(pen.shadow, text, pen.x + pen.px, pen.y + pen.px, pen.px, shadowColor);
+      drawGlyphText(pen.ink, text, pen.x, pen.y, pen.px, pen.bodyColor);
+    };
+
+    /** Places one word, wrapping before it when it does not fit on the current line. */
+    const placeWord = (pen: Pen, text: string): void => {
+      const { px, maxWidth } = pen;
+      const wordW = text.length * GLYPH_ADVANCE * px;
+      if (pen.x + wordW > maxWidth && pen.x > 0) newline(pen);
+      if (wordW <= maxWidth) {
+        drawAtPen(pen, text);
+        pen.x += wordW + px;
+        return;
+      }
+      // A single "word" wider than the canvas (a long URL, a keyboard mash) is hard-broken
+      // character by character — the only alternative is drawing off the edge.
+      for (const char of text) {
+        if (pen.x + GLYPH_ADVANCE * px > maxWidth) newline(pen);
+        drawAtPen(pen, char);
+        pen.x += GLYPH_ADVANCE * px;
+      }
+      pen.x += px;
     };
 
     /**
@@ -387,84 +482,35 @@ const chatPixelText = defineEffect({
 
       // --- The message body, wrapped after the plate. First line starts beside the plate;
       // continuation lines return to the left edge.
-      let x = plateW + GLYPH_ADVANCE * px;
-      let y = padY * 2;
-      const emoteW = GLYPH_ROWS * px + px; // emotes take a square slot one glyph tall, plus a gap
-
-      const newline = (): void => {
-        x = 0;
-        y += lineH;
+      const pen: Pen = {
+        x: plateW + GLYPH_ADVANCE * px,
+        y: padY * 2,
+        px,
+        maxWidth,
+        lineH,
+        glyphH,
+        emoteW: GLYPH_ROWS * px + px, // emotes take a square slot one glyph tall, plus a gap
+        bodyColor,
+        container,
+        shadow,
+        ink,
+        spriteLayer,
       };
 
-      const tokens = tokenize(
-        message.parts.length > 0
-          ? message.parts
-          : message.text !== ""
-            ? [{ type: "text", text: message.text }]
-            : [],
-      );
-
-      for (const token of tokens) {
+      for (const token of tokenize(messageParts(message))) {
         if (token.kind === "image") {
-          if (x + emoteW > maxWidth && x > 0) newline();
-          const slotX = x;
-          const slotY = y;
-          // The slot is reserved with the emote's *name* in glyphs, then the sprite covers it when
-          // the image arrives — layout never depends on the network. See the header.
-          const fallback = spriteLayer.addChild(new PIXI.Graphics());
-          const shownName = token.part.name.slice(0, 8);
-          const fallbackW = Math.max(emoteW, shownName.length * GLYPH_ADVANCE * px);
-          drawGlyphText(fallback, shownName, slotX, slotY, px, bodyColor);
-          x = slotX + fallbackW + px;
-
-          const url = token.part.url;
-          void PIXI.Assets.load<PIXI.Texture>(url)
-            .then((texture) => {
-              // The message may have aged out (or the effect been disposed) before the CDN
-              // answered; a destroyed container throws on addChild.
-              if (scope.disposed || container.destroyed) return;
-              // Nearest-neighbour is the whole trick: downscaling with smoothing would produce a
-              // blurry smudge that breaks the pixel-art illusion.
-              texture.source.scaleMode = "nearest";
-              const sprite = new PIXI.Sprite(texture);
-              const scale = glyphH / Math.max(1, texture.height);
-              sprite.scale.set(scale);
-              sprite.x = slotX;
-              sprite.y = slotY;
-              fallback.visible = false;
-              spriteLayer.addChild(sprite);
-            })
-            .catch(() => {
-              // Load failed: the glyph name is already on screen, so there is nothing to do.
-            });
-          continue;
-        }
-
-        const wordW = token.text.length * GLYPH_ADVANCE * px;
-        if (x + wordW > maxWidth && x > 0) newline();
-        if (wordW <= maxWidth) {
-          drawGlyphText(shadow, token.text, x + px, y + px, px, shadowColor);
-          drawGlyphText(ink, token.text, x, y, px, bodyColor);
-          x += wordW + px;
+          placeEmote(pen, token.part);
         } else {
-          // A single "word" wider than the canvas (a long URL, a keyboard mash) is hard-broken
-          // character by character — the only alternative is drawing off the edge.
-          for (const char of token.text) {
-            if (x + GLYPH_ADVANCE * px > maxWidth) newline();
-            drawGlyphText(shadow, char, x + px, y + px, px, shadowColor);
-            drawGlyphText(ink, char, x, y, px, bodyColor);
-            x += GLYPH_ADVANCE * px;
-          }
-          x += px;
+          placeWord(pen, token.text);
         }
       }
 
-      const height = y + lineH + padY;
+      const height = pen.y + lineH + padY;
       return { message, container, height, shownAt: time, y: stage.height, targetY: stage.height };
     };
 
     const dropEntry = (entry: Entry): void => {
-      feedLayer.removeChild(entry.container);
+      entry.container.removeFromParent();
       entry.container.destroy({ children: true });
     };
 

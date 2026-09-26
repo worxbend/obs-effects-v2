@@ -222,18 +222,11 @@ const catMesh = defineEffect({
       }
     };
 
-    /** Reads the silhouette and turns its dark pixels into a linked mesh. */
-    const build = async (src: string): Promise<void> => {
-      const img = await loadImage(src);
-      if (img === null) {
-        console.error(`[cat-mesh] Could not load the shape image "${src}"; nothing will be drawn.`);
-        nodes = [];
-        return;
-      }
-
-      imageWidth = img.naturalWidth;
-      imageHeight = img.naturalHeight;
-
+    /**
+     * Draws the image into a scratch canvas and reads its pixels back. Returns `null` when the
+     * image cannot be sampled.
+     */
+    const readPixels = (img: HTMLImageElement, src: string): Uint8ClampedArray | null => {
       // The offscreen canvas exists only for this read and is shrunk immediately afterwards: a
       // full-size one holds several megabytes of backing store until the collector gets to it.
       const canvas = document.createElement("canvas");
@@ -242,14 +235,12 @@ const catMesh = defineEffect({
       const context = canvas.getContext("2d", { willReadFrequently: true });
       if (context === null) {
         console.error("[cat-mesh] No 2D context available; nothing will be drawn.");
-        nodes = [];
-        return;
+        return null;
       }
       context.drawImage(img, 0, 0);
 
-      let pixels: Uint8ClampedArray;
       try {
-        pixels = context.getImageData(0, 0, imageWidth, imageHeight).data;
+        return context.getImageData(0, 0, imageWidth, imageHeight).data;
       } catch {
         // A cross-origin image taints the canvas and makes this throw. Reported rather than left as
         // a mystery blank frame — this is the one failure an operator can actually fix.
@@ -257,19 +248,35 @@ const catMesh = defineEffect({
           `[cat-mesh] Cannot read pixels from "${src}". The image must be served from this ` +
             "application; a cross-origin image cannot be sampled.",
         );
-        nodes = [];
-        return;
+        return null;
       } finally {
         canvas.width = 1;
         canvas.height = 1;
       }
+    };
 
+    /** Whether the pixel at (px, py) is part of the silhouette body. */
+    const isBodyPixel = (pixels: Uint8ClampedArray, px: number, py: number): boolean => {
+      const i = (py * imageWidth + px) * 4;
+      const r = pixels[i] ?? 0;
+      const g = pixels[i + 1] ?? 0;
+      const b = pixels[i + 2] ?? 0;
+      const a = pixels[i + 3] ?? 0;
+
+      // Opaque and dark: the silhouette is black on white, so the sum of the channels being
+      // low is what identifies the body.
+      return a > 128 && r + g + b < 192;
+    };
+
+    /**
+     * Samples the silhouette on the grid and replaces `nodes`. Returns a lookup from grid cell to
+     * node index, so edges can be found without searching.
+     */
+    const sampleNodes = (pixels: Uint8ClampedArray): number[][] => {
       const cols = Math.ceil(imageWidth / SAMPLE_STEP);
       const rows = Math.ceil(imageHeight / SAMPLE_STEP);
-      // A lookup from grid cell to node index, so edges can be found without searching.
       const grid: number[][] = Array.from({ length: rows }, () => new Array<number>(cols).fill(-1));
 
-      computeScale();
       nodes = [];
 
       for (let row = 0; row < rows; row += 1) {
@@ -277,35 +284,31 @@ const catMesh = defineEffect({
           const px = col * SAMPLE_STEP;
           const py = row * SAMPLE_STEP;
           if (px >= imageWidth || py >= imageHeight) continue;
+          if (!isBodyPixel(pixels, px, py)) continue;
 
-          const i = (py * imageWidth + px) * 4;
-          const r = pixels[i] ?? 0;
-          const g = pixels[i + 1] ?? 0;
-          const b = pixels[i + 2] ?? 0;
-          const a = pixels[i + 3] ?? 0;
-
-          // Opaque and dark: the silhouette is black on white, so the sum of the channels being
-          // low is what identifies the body.
-          if (a > 128 && r + g + b < 192) {
-            const gridRow = grid[row];
-            if (gridRow !== undefined) gridRow[col] = nodes.length;
-            nodes.push({
-              gridCol: col,
-              gridRow: row,
-              baseX: originX + px * scaleFactor,
-              baseY: originY + py * scaleFactor,
-              // A per-node phase offset derived from its position, so the wave has texture rather
-              // than every node in a row moving in lockstep.
-              phase: ((row * 0.37 + col * 0.19) % 1) * Math.PI * 2,
-              x: 0,
-              y: 0,
-              elev: 0,
-              neighbors: [],
-            });
-          }
+          const gridRow = grid[row];
+          if (gridRow !== undefined) gridRow[col] = nodes.length;
+          nodes.push({
+            gridCol: col,
+            gridRow: row,
+            baseX: originX + px * scaleFactor,
+            baseY: originY + py * scaleFactor,
+            // A per-node phase offset derived from its position, so the wave has texture rather
+            // than every node in a row moving in lockstep.
+            phase: ((row * 0.37 + col * 0.19) % 1) * Math.PI * 2,
+            x: 0,
+            y: 0,
+            elev: 0,
+            neighbors: [],
+          });
         }
       }
 
+      return grid;
+    };
+
+    /** Links every node to its right, down and both diagonal neighbours in the grid. */
+    const linkNeighbors = (grid: number[][]): void => {
       // Right, down and both diagonals — a triangulated mesh. See the header for why the diagonals
       // matter.
       for (const node of nodes) {
@@ -322,12 +325,56 @@ const catMesh = defineEffect({
       }
     };
 
+    /** Reads the silhouette and turns its dark pixels into a linked mesh. */
+    const build = async (src: string): Promise<void> => {
+      const img = await loadImage(src);
+      if (img === null) {
+        console.error(`[cat-mesh] Could not load the shape image "${src}"; nothing will be drawn.`);
+        nodes = [];
+        return;
+      }
+
+      imageWidth = img.naturalWidth;
+      imageHeight = img.naturalHeight;
+
+      const pixels = readPixels(img, src);
+      if (pixels === null) {
+        nodes = [];
+        return;
+      }
+
+      computeScale();
+      linkNeighbors(sampleNodes(pixels));
+    };
+
     await build(imageSrc);
     scope.checkpoint();
 
     stage.onResize(rescale);
 
     let time = 0;
+
+    /** Strokes every node's links to its neighbours. */
+    const drawEdges = (): void => {
+      for (const node of nodes) {
+        for (const index of node.neighbors) {
+          const other = nodes[index];
+          if (other === undefined) continue;
+          const average = (node.elev + other.elev) * 0.5;
+          // Edges between nodes at different heights are brighter and thicker, which is what
+          // picks out the slopes of the wave rather than lighting the whole mesh evenly.
+          const relief = Math.abs(node.elev - other.elev);
+          meshLayer
+            .moveTo(node.x, node.y)
+            .lineTo(other.x, other.y)
+            .stroke({
+              color: dotColor,
+              width: 0.25 + relief * 0.5,
+              alpha: clamp(0.08 + (average + 1) * 0.1 + relief * 0.25, 0, 0.45),
+            });
+        }
+      }
+    };
 
     onFrame(scope, ctx.fpsCap, ({ dt }) => {
       // The original folded a 0.55 wave-speed constant in before using the clock; kept so the
@@ -362,26 +409,7 @@ const catMesh = defineEffect({
       // ── Draw ────────────────────────────────────────────────────────────
       meshLayer.clear();
 
-      if (showEdges) {
-        for (const node of nodes) {
-          for (const index of node.neighbors) {
-            const other = nodes[index];
-            if (other === undefined) continue;
-            const average = (node.elev + other.elev) * 0.5;
-            // Edges between nodes at different heights are brighter and thicker, which is what
-            // picks out the slopes of the wave rather than lighting the whole mesh evenly.
-            const relief = Math.abs(node.elev - other.elev);
-            meshLayer
-              .moveTo(node.x, node.y)
-              .lineTo(other.x, other.y)
-              .stroke({
-                color: dotColor,
-                width: 0.25 + relief * 0.5,
-                alpha: clamp(0.08 + (average + 1) * 0.1 + relief * 0.25, 0, 0.45),
-              });
-          }
-        }
-      }
+      if (showEdges) drawEdges();
 
       for (const node of nodes) {
         const normalised = (node.elev + 1) * 0.5;

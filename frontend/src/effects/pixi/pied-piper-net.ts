@@ -1,7 +1,7 @@
 import * as PIXI from "pixi.js";
 
 import { colorInt, int, num } from "../paramUtils";
-import { createPixiStage, defineEffect, onFrame, useChat } from "../sdk";
+import { createPixiStage, defineEffect, onFrame, random, useChat } from "../sdk";
 
 /**
  * Pied Piper Net
@@ -181,11 +181,11 @@ const piedPiperNet = defineEffect({
 
     const nodes: NetworkNode[] = [];
     const spawnNode = (): NetworkNode => ({
-      x: Math.random() * stage.width,
-      y: Math.random() * stage.height,
-      vx: (Math.random() < 0.5 ? -1 : 1) * (0.15 + Math.random() * 0.25),
-      vy: (Math.random() < 0.5 ? -1 : 1) * (0.15 + Math.random() * 0.25),
-      r: 1.5 + Math.random() * 1.5,
+      x: random() * stage.width,
+      y: random() * stage.height,
+      vx: (random() < 0.5 ? -1 : 1) * (0.15 + random() * 0.25),
+      vy: (random() < 0.5 ? -1 : 1) * (0.15 + random() * 0.25),
+      r: 1.5 + random() * 1.5,
     });
 
     const particles: Particle[] = [];
@@ -201,36 +201,36 @@ const piedPiperNet = defineEffect({
       // margin shrinks on small previews so the range never goes negative.
       const marginX = Math.min(80, w * 0.2);
       const marginY = Math.min(80, h * 0.2);
-      const ox = marginX + Math.random() * (w - marginX * 2);
-      const oy = marginY + Math.random() * (h - marginY * 2);
+      const ox = marginX + random() * (w - marginX * 2);
+      const oy = marginY + random() * (h - marginY * 2);
 
       // The primary red appears twice, so the colour odds match the original's five-entry
       // palette: 2/5 red, 1/5 glow red, 1/5 accent, 1/5 white.
       const palette = [colorPrimary, colorGlow, colorAccent, WHITE, colorPrimary];
       // The original threw 28..45; the parameter shifts the range, keeping the +0..17 spread.
-      const count = Math.max(1, Math.round(burstSize - 8)) + Math.floor(Math.random() * 18);
+      const count = Math.max(1, Math.round(burstSize - 8)) + Math.floor(random() * 18);
 
       for (let i = 0; i < count; i += 1) {
         // Angles distributed evenly around the circle with a little jitter, so the burst is
         // clearly radial without being a perfect geometric ring.
-        const angle = (i / count) * Math.PI * 2 + (Math.random() - 0.5) * 0.5;
-        const speed = (1.8 + Math.random() * 5.5) * burstSpeed;
+        const angle = (i / count) * Math.PI * 2 + (random() - 0.5) * 0.5;
+        const speed = (1.8 + random() * 5.5) * burstSpeed;
         particles.push({
           x: ox,
           y: oy,
           vx: Math.cos(angle) * speed,
           vy: Math.sin(angle) * speed,
-          r: 1.2 + Math.random() * 3.2,
-          color: palette[Math.floor(Math.random() * palette.length)] ?? colorPrimary,
+          r: 1.2 + random() * 3.2,
+          color: palette[Math.floor(random() * palette.length)] ?? colorPrimary,
           life: 0,
-          maxLife: 38 + Math.random() * 36,
+          maxLife: 38 + random() * 36,
         });
       }
 
       // A handful of near-stationary white particles at the origin: they linger where the burst
       // began, giving the connection lines something to anchor to — a short "connection flash".
       for (let i = 0; i < 6; i += 1) {
-        const angle = Math.random() * Math.PI * 2;
+        const angle = random() * Math.PI * 2;
         particles.push({
           x: ox,
           y: oy,
@@ -239,7 +239,7 @@ const piedPiperNet = defineEffect({
           r: 0.8,
           color: WHITE,
           life: 0,
-          maxLife: 18 + Math.random() * 12,
+          maxLife: 18 + random() * 12,
         });
       }
 
@@ -256,19 +256,7 @@ const piedPiperNet = defineEffect({
     const off = chat.onMessage(() => trigger());
     scope.defer(off);
 
-    onFrame(scope, ctx.fpsCap, ({ dt }) => {
-      // The one seconds→frames conversion. Everything below is verbatim original arithmetic.
-      const delta = dt * 60;
-      const w = stage.width;
-      const h = stage.height;
-
-      // The pool grows or shrinks lazily towards the parameter, so retuning it mid-run needs no
-      // reset; a shrink drops the newest nodes, which nothing on screen distinguishes anyway.
-      while (nodes.length < nodeCount) nodes.push(spawnNode());
-      if (nodes.length > nodeCount) nodes.length = nodeCount;
-
-      networkGfx.clear();
-
+    const moveNodes = (w: number, h: number, delta: number): void => {
       // Bounce the nodes off the frame edges. Clamping before the bounce test also folds a
       // resize in for free: a node stranded outside a shrunken frame snaps back to the edge.
       for (const n of nodes) {
@@ -277,7 +265,9 @@ const piedPiperNet = defineEffect({
         if (n.x <= 0 || n.x >= w) n.vx *= -1;
         if (n.y <= 0 || n.y >= h) n.vy *= -1;
       }
+    };
 
+    const drawNetwork = (): void => {
       // Links between every close-enough pair, fading linearly with distance. O(n²), which is
       // why the node-count parameter caps at 80 — 3160 distance checks is still nothing.
       for (let i = 0; i < nodes.length; i += 1) {
@@ -298,7 +288,9 @@ const piedPiperNet = defineEffect({
       for (const n of nodes) {
         networkGfx.circle(n.x, n.y, n.r).fill({ color: colorPrimary, alpha: 0.22 });
       }
+    };
 
+    const stepBurst = (delta: number): void => {
       // Burst particles: decelerate exponentially, fade in fast over the first 15% of life and
       // fade out linearly over the rest.
       burstGfx.clear();
@@ -322,7 +314,9 @@ const piedPiperNet = defineEffect({
         const alpha = clamp((1 - t) * (t < 0.15 ? t / 0.15 : 1), 0, 1);
         burstGfx.circle(p.x, p.y, p.r).fill({ color: p.color, alpha });
       }
+    };
 
+    const drawBurstLinks = (): void => {
       // Faint links between nearby burst particles — the same motif as the background network,
       // which is what makes a burst read as the network momentarily densifying rather than as
       // unrelated fireworks. Fades with the older particle's age so lines die with their dots.
@@ -337,23 +331,49 @@ const piedPiperNet = defineEffect({
             burstGfx
               .moveTo(a.x, a.y)
               .lineTo(b.x, b.y)
-              .stroke({ color: colorPrimary, width: 0.8, alpha: (1 - dist / 80) * (1 - lt) * 0.35 });
+              .stroke({
+                color: colorPrimary,
+                width: 0.8,
+                alpha: (1 - dist / 80) * (1 - lt) * 0.35,
+              });
           }
         }
       }
+    };
 
+    const drawFlash = (w: number, h: number, delta: number): void => {
       // The screen flash: eight frames of hot red across the whole frame, fading linearly.
       flashGfx.clear();
-      if (flashActive) {
-        flashAge += delta;
-        if (flashAge < 8) {
-          flashGfx
-            .rect(0, 0, w, h)
-            .fill({ color: colorGlow, alpha: clamp((1 - flashAge / 8) * 0.09 * flashStrength, 0, 1) });
-        } else {
-          flashActive = false;
-        }
+      if (!flashActive) return;
+      flashAge += delta;
+      if (flashAge < 8) {
+        flashGfx.rect(0, 0, w, h).fill({
+          color: colorGlow,
+          alpha: clamp((1 - flashAge / 8) * 0.09 * flashStrength, 0, 1),
+        });
+      } else {
+        flashActive = false;
       }
+    };
+
+    onFrame(scope, ctx.fpsCap, ({ dt }) => {
+      // The one seconds→frames conversion. Everything below is verbatim original arithmetic.
+      const delta = dt * 60;
+      const w = stage.width;
+      const h = stage.height;
+
+      // The pool grows or shrinks lazily towards the parameter, so retuning it mid-run needs no
+      // reset; a shrink drops the newest nodes, which nothing on screen distinguishes anyway.
+      while (nodes.length < nodeCount) nodes.push(spawnNode());
+      if (nodes.length > nodeCount) nodes.length = nodeCount;
+
+      networkGfx.clear();
+
+      moveNodes(w, h, delta);
+      drawNetwork();
+      stepBurst(delta);
+      drawBurstLinks();
+      drawFlash(w, h, delta);
 
       stage.render();
     });

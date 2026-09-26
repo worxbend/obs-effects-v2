@@ -1202,6 +1202,20 @@ body.renderer {
   color: #ff8f98;
 }
 
+/* Visually hidden but still read by screen readers — for native elements that carry the
+   semantics while a styled sibling carries the look. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 /* The live peak meter. Deliberately a plain bar rather than a canvas: it is a
    diagnostic, it updates about twenty times a second, and a div whose width
    changes is something the browser can composite without a repaint. */

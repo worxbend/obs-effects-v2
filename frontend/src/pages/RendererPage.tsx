@@ -162,7 +162,7 @@ export default function RendererPage(): JSX.Element {
       // time. Clearing before the comparison below matters: an unchanged route must still clear a
       // stale error, or a recovered backend would leave its message on screen forever.
       setError(null);
-      if (applied && applied.effectId === next.effectId && applied.updatedAt === next.updatedAt) {
+      if (applied?.effectId === next.effectId && applied.updatedAt === next.updatedAt) {
         return;
       }
       applied = { effectId: next.effectId, updatedAt: next.updatedAt };
@@ -509,7 +509,7 @@ export default function RendererPage(): JSX.Element {
    */
   const module = createMemo(() => {
     const config = route();
-    if (!config || !config.enabled) return undefined;
+    if (!config?.enabled) return undefined;
     return getEffect(config.effectId);
   });
 

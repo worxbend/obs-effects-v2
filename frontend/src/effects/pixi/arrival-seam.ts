@@ -784,7 +784,15 @@ const arrivalSeam = defineEffect({
      * They start as `NaN`, which compares unequal to everything including itself, so the first
      * frame always draws. See the note in {@link drawSeam}.
      */
-    const drawn = { x: NaN, y: NaN, half: NaN, height: NaN, alpha: NaN, tint: NaN, core: NaN };
+    const drawn = {
+      x: Number.NaN,
+      y: Number.NaN,
+      half: Number.NaN,
+      height: Number.NaN,
+      alpha: Number.NaN,
+      tint: Number.NaN,
+      core: Number.NaN,
+    };
 
     /**
      * Redraws the seam at a given height and opacity.
@@ -860,34 +868,31 @@ const arrivalSeam = defineEffect({
     const revealProgress = (): number =>
       easeOutQuart(clamp01((eventTime - revealDelay) / Math.max(0.01, revealSeconds)));
 
-    onFrame(scope, ctx.fpsCap, ({ dt, now }) => {
-      bus.sample(now);
-      envelopes.update(dt);
+    /** Fires the next demonstration event when Demo Pulse is on and its interval has elapsed. */
+    const runDemoPulse = (dt: number): void => {
+      if (!testPulse) return;
+      demoTimer += dt;
+      if (demoTimer < testPulseSeconds) return;
+      demoTimer = 0;
+      const demo = DEMO_EVENTS[demoIndex % DEMO_EVENTS.length] ?? DEMO_EVENTS[0];
+      demoIndex += 1;
+      if (demo === undefined) return;
+      enqueue({
+        name: demo.name,
+        detail: demo.detail,
+        tint: tintFromChat ? hexToInt(demo.color, seamColor) : seamColor,
+        raid: demo.raid,
+      });
+    };
 
-      const width = Math.max(1, stage.width);
-      const height = Math.max(1, stage.height);
-      const centreX = width / 2;
-      const centreY = height * seamY;
+    /**
+     * How hard the slab lands when it finishes opening: harder when that exact frame coincided
+     * with a transient in the audio, which ties the alert to the room.
+     */
+    const settleImpulse = (): number => (envelopes.beat ? 1 : 0.55);
 
-      // ── Demonstration events ────────────────────────────────────────────
-      if (testPulse) {
-        demoTimer += dt;
-        if (demoTimer >= testPulseSeconds) {
-          demoTimer = 0;
-          const demo = DEMO_EVENTS[demoIndex % DEMO_EVENTS.length] ?? DEMO_EVENTS[0];
-          demoIndex += 1;
-          if (demo !== undefined) {
-            enqueue({
-              name: demo.name,
-              detail: demo.detail,
-              tint: tintFromChat ? hexToInt(demo.color, seamColor) : seamColor,
-              raid: demo.raid,
-            });
-          }
-        }
-      }
-
-      // ── The state machine ───────────────────────────────────────────────
+    /** Advances the clocks and moves the seam through idle → opening → holding → closing. */
+    const advancePhase = (dt: number): void => {
       phaseTime += dt;
       if (phase !== "idle") eventTime += dt;
       settle *= Math.pow(0.0015, dt);
@@ -902,9 +907,8 @@ const arrivalSeam = defineEffect({
           if (phaseTime >= openSeconds) {
             phase = "holding";
             phaseTime = 0;
-            // The slab lands with a small dip and springs back. A transient in the audio at that
-            // exact moment makes the landing a touch harder, which ties the alert to the room.
-            settle = envelopes.beat ? 1 : 0.55;
+            // The slab lands with a small dip and springs back.
+            settle = settleImpulse();
           }
           break;
         case "holding":
@@ -917,6 +921,118 @@ const arrivalSeam = defineEffect({
           if (phaseTime >= closeSeconds) endAlert();
           break;
       }
+    };
+
+    /**
+     * Places the two spill sprites around the seam and sets their brightness.
+     *
+     * Constant while opening and closing; during the hold it breathes with the streamer's own
+     * audio, which is the point of the effect.
+     */
+    const updateSpill = (
+      centreX: number,
+      centreY: number,
+      halfLength: number,
+      openedHeight: number,
+      openFactor: number,
+      tint: number,
+    ): void => {
+      const voice = phase === "holding" ? 1 + voiceSpill * envelopes.mid : 1;
+      const spillAlpha = Math.min(1, spillStrength * clamp01(openFactor) * voice);
+      spillLayer.visible = spillAlpha > 0.002 && spillHeight > 0;
+      if (!spillLayer.visible) return;
+      const spillWidth = halfLength * 2.4;
+      spillBelow.position.set(centreX, centreY + openedHeight / 2);
+      spillBelow.scale.set(spillWidth / SPILL_TEX_W, spillHeight / SPILL_TEX_H);
+      spillAbove.position.set(centreX, centreY - openedHeight / 2);
+      // A negative vertical scale flips the same picture, so one baked texture covers both sides.
+      spillAbove.scale.set(spillWidth / SPILL_TEX_W, -spillHeight / SPILL_TEX_H);
+      spillBelow.tint = tint;
+      spillAbove.tint = tint;
+      spillLayer.alpha = spillAlpha;
+    };
+
+    /**
+     * The wipe rectangle for one frame, given where the text block sits.
+     *
+     * Opening and holding reveal from the left edge rightwards; closing keeps the right edge still
+     * and sweeps the left edge across, so the name leaves the way it arrived instead of rewinding.
+     */
+    const wipeGeometry = (
+      phase: Phase,
+      left: number,
+      span: number,
+    ): { maskX: number; maskW: number } => {
+      if (phase === "closing") {
+        /*
+         * The mask's two edges are tracked separately: the left edge sweeps right on the closing
+         * curve, while the right edge carries on revealing at its own pace. Their difference is
+         * the visible width.
+         *
+         * Writing this as `span * (1 - gone)` — one edge moving under a rectangle assumed to be
+         * full width — is the tempting version and it is wrong. It assumes the reveal had
+         * finished, and the reveal is on a clock of its own: a long Reveal Delay or a long Reveal
+         * Duration against a short Hold leaves it half done when closing starts, and the name
+         * would then snap to full width on that frame before wiping out. Subtracting the real
+         * progress collapses to exactly `span * (1 - gone)` once the reveal *has* finished, so
+         * the ordinary case is unchanged.
+         */
+        const gone = easeInCubic(clamp01(phaseTime / Math.max(0.01, closeSeconds)));
+        return { maskX: left + span * gone, maskW: Math.max(0, span * (revealProgress() - gone)) };
+      }
+      if (phase === "idle") return { maskX: left, maskW: 0 };
+      return { maskX: left, maskW: span * revealProgress() };
+    };
+
+    /** Lays out the two text lines of the current alert and rebuilds the wipe mask over them. */
+    const layoutTextAndMask = (centreX: number, centreY: number, width: number): void => {
+      textLayer.visible = nameText !== null && detailText !== null;
+      if (nameText === null || detailText === null) return;
+
+      // Measure at natural size first, then scale both lines down together if the name is wider
+      // than the frame allows, so a fourteen-character name and a two-character one are laid out
+      // by the same rule.
+      nameText.scale.set(1);
+      detailText.scale.set(1);
+      const intrinsicWidth = Math.max(nameText.width, detailText.width, 1);
+      const maxWidth = width * TEXT_MAX_WIDTH_FRACTION;
+      const scale = Math.min(1, maxWidth / intrinsicWidth);
+      nameText.scale.set(scale);
+      detailText.scale.set(scale);
+
+      const detailY = centreY + slabHeight / 2 + detailFontSize * DETAIL_GAP_FACTOR * scale;
+      nameText.position.set(centreX, centreY);
+      detailText.position.set(centreX, detailY);
+
+      const blockWidth = intrinsicWidth * scale;
+      const pad = nameFontSize * 0.4 * scale;
+      const left = centreX - blockWidth / 2 - pad;
+      const span = blockWidth + pad * 2;
+
+      const { maskX, maskW } = wipeGeometry(phase, left, span);
+
+      const maskTop = centreY - slabHeight;
+      const maskBottom = detailY + detailFontSize * 2 * scale;
+      wipeMask.clear();
+      if (maskW > 0.5) {
+        wipeMask.rect(maskX, maskTop, maskW, maskBottom - maskTop).fill({ color: 0xffffff });
+      }
+    };
+
+    onFrame(scope, ctx.fpsCap, ({ dt, now }) => {
+      bus.sample(now);
+      envelopes.update(dt);
+
+      const width = Math.max(1, stage.width);
+      const height = Math.max(1, stage.height);
+      const centreX = width / 2;
+      const centreY = height * seamY;
+
+      // ── Demonstration events ────────────────────────────────────────────
+      runDemoPulse(dt);
+
+      // ── The state machine ───────────────────────────────────────────────
+      advancePhase(dt);
 
       // ── How far open the seam is, 0 (hairline) to 1 (full slab) ─────────
       const openFactor = openFactorFor(phase, phaseTime, openSeconds, closeSeconds);
@@ -933,79 +1049,10 @@ const arrivalSeam = defineEffect({
       drawSeam(centreX, centreY, halfLength, openedHeight, seamAlpha, tint);
 
       // ── The spilled light ───────────────────────────────────────────────
-      // Constant while opening and closing; during the hold it breathes with the streamer's own
-      // audio, which is the point of the effect.
-      const voice = phase === "holding" ? 1 + voiceSpill * envelopes.mid : 1;
-      const spillAlpha = Math.min(1, spillStrength * clamp01(openFactor) * voice);
-      spillLayer.visible = spillAlpha > 0.002 && spillHeight > 0;
-      if (spillLayer.visible) {
-        const spillWidth = halfLength * 2.4;
-        spillBelow.position.set(centreX, centreY + openedHeight / 2);
-        spillBelow.scale.set(spillWidth / SPILL_TEX_W, spillHeight / SPILL_TEX_H);
-        spillAbove.position.set(centreX, centreY - openedHeight / 2);
-        // A negative vertical scale flips the same picture, so one baked texture covers both sides.
-        spillAbove.scale.set(spillWidth / SPILL_TEX_W, -spillHeight / SPILL_TEX_H);
-        spillBelow.tint = tint;
-        spillAbove.tint = tint;
-        spillLayer.alpha = spillAlpha;
-      }
+      updateSpill(centreX, centreY, halfLength, openedHeight, openFactor, tint);
 
       // ── The name and its wipe ───────────────────────────────────────────
-      textLayer.visible = nameText !== null && detailText !== null;
-      if (nameText !== null && detailText !== null) {
-        // Measure at natural size first, then scale both lines down together if the name is wider
-        // than the frame allows, so a fourteen-character name and a two-character one are laid out
-        // by the same rule.
-        nameText.scale.set(1);
-        detailText.scale.set(1);
-        const intrinsicWidth = Math.max(nameText.width, detailText.width, 1);
-        const maxWidth = width * TEXT_MAX_WIDTH_FRACTION;
-        const scale = Math.min(1, maxWidth / intrinsicWidth);
-        nameText.scale.set(scale);
-        detailText.scale.set(scale);
-
-        const detailY = centreY + slabHeight / 2 + detailFontSize * DETAIL_GAP_FACTOR * scale;
-        nameText.position.set(centreX, centreY);
-        detailText.position.set(centreX, detailY);
-
-        const blockWidth = intrinsicWidth * scale;
-        const pad = nameFontSize * 0.4 * scale;
-        const left = centreX - blockWidth / 2 - pad;
-        const span = blockWidth + pad * 2;
-
-        // The wipe. Opening and holding reveal from the left edge rightwards; closing keeps the
-        // right edge still and sweeps the left edge across, so the name leaves the way it arrived
-        // instead of rewinding.
-        let maskX = left;
-        let maskW = 0;
-        if (phase === "closing") {
-          /*
-           * The mask's two edges are tracked separately: the left edge sweeps right on the closing
-           * curve, while the right edge carries on revealing at its own pace. Their difference is
-           * the visible width.
-           *
-           * Writing this as `span * (1 - gone)` — one edge moving under a rectangle assumed to be
-           * full width — is the tempting version and it is wrong. It assumes the reveal had
-           * finished, and the reveal is on a clock of its own: a long Reveal Delay or a long Reveal
-           * Duration against a short Hold leaves it half done when closing starts, and the name
-           * would then snap to full width on that frame before wiping out. Subtracting the real
-           * progress collapses to exactly `span * (1 - gone)` once the reveal *has* finished, so
-           * the ordinary case is unchanged.
-           */
-          const gone = easeInCubic(clamp01(phaseTime / Math.max(0.01, closeSeconds)));
-          maskX = left + span * gone;
-          maskW = Math.max(0, span * (revealProgress() - gone));
-        } else if (phase !== "idle") {
-          maskW = span * revealProgress();
-        }
-
-        const maskTop = centreY - slabHeight;
-        const maskBottom = detailY + detailFontSize * 2 * scale;
-        wipeMask.clear();
-        if (maskW > 0.5) {
-          wipeMask.rect(maskX, maskTop, maskW, maskBottom - maskTop).fill({ color: 0xffffff });
-        }
-      }
+      layoutTextAndMask(centreX, centreY, width);
 
       stage.render();
     });

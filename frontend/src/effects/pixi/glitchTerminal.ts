@@ -2,7 +2,7 @@ import * as PIXI from "pixi.js";
 
 import type { EffectContext, ParamSpec } from "../types";
 import { bool, colorHex, int, num, str } from "../paramUtils";
-import { createPixiStage, onFrame, useFont, type EffectHandle, type Scope } from "../sdk";
+import { createPixiStage, onFrame, random, type EffectHandle, type Scope, useFont } from "../sdk";
 
 /**
  * The shared "glitch terminal" implementation: a grid of glyphs that churns, tears and corrupts.
@@ -456,9 +456,9 @@ export function glitchTerminalSetup(
     /** Picks a glyph for one cell, or `""` for an empty one. */
     const pickGlyph = (value: number): string => {
       if (value < 0.12) return "";
-      if (value < 0.3) return Math.random() < 0.4 ? (settings.light[0] ?? "·") : "";
+      if (value < 0.3) return random() < 0.4 ? (settings.light[0] ?? "·") : "";
       const set = value < 0.5 ? settings.light : settings.heavy;
-      return set[Math.floor(Math.random() * set.length)] ?? "";
+      return set[Math.floor(random() * set.length)] ?? "";
     };
 
     /**
@@ -516,7 +516,7 @@ export function glitchTerminalSetup(
     const churn = (): void => {
       const count = Math.floor(grid.length * settings.churnRate);
       for (let i = 0; i < count; i += 1) {
-        const index = Math.floor(Math.random() * grid.length);
+        const index = Math.floor(random() * grid.length);
         grid[index] = pickGlyph(density[index] ?? 0);
       }
     };
@@ -530,15 +530,15 @@ export function glitchTerminalSetup(
         if (block.ttl <= 0) blocks.splice(i, 1);
       }
 
-      if (Math.random() < 0.015 && blocks.length < settings.maxBlocks) {
-        const w = 40 + Math.floor(Math.random() * 220);
-        const h = 20 + Math.floor(Math.random() * 140);
+      if (random() < 0.015 && blocks.length < settings.maxBlocks) {
+        const w = 40 + Math.floor(random() * 220);
+        const h = 20 + Math.floor(random() * 140);
         blocks.push({
-          x: Math.floor(Math.random() * Math.max(1, canvas.width - w)),
-          y: Math.floor(Math.random() * Math.max(1, canvas.height - h)),
+          x: Math.floor(random() * Math.max(1, canvas.width - w)),
+          y: Math.floor(random() * Math.max(1, canvas.height - h)),
           w,
           h,
-          ttl: 0.3 + Math.random() * 1.8,
+          ttl: 0.3 + random() * 1.8,
           maxTtl: 2,
         });
       }
@@ -553,33 +553,32 @@ export function glitchTerminalSetup(
 
       if (frame < nextGlitchAt) return;
 
-      const kind = Math.floor(Math.random() * 3);
+      const kind = Math.floor(random() * 3);
       if (kind === 0) {
         // Shove one row sideways — a torn scanline.
-        tornRows.set(Math.floor(Math.random() * rows), {
-          offset: (Math.random() < 0.5 ? 1 : -1) * (20 + Math.floor(Math.random() * 80)),
-          ttl: 4 + Math.floor(Math.random() * 8),
+        tornRows.set(Math.floor(random() * rows), {
+          offset: (random() < 0.5 ? 1 : -1) * (20 + Math.floor(random() * 80)),
+          ttl: 4 + Math.floor(random() * 8),
         });
       } else if (kind === 1) {
         // Scramble a band of rows outright, ignoring their density.
-        const start = Math.floor(Math.random() * rows);
-        const height = 1 + Math.floor(Math.random() * 3);
+        const start = Math.floor(random() * rows);
+        const height = 1 + Math.floor(random() * 3);
         for (let row = start; row < Math.min(rows, start + height); row += 1) {
           for (let col = 0; col < cols; col += 1) {
-            grid[row * cols + col] =
-              settings.all[Math.floor(Math.random() * settings.all.length)] ?? "";
+            grid[row * cols + col] = settings.all[Math.floor(random() * settings.all.length)] ?? "";
           }
         }
       } else if (blocks.length < settings.maxBlocks + 3 && settings.maxBlocks > 0) {
         // A bigger, shorter-lived rectangle than the ambient ones.
-        const w = 80 + Math.floor(Math.random() * 300);
-        const h = 30 + Math.floor(Math.random() * 120);
+        const w = 80 + Math.floor(random() * 300);
+        const h = 30 + Math.floor(random() * 120);
         blocks.push({
-          x: Math.floor(Math.random() * Math.max(1, canvas.width - w)),
-          y: Math.floor(Math.random() * Math.max(1, canvas.height - h)),
+          x: Math.floor(random() * Math.max(1, canvas.width - w)),
+          y: Math.floor(random() * Math.max(1, canvas.height - h)),
           w,
           h,
-          ttl: 0.15 + Math.random() * 0.6,
+          ttl: 0.15 + random() * 0.6,
           maxTtl: 0.8,
         });
       }
@@ -587,7 +586,7 @@ export function glitchTerminalSetup(
       nextGlitchAt =
         frame +
         settings.glitchMin +
-        Math.floor(Math.random() * (settings.glitchMax - settings.glitchMin));
+        Math.floor(random() * (settings.glitchMax - settings.glitchMin));
     };
 
     /** Draws the whole frame into the offscreen canvas. */
@@ -632,12 +631,7 @@ export function glitchTerminalSetup(
       if (settings.sparks && frame % 4 < 2) {
         context.fillStyle = settings.colorSpark;
         for (let i = 0; i < 30; i += 1) {
-          context.fillRect(
-            Math.floor(Math.random() * width),
-            Math.floor(Math.random() * height),
-            2,
-            2,
-          );
+          context.fillRect(Math.floor(random() * width), Math.floor(random() * height), 2, 2);
         }
       }
 

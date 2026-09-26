@@ -1,7 +1,7 @@
 import * as PIXI from "pixi.js";
 
 import { bool, int, num, str } from "../paramUtils";
-import { createPixiStage, defineEffect, onFrame, useChat } from "../sdk";
+import { createPixiStage, defineEffect, onFrame, random, useChat } from "../sdk";
 import type { ChatEventKind, ChatMessage, ChatPart } from "~/types/contract";
 
 /**
@@ -90,6 +90,15 @@ interface CardSettings {
   showEmotes: boolean;
 }
 
+/** The per-card identity inputs derived from the chatting user: palette, seeds, accent and settings. */
+interface CardLook {
+  palette: Palette;
+  userSeed: number;
+  userAccent: number;
+  seed: number;
+  settings: CardSettings;
+}
+
 /* ------------------------------------------------------------------ */
 /* Small helpers ported from the old shared/overlay.ts                 */
 /* ------------------------------------------------------------------ */
@@ -108,7 +117,7 @@ function seedRng(seed: number): () => number {
 function hashSeed(input: string): number {
   let hash = 2166136261;
   for (let i = 0; i < input.length; i += 1) {
-    hash ^= input.charCodeAt(i);
+    hash ^= input.codePointAt(i) ?? 0;
     hash = Math.imul(hash, 16777619);
   }
   return hash >>> 0;
@@ -143,9 +152,7 @@ function hslToRgb(h: number, s: number, l: number): number {
   else [r, g, b] = [c, 0, x];
 
   return (
-    (Math.round((r + m) * 255) << 16) |
-    (Math.round((g + m) * 255) << 8) |
-    Math.round((b + m) * 255)
+    (Math.round((r + m) * 255) << 16) | (Math.round((g + m) * 255) << 8) | Math.round((b + m) * 255)
   );
 }
 
@@ -312,7 +319,9 @@ class TextilePlate {
     base.roundRect(PX, PX, width - PX * 2, height - PX * 2, TILE - PX).fill(rgba(0x2a2030, 0.96));
     base.roundRect(innerX, innerY, innerW, innerH, PX).fill(rgba(palette.plateDeep, 0.6));
 
-    edge.roundRect(0, 0, width, height, TILE).stroke({ color: 0x070609, width: PX * 2, alpha: 0.95 });
+    edge
+      .roundRect(0, 0, width, height, TILE)
+      .stroke({ color: 0x070609, width: PX * 2, alpha: 0.95 });
     edge
       .roundRect(PX * 2, PX * 2, width - PX * 4, height - PX * 4, PX)
       .stroke({ color: mixColor(palette.edge, 0xffffff, 0.12), width: PX, alpha: 0.48 });
@@ -353,7 +362,13 @@ class TextilePlate {
         [RAZER_BLACK, RAZER_DEEP, RAZER_DARK, RAZER_GREEN, RAZER_TOXIC, RAZER_ACID],
         [0x000000, 0x031003, 0x0a2608, 0x1fd816, 0x38ff24, 0x8cff68],
         [0x010401, 0x071807, 0x103b0c, 0x44d62c, 0x54f044, 0x9cff86],
-        [mixColor(RAZER_BLACK, RAZER_GREEN, 0.18), RAZER_BLACK, RAZER_TOXIC, RAZER_DEEP, RAZER_ACID],
+        [
+          mixColor(RAZER_BLACK, RAZER_GREEN, 0.18),
+          RAZER_BLACK,
+          RAZER_TOXIC,
+          RAZER_DEEP,
+          RAZER_ACID,
+        ],
         [palette.night, palette.plateDeep, palette.plate, palette.line, palette.edge, palette.ink],
       ];
     }
@@ -402,8 +417,12 @@ class TextilePlate {
       if (i > 0) g.rect(x - PX, 0, PX, height).fill(rgba(mixColor(color, 0x000000, 0.25), 0.36));
       if (rng() > 0.42) {
         const accent = pick(colors, i + 2 + Math.floor(rng() * colors.length));
-        g.rect(x + Math.min(segmentW, remaining) * 0.58, 0, PX * (1 + Math.floor(rng() * 2)), height)
-          .fill(rgba(mixColor(accent, 0xffffff, 0.18), 0.72));
+        g.rect(
+          x + Math.min(segmentW, remaining) * 0.58,
+          0,
+          PX * (1 + Math.floor(rng() * 2)),
+          height,
+        ).fill(rgba(mixColor(accent, 0xffffff, 0.18), 0.72));
       }
       x += segmentW;
       if (x >= width) break;
@@ -460,10 +479,24 @@ class TextilePlate {
       const color = this.motifColor(colors, Math.floor(x / gap), 0.12);
       for (let y = -height * 0.2; y < height * 1.1; y += height * 0.32) {
         g.moveTo(x, y);
-        g.bezierCurveTo(x + gap * 0.18, y + height * 0.08, x + gap * 0.18, y + height * 0.24, x, y + height * 0.34);
+        g.bezierCurveTo(
+          x + gap * 0.18,
+          y + height * 0.08,
+          x + gap * 0.18,
+          y + height * 0.24,
+          x,
+          y + height * 0.34,
+        );
         g.stroke({ color, width: PX, alpha: 0.74 });
         g.moveTo(x + PX * 3, y);
-        g.bezierCurveTo(x + gap * 0.26, y + height * 0.1, x + gap * 0.26, y + height * 0.22, x + PX * 3, y + height * 0.34);
+        g.bezierCurveTo(
+          x + gap * 0.26,
+          y + height * 0.1,
+          x + gap * 0.26,
+          y + height * 0.22,
+          x + PX * 3,
+          y + height * 0.34,
+        );
         g.stroke({ color: mixColor(color, 0xffffff, 0.28), width: PX, alpha: 0.42 });
       }
     }
@@ -484,10 +517,24 @@ class TextilePlate {
       for (let repeat = 0; repeat < 2; repeat += 1) {
         const y = height * (0.24 + repeat * 0.38);
         g.moveTo(x - step * 0.22, y - height * 0.24);
-        g.bezierCurveTo(x + step * 0.16, y - height * 0.18, x + step * 0.16, y + height * 0.18, x - step * 0.22, y + height * 0.24);
+        g.bezierCurveTo(
+          x + step * 0.16,
+          y - height * 0.18,
+          x + step * 0.16,
+          y + height * 0.18,
+          x - step * 0.22,
+          y + height * 0.24,
+        );
         g.stroke({ color, width: PX, alpha: 0.58 });
         g.moveTo(x - step * 0.1, y - height * 0.2);
-        g.bezierCurveTo(x + step * 0.06, y - height * 0.1, x + step * 0.06, y + height * 0.1, x - step * 0.1, y + height * 0.2);
+        g.bezierCurveTo(
+          x + step * 0.06,
+          y - height * 0.1,
+          x + step * 0.06,
+          y + height * 0.1,
+          x - step * 0.1,
+          y + height * 0.2,
+        );
         g.stroke({ color: mixColor(color, 0xffffff, 0.24), width: PX, alpha: 0.42 });
       }
     }
@@ -507,7 +554,14 @@ class TextilePlate {
       g.bezierCurveTo(x - step * 0.3, height * 0.22, x - step * 0.3, height * 0.78, x, height);
       g.stroke({ color, width: PX, alpha: 0.66 });
       g.moveTo(x + PX * 4, 0);
-      g.bezierCurveTo(x - step * 0.14, height * 0.24, x - step * 0.14, height * 0.76, x + PX * 4, height);
+      g.bezierCurveTo(
+        x - step * 0.14,
+        height * 0.24,
+        x - step * 0.14,
+        height * 0.76,
+        x + PX * 4,
+        height,
+      );
       g.stroke({ color: mixColor(color, 0xffffff, 0.26), width: PX, alpha: 0.44 });
     }
   }
@@ -564,8 +618,22 @@ class TextilePlate {
       const color = this.motifColor(colors, Math.floor(x / step), 0.24);
       for (let y = height * 0.24; y < height; y += height * 0.42) {
         g.moveTo(x - step * 0.24, y - height * 0.18);
-        g.bezierCurveTo(x + step * 0.18, y - height * 0.24, x + step * 0.2, y + height * 0.08, x - step * 0.02, y + height * 0.04);
-        g.bezierCurveTo(x - step * 0.22, y, x - step * 0.18, y + height * 0.2, x + step * 0.18, y + height * 0.2);
+        g.bezierCurveTo(
+          x + step * 0.18,
+          y - height * 0.24,
+          x + step * 0.2,
+          y + height * 0.08,
+          x - step * 0.02,
+          y + height * 0.04,
+        );
+        g.bezierCurveTo(
+          x - step * 0.22,
+          y,
+          x - step * 0.18,
+          y + height * 0.2,
+          x + step * 0.18,
+          y + height * 0.2,
+        );
         g.stroke({ color, width: PX, alpha: 0.58 });
       }
     }
@@ -585,7 +653,9 @@ class TextilePlate {
       const center = pick(colors, Math.floor(x / step) + 3);
       for (let i = 0; i < 6; i += 1) {
         const angle = (i * Math.PI) / 3;
-        g.circle(x + Math.cos(angle) * PX * 2.4, cy + Math.sin(angle) * PX * 2.4, PX * 1.6).fill(rgba(petal, 0.58));
+        g.circle(x + Math.cos(angle) * PX * 2.4, cy + Math.sin(angle) * PX * 2.4, PX * 1.6).fill(
+          rgba(petal, 0.58),
+        );
       }
       g.circle(x, cy, PX * 1.35).fill(rgba(mixColor(center, 0xffffff, 0.18), 0.82));
     }
@@ -626,13 +696,22 @@ class TextilePlate {
       const color = this.motifColor(colors, lane + Math.floor(rng() * colors.length), 0.16);
       g.moveTo(width * 0.06, y);
       for (let x = width * 0.06; x < width * 0.96; x += width * 0.16) {
-        g.bezierCurveTo(x + width * 0.05, y - height * 0.2, x + width * 0.1, y + height * 0.2, x + width * 0.16, y);
+        g.bezierCurveTo(
+          x + width * 0.05,
+          y - height * 0.2,
+          x + width * 0.1,
+          y + height * 0.2,
+          x + width * 0.16,
+          y,
+        );
       }
       g.stroke({ color, width: PX, alpha: 0.38 });
 
       for (let x = width * 0.12; x < width * 0.94; x += width * 0.14) {
         const side = rng() > 0.5 ? -1 : 1;
-        g.ellipse(x, y + side * PX * 2.2, PX * 2.8, PX * 1.3).fill(rgba(mixColor(color, 0xffffff, 0.18), 0.48));
+        g.ellipse(x, y + side * PX * 2.2, PX * 2.8, PX * 1.3).fill(
+          rgba(mixColor(color, 0xffffff, 0.18), 0.48),
+        );
       }
     }
   }
@@ -715,7 +794,14 @@ class PixelAvatar {
       },
     });
     const particles: PIXI.Particle[] = [];
-    const colors = [palette.ink, userAccent, palette.line, palette.gold, palette.rose, palette.blue];
+    const colors = [
+      palette.ink,
+      userAccent,
+      palette.line,
+      palette.gold,
+      palette.rose,
+      palette.blue,
+    ];
     for (let y = 0; y < 7; y += 1) {
       for (let x = 0; x < 7; x += 1) {
         // Mirror the right half onto the left, which is what makes it read as a face-like glyph.
@@ -760,6 +846,27 @@ interface CompanionProfile {
 
 type CellFn = (x: number, y: number, tint: number, alpha?: number) => void;
 type BlockFn = (x: number, y: number, w: number, h: number, tint: number, alpha?: number) => void;
+
+/** The 17×17 occupancy grid of a blob companion: a wobbly ellipse around (cx, cy), with a
+ * vertical stem for type 2 and a side tail for type 3. */
+function blobCells(type: number, cx: number, cy: number): boolean[][] {
+  const rx = [5.7, 4.4, 5.0, 4.8, 5.8][type] ?? 5.2;
+  const ry = [6.0, 6.4, 5.2, 6.7, 4.9][type] ?? 5.6;
+  const cells: boolean[][] = [];
+  for (let y = 0; y < 17; y += 1) {
+    const row: boolean[] = [];
+    for (let x = 0; x < 17; x += 1) {
+      const nx = (x - cx) / rx;
+      const ny = (y - cy) / ry;
+      let inside = nx * nx + ny * ny < 1.02 + Math.sin(x * 1.1 + y * 0.6) * 0.05;
+      if (type === 2) inside ||= Math.abs(x - cx) < 2.5 && y > 2 && y < 14;
+      if (type === 3) inside ||= x > 11 && x < 15 && y > 7 && y < 11;
+      row.push(inside);
+    }
+    cells.push(row);
+  }
+  return cells;
+}
 
 /**
  * A small procedural creature: blob, humanoid, robot or tall cyclops, with a face, hat and
@@ -829,7 +936,8 @@ class PixelCompanion {
     };
 
     const cell: CellFn = (x, y, tint, alpha = 1) => add(x * PX, y * PX, PX, PX, tint, alpha);
-    const block: BlockFn = (x, y, w, h, tint, alpha = 1) => add(x * PX, y * PX, w * PX, h * PX, tint, alpha);
+    const block: BlockFn = (x, y, w, h, tint, alpha = 1) =>
+      add(x * PX, y * PX, w * PX, h * PX, tint, alpha);
 
     if (profile.type < 5) {
       this.blobBody(cell, profile, rng);
@@ -867,35 +975,35 @@ class PixelCompanion {
   }
 
   private blobBody(cell: CellFn, profile: CompanionProfile, rng: () => number): void {
-    const cx = profile.type === 1 ? 8 : profile.type === 3 ? 9 : 8;
+    const cx = profile.type === 3 ? 9 : 8;
     const cy = profile.type === 2 ? 8 : 9;
-    const rx = [5.7, 4.4, 5.0, 4.8, 5.8][profile.type] ?? 5.2;
-    const ry = [6.0, 6.4, 5.2, 6.7, 4.9][profile.type] ?? 5.6;
-    const cells: boolean[][] = [];
+    const cells = blobCells(profile.type, cx, cy);
+    this.paintBlobCells(cell, cells, cy, profile);
+    this.blobExtras(cell, profile, rng);
+  }
 
-    for (let y = 0; y < 17; y += 1) {
-      const row: boolean[] = [];
-      for (let x = 0; x < 17; x += 1) {
-        const nx = (x - cx) / rx;
-        const ny = (y - cy) / ry;
-        let inside = nx * nx + ny * ny < 1.02 + Math.sin(x * 1.1 + y * 0.6) * 0.05;
-        if (profile.type === 2) inside ||= Math.abs(x - cx) < 2.5 && y > 2 && y < 14;
-        if (profile.type === 3) inside ||= x > 11 && x < 15 && y > 7 && y < 11;
-        row.push(inside);
-      }
-      cells.push(row);
-    }
-
+  /** Paints the blob grid: dark outline, light upper band, body colour elsewhere. */
+  private paintBlobCells(
+    cell: CellFn,
+    cells: boolean[][],
+    cy: number,
+    profile: CompanionProfile,
+  ): void {
     for (let y = 0; y < cells.length; y += 1) {
       const row = cells[y] ?? [];
       for (let x = 0; x < row.length; x += 1) {
         if (!row[x]) continue;
         const edge = !cells[y - 1]?.[x] || !cells[y + 1]?.[x] || !row[x - 1] || !row[x + 1];
-        const tint = edge ? profile.dark : y < cy - 2 ? profile.light : profile.body;
+        let tint = profile.body;
+        if (edge) tint = profile.dark;
+        else if (y < cy - 2) tint = profile.light;
         cell(x, y + 1, tint, 0.98);
       }
     }
+  }
 
+  /** Ears, tail and feet, plus arms by chance. */
+  private blobExtras(cell: CellFn, profile: CompanionProfile, rng: () => number): void {
     if (profile.type === 0 || profile.type === 4) {
       cell(3, 3, profile.dark);
       cell(4, 2, profile.light);
@@ -913,7 +1021,12 @@ class PixelCompanion {
     }
   }
 
-  private humanBody(cell: CellFn, block: BlockFn, profile: CompanionProfile, rng: () => number): void {
+  private humanBody(
+    cell: CellFn,
+    block: BlockFn,
+    profile: CompanionProfile,
+    rng: () => number,
+  ): void {
     block(5, 3, 7, 7, profile.dark);
     block(6, 3, 5, 7, profile.skin);
     block(5, 2, 7, 3, profile.hair);
@@ -940,7 +1053,12 @@ class PixelCompanion {
     }
   }
 
-  private robotBody(cell: CellFn, block: BlockFn, profile: CompanionProfile, rng: () => number): void {
+  private robotBody(
+    cell: CellFn,
+    block: BlockFn,
+    profile: CompanionProfile,
+    rng: () => number,
+  ): void {
     block(4, 3, 10, 9, profile.dark);
     block(5, 4, 8, 7, profile.body);
     block(5, 12, 8, 4, profile.dark);
@@ -961,15 +1079,25 @@ class PixelCompanion {
     }
   }
 
-  private tallOneEyeBody(cell: CellFn, block: BlockFn, profile: CompanionProfile, rng: () => number): void {
+  private tallOneEyeBody(
+    cell: CellFn,
+    block: BlockFn,
+    profile: CompanionProfile,
+    rng: () => number,
+  ): void {
     const cx = profile.type === 10 ? 8 : 7;
     for (let y = 1; y < 17; y += 1) {
-      const taper = y < 5 ? 5 - y : y > 13 ? y - 13 : 0;
+      let taper = 0;
+      if (y < 5) taper = 5 - y;
+      else if (y > 13) taper = y - 13;
       const left = Math.max(4, cx - 4 + taper);
       const right = Math.min(13, cx + 4 - taper);
       for (let x = left; x <= right; x += 1) {
         const edge = x === left || x === right || y === 1 || y === 16;
-        cell(x, y, edge ? profile.dark : y < 6 ? profile.light : profile.body, 0.98);
+        let tint = profile.body;
+        if (edge) tint = profile.dark;
+        else if (y < 6) tint = profile.light;
+        cell(x, y, tint, 0.98);
       }
     }
     block(2, 8, 3, 2, profile.dark);
@@ -981,7 +1109,9 @@ class PixelCompanion {
   }
 
   private face(cell: CellFn, block: BlockFn, profile: CompanionProfile): void {
-    const eye = profile.eyes % 3 === 0 ? 0xffffff : profile.eyes % 3 === 1 ? 0xfff07a : 0xbfffff;
+    let eye = 0xbfffff;
+    if (profile.eyes % 3 === 0) eye = 0xffffff;
+    else if (profile.eyes % 3 === 1) eye = 0xfff07a;
     const pupil = 0x081018;
     if (profile.type === 1 || profile.type >= 10) {
       block(6, 6, 5, 4, profile.dark);
@@ -1092,12 +1222,9 @@ class PixelChatCard {
     texture: PIXI.Texture,
     msg: ChatMessage,
     width: number,
-    palette: Palette,
-    userSeed: number,
-    userAccent: number,
-    seed: number,
-    settings: CardSettings,
+    look: CardLook,
   ) {
+    const { palette, userSeed, userAccent, seed, settings } = look;
     this.width = width;
     this.seed = seed;
     this.layoutSeed = seed;
@@ -1161,7 +1288,16 @@ class PixelChatCard {
     this.companion = companion.view;
     this.companionBaseY = companion.view.y;
 
-    this.view.addChild(plate.view, this.fx, companion.view, name, tag, content, avatar.view, this.noise);
+    this.view.addChild(
+      plate.view,
+      this.fx,
+      companion.view,
+      name,
+      tag,
+      content,
+      avatar.view,
+      this.noise,
+    );
     parent.addChild(this.view);
   }
 
@@ -1191,7 +1327,10 @@ class PixelChatCard {
     const ease = 1 - Math.pow(1 - enter, 3);
     const shimmer = Math.sin((this.age + (this.seed % 53)) * 0.22) * 0.04;
     const glitch = Math.max(1 - enter, 1 - leave);
-    const jitter = snap((Math.sin(this.age * 3.8 + this.seed) + Math.cos(this.age * 1.7)) * glitch * PX, PX);
+    const jitter = snap(
+      (Math.sin(this.age * 3.8 + this.seed) + Math.cos(this.age * 1.7)) * glitch * PX,
+      PX,
+    );
     const hoverX = snap(Math.sin((this.age + (this.seed % 101)) * 0.032) * PX, PX);
     const hoverY = snap(Math.sin((this.age + (this.seed % 89)) * 0.045) * PX * 1.5, PX);
 
@@ -1200,7 +1339,8 @@ class PixelChatCard {
     this.view.alpha = ease * leave * (0.94 + shimmer);
     this.view.scale.x = 1 + glitch * 0.012 + Math.sin(this.age * 0.035 + this.seed) * 0.003;
     this.view.scale.y = 1 - glitch * 0.008 + Math.cos(this.age * 0.031 + this.seed) * 0.003;
-    this.companion.y = this.companionBaseY + snap(Math.sin((this.age + (this.seed % 37)) * 0.12) * 2, PX);
+    this.companion.y =
+      this.companionBaseY + snap(Math.sin((this.age + (this.seed % 37)) * 0.12) * 2, PX);
     this.companion.x = 24 + snap(Math.sin((this.age + (this.seed % 71)) * 0.07) * 1.5, PX);
     this.drawEffects(enter, leave);
     this.drawNoise(glitch);
@@ -1213,7 +1353,12 @@ class PixelChatCard {
   }
 
   /** Lays out the message body: word-wrapped text runs with inline emote images between them. */
-  private makeContent(msg: ChatMessage, palette: Palette, wrap: number, settings: CardSettings): PIXI.Container {
+  private makeContent(
+    msg: ChatMessage,
+    palette: Palette,
+    wrap: number,
+    settings: CardSettings,
+  ): PIXI.Container {
     const content = new PIXI.Container();
     const style = {
       fontFamily: FONT,
@@ -1292,7 +1437,11 @@ class PixelChatCard {
    * blocked network) draws the emote's name as text: an emote that renders as its code is still
    * readable, a broken image box is not.
    */
-  private loadInlineImage(part: ChatPart & { type: "image" }, holder: PIXI.Container, size: number): void {
+  private loadInlineImage(
+    part: ChatPart & { type: "image" },
+    holder: PIXI.Container,
+    size: number,
+  ): void {
     PIXI.Assets.load<PIXI.Texture>({ src: part.url, parser: "texture" })
       .then((texture) => {
         if (holder.destroyed) return;
@@ -1333,7 +1482,9 @@ class PixelChatCard {
       const y = snap(rng() * this.height);
       const x = snap(rng() * this.width);
       const w = TILE * (1 + Math.floor(rng() * 6));
-      this.noise.rect(x, y, w, PX).fill(rgba(rng() > 0.5 ? 0xffffff : 0x000000, 0.12 + amount * 0.18));
+      this.noise
+        .rect(x, y, w, PX)
+        .fill(rgba(rng() > 0.5 ? 0xffffff : 0x000000, 0.12 + amount * 0.18));
     }
   }
 
@@ -1351,8 +1502,16 @@ class PixelChatCard {
     const count = 12;
     for (let i = 0; i < count; i += 1) {
       const edge = rng();
-      const x = edge < 0.5 ? rng() * this.width : rng() > 0.5 ? -PX * 2 : this.width + PX;
-      const y = edge < 0.5 ? (rng() > 0.5 ? -PX : this.height + PX) : rng() * this.height;
+      let x: number;
+      if (edge < 0.5) x = rng() * this.width;
+      else if (rng() > 0.5) x = -PX * 2;
+      else x = this.width + PX;
+      let y: number;
+      if (edge < 0.5) {
+        y = rng() > 0.5 ? -PX : this.height + PX;
+      } else {
+        y = rng() * this.height;
+      }
       const pulse = Math.max(0, Math.sin(this.age * 0.12 + i * 1.7 + this.seed));
       const alpha = pulse * 0.82 * enter * leave;
       if (alpha < 0.08) continue;
@@ -1406,8 +1565,11 @@ class PixelChatCard {
       const length = snap(PX * (2 + pulse * 5 + rng() * 3), PX);
       const color = pick(this.fxColors, i + 1);
       const alpha = enter * leave * (0.2 + pulse * 0.32);
-      this.fx.rect(snap(x), this.height - PX, PX * (rng() > 0.72 ? 2 : 1), length).fill(rgba(color, alpha));
-      if (pulse > 0.72) this.fx.rect(snap(x), this.height + length + PX, PX, PX).fill(rgba(color, alpha * 0.8));
+      this.fx
+        .rect(snap(x), this.height - PX, PX * (rng() > 0.72 ? 2 : 1), length)
+        .fill(rgba(color, alpha));
+      if (pulse > 0.72)
+        this.fx.rect(snap(x), this.height + length + PX, PX, PX).fill(rgba(color, alpha * 0.8));
     }
   }
 
@@ -1420,7 +1582,10 @@ class PixelChatCard {
       const alpha = (1 - phase) * evaporate * 0.42;
       const color = pick(this.fxColors, i + 5);
       this.fx.rect(snap(x), snap(y), PX * (rng() > 0.68 ? 2 : 1), PX).fill(rgba(color, alpha));
-      if (rng() > 0.64) this.fx.rect(snap(x + PX * 2), snap(y - PX * 2), PX, PX).fill(rgba(TEXT_WHITE, alpha * 0.62));
+      if (rng() > 0.64)
+        this.fx
+          .rect(snap(x + PX * 2), snap(y - PX * 2), PX, PX)
+          .fill(rgba(TEXT_WHITE, alpha * 0.62));
     }
   }
 }
@@ -1448,7 +1613,7 @@ const pixelChat = defineEffect({
         default: "rainbow",
         options: ["rainbow", "razer"],
         description:
-          "Colour scheme. \"rainbow\" derives a fresh colourful palette from each message's seed; \"razer\" locks everything to black plates and toxic greens. Applies to cards spawned after the change.",
+          'Colour scheme. "rainbow" derives a fresh colourful palette from each message\'s seed; "razer" locks everything to black plates and toxic greens. Applies to cards spawned after the change.',
       },
       {
         key: "maxCards",
@@ -1458,7 +1623,8 @@ const pixelChat = defineEffect({
         min: 1,
         max: 15,
         step: 1,
-        description: "How many message cards can be on screen at once. The oldest is dropped when a new one arrives.",
+        description:
+          "How many message cards can be on screen at once. The oldest is dropped when a new one arrives.",
       },
       {
         key: "lifetime",
@@ -1468,7 +1634,8 @@ const pixelChat = defineEffect({
         min: 5,
         max: 180,
         step: 1,
-        description: "How long one card stays on screen, in seconds, including its fade-out. Applies to new cards.",
+        description:
+          "How long one card stays on screen, in seconds, including its fade-out. Applies to new cards.",
       },
       {
         key: "cardGap",
@@ -1499,7 +1666,8 @@ const pixelChat = defineEffect({
         min: 12,
         max: 28,
         step: 1,
-        description: "Message text size in pixels. The username is drawn one pixel larger. Applies to new cards.",
+        description:
+          "Message text size in pixels. The username is drawn one pixel larger. Applies to new cards.",
       },
       {
         key: "bottomMargin",
@@ -1509,7 +1677,8 @@ const pixelChat = defineEffect({
         min: 0,
         max: 200,
         step: 2,
-        description: "Space kept clear between the lowest card and the bottom edge of the screen, in pixels.",
+        description:
+          "Space kept clear between the lowest card and the bottom edge of the screen, in pixels.",
       },
       {
         key: "showEmotes",
@@ -1625,14 +1794,21 @@ const pixelChat = defineEffect({
           msg.text,
           serial,
           performance.now().toFixed(3),
-          Math.floor(Math.random() * 0xffffffff),
+          Math.floor(random() * 0xffffffff),
         ].join(":"),
       );
     };
 
     const burst = (card: PixelChatCard, palette: Palette, seed: number): void => {
       const rng = seedRng(seed ^ 0x5f1ce);
-      const colors = [palette.line, palette.rose, palette.gold, palette.blue, palette.violet, palette.leaf];
+      const colors = [
+        palette.line,
+        palette.rose,
+        palette.gold,
+        palette.blue,
+        palette.violet,
+        palette.leaf,
+      ];
       const x = card.view.x + 44 + rng() * 110;
       const y = card.view.y + 18 + rng() * Math.max(36, card.height - 24);
 
@@ -1666,11 +1842,17 @@ const pixelChat = defineEffect({
       const accent = userAccent(msg, key, userSeed);
       const seed = nextSeed(msg, key, userSeed);
       const palette = makePalette(seed, accent, theme);
-      const card = new PixelChatCard(stage.stage, pixelTexture, msg, cardWidth(), palette, userSeed, accent, seed, {
-        theme,
-        lifetimeFrames,
-        fontSize,
-        showEmotes,
+      const card = new PixelChatCard(stage.stage, pixelTexture, msg, cardWidth(), {
+        palette,
+        userSeed,
+        userAccent: accent,
+        seed,
+        settings: {
+          theme,
+          lifetimeFrames,
+          fontSize,
+          showEmotes,
+        },
       });
       card.setInitialX(randomCardLeft(card));
 

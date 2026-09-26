@@ -262,6 +262,26 @@ const toxicMarbleDots = defineEffect({
      * collector has to undo sixty times a second.
      */
 
+    /**
+     * The brightest tier a field value clears, or `undefined` below them all. Three entries, so a
+     * scan is cheaper than anything cleverer and much easier to read.
+     */
+    const tierFor = (value: number): Tier | undefined => {
+      for (const tier of tiers) {
+        if (value >= tier.threshold) return tier;
+      }
+      return undefined;
+    };
+
+    /** Fills each tier's collected circles in one batch. */
+    const flushBuckets = (): void => {
+      for (const tier of tiers) {
+        if (tier.bucket.length === 0) continue;
+        for (const dot of tier.bucket) graphics.circle(dot.x, dot.y, dot.r);
+        graphics.fill({ color: tier.color });
+      }
+    };
+
     let clock = 0;
 
     onFrame(scope, ctx.fpsCap, ({ dt }) => {
@@ -288,15 +308,7 @@ const toxicMarbleDots = defineEffect({
           const value = field(x / width, y / height, clock);
           if (value < cutoff) continue;
 
-          // The brightest tier this dot clears. Three entries, so a scan is cheaper than anything
-          // cleverer and much easier to read.
-          let hit: Tier | undefined;
-          for (const tier of tiers) {
-            if (value >= tier.threshold) {
-              hit = tier;
-              break;
-            }
-          }
+          const hit = tierFor(value);
           if (hit === undefined) continue;
 
           // Size within the tier: a dot just over its threshold is small, one near the next tier up
@@ -309,11 +321,7 @@ const toxicMarbleDots = defineEffect({
         }
       }
 
-      for (const tier of tiers) {
-        if (tier.bucket.length === 0) continue;
-        for (const dot of tier.bucket) graphics.circle(dot.x, dot.y, dot.r);
-        graphics.fill({ color: tier.color });
-      }
+      flushBuckets();
 
       stage.render();
     });

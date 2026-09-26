@@ -245,6 +245,19 @@ const circularCamPulse = defineEffect({
     // Cycles beat colours around the ramp so consecutive ripples differ.
     let pulseColorCursor = 0;
 
+    /** Geometry and style of one comet arc, minus the layer it is drawn on. */
+    interface CometArcOptions {
+      cx: number;
+      cy: number;
+      radius: number;
+      headAngle: number;
+      span: number;
+      direction: number;
+      color: number;
+      width: number;
+      alpha: number;
+    }
+
     /**
      * Strokes one arc as a chain of chords whose alpha steps down towards the tail, drawing a
      * comet without any blur. `headAngle` is the bright end; the tail trails against the direction
@@ -252,15 +265,7 @@ const circularCamPulse = defineEffect({
      */
     const drawCometArc = (
       layer: PIXI.Graphics,
-      cx: number,
-      cy: number,
-      radius: number,
-      headAngle: number,
-      span: number,
-      direction: number,
-      color: number,
-      width: number,
-      alpha: number,
+      { cx, cy, radius, headAngle, span, direction, color, width, alpha }: CometArcOptions,
     ): void => {
       for (let i = 0; i < ARC_CHORDS; i += 1) {
         const t0 = i / ARC_CHORDS;
@@ -273,6 +278,188 @@ const circularCamPulse = defineEffect({
           .moveTo(cx + Math.cos(a0) * radius, cy + Math.sin(a0) * radius)
           .lineTo(cx + Math.cos(a1) * radius, cy + Math.sin(a1) * radius)
           .stroke({ color, width, alpha: alpha * fade, cap: "round" });
+      }
+    };
+
+    const spawnBeatPulse = (): void => {
+      pulseColorCursor = (pulseColorCursor + 0.27) % 1;
+      pulses.push({ offset: 0, life: 1, colorT: pulseColorCursor });
+      // A hard cap so a pathological beat storm cannot grow the array without bound.
+      while (pulses.length > 10) pulses.shift();
+    };
+
+    const drawPulse = (pulse: Pulse, cx: number, cy: number, outerRadius: number): void => {
+      const color = paletteAtInt(ramp, pulse.colorT);
+      const r = outerRadius + pulse.offset;
+      const alpha = pulse.life * pulse.life * 0.55;
+      if (glowScale > 0) {
+        pulseLayer.circle(cx, cy, r).stroke({ color, width: 8 * glowScale, alpha: alpha * 0.3 });
+      }
+      pulseLayer.circle(cx, cy, r).stroke({ color, width: 2, alpha });
+    };
+
+    const drawBeatRipples = (
+      cx: number,
+      cy: number,
+      outerRadius: number,
+      energy: number,
+      dt: number,
+    ): void => {
+      pulseLayer.clear();
+      if (!showPulses) {
+        if (pulses.length > 0) {
+          pulses.length = 0;
+        }
+        return;
+      }
+      if (envelopes.beat) {
+        spawnBeatPulse();
+      }
+      for (let i = pulses.length - 1; i >= 0; i -= 1) {
+        const pulse = pulses[i];
+        if (pulse === undefined) continue;
+        pulse.offset += dt * (80 + energy * 160);
+        pulse.life -= dt * 1.4;
+        if (pulse.life <= 0) {
+          pulses.splice(i, 1);
+          continue;
+        }
+        drawPulse(pulse, cx, cy, outerRadius);
+      }
+    };
+
+    // Each ring is two strokes: a wide faint one behind a thin solid one — the glow trick.
+    const drawTwinRings = (
+      cx: number,
+      cy: number,
+      innerRadius: number,
+      outerRadius: number,
+      energy: number,
+      colorInner: number,
+      colorOuter: number,
+    ): void => {
+      ringLayer.clear();
+      if (glowScale > 0) {
+        ringLayer
+          .circle(cx, cy, innerRadius)
+          .stroke({ color: colorInner, width: 7 * glowScale, alpha: 0.16 });
+        ringLayer
+          .circle(cx, cy, outerRadius)
+          .stroke({ color: colorOuter, width: 10 * glowScale, alpha: 0.14 + energy * 0.1 });
+      }
+      ringLayer.circle(cx, cy, innerRadius).stroke({ color: colorInner, width: 2.5, alpha: 0.95 });
+      ringLayer
+        .circle(cx, cy, outerRadius)
+        .stroke({ color: colorOuter, width: 3.5, alpha: 0.8 + energy * 0.2 });
+    };
+
+    const drawArcTrios = (
+      cx: number,
+      cy: number,
+      midRadius: number,
+      gap: number,
+      energy: number,
+    ): void => {
+      arcLayer.clear();
+      const arcSpan = ((Math.PI * 2) / ARCS_PER_GROUP) * (0.45 + energy * 0.15);
+      for (let i = 0; i < ARCS_PER_GROUP; i += 1) {
+        const base = (i / ARCS_PER_GROUP) * Math.PI * 2;
+        const colorA = paletteAtInt(ramp, 0.3);
+        const colorB = paletteAtInt(ramp, 0.7);
+        // Group A rides just inside the middle of the gap, group B just outside it, so the two
+        // never overdraw each other exactly even where they cross.
+        const radiusA = midRadius - gap * 0.12;
+        const radiusB = midRadius + gap * 0.12;
+        const widthCore = 2 + energy * 1.5;
+        if (glowScale > 0) {
+          drawCometArc(arcLayer, {
+            cx,
+            cy,
+            radius: radiusA,
+            headAngle: base + rotationA,
+            span: arcSpan,
+            direction: 1,
+            color: colorA,
+            width: widthCore * 3 * glowScale,
+            alpha: 0.12,
+          });
+          drawCometArc(arcLayer, {
+            cx,
+            cy,
+            radius: radiusB,
+            headAngle: base + rotationB,
+            span: arcSpan,
+            direction: -1,
+            color: colorB,
+            width: widthCore * 3 * glowScale,
+            alpha: 0.12,
+          });
+        }
+        drawCometArc(arcLayer, {
+          cx,
+          cy,
+          radius: radiusA,
+          headAngle: base + rotationA,
+          span: arcSpan,
+          direction: 1,
+          color: colorA,
+          width: widthCore,
+          alpha: 0.9,
+        });
+        drawCometArc(arcLayer, {
+          cx,
+          cy,
+          radius: radiusB,
+          headAngle: base + rotationB,
+          span: arcSpan,
+          direction: -1,
+          color: colorB,
+          width: widthCore,
+          alpha: 0.9,
+        });
+      }
+    };
+
+    const drawSpectrumTicks = (cx: number, cy: number, outerRadius: number, gap: number): void => {
+      // `bands` is MAX_TICKS long; slice a view of the first tickCount entries so the SDK
+      // averages the spectrum into exactly the number of ticks shown. `subarray` shares the
+      // buffer — no allocation per frame.
+      const view = bands.subarray(0, tickCount);
+      bus.bands(view);
+      for (let i = 0; i < tickCount; i += 1) {
+        const angle = (i / tickCount) * Math.PI * 2 - Math.PI / 2;
+        const strength = (view[i] ?? 0) * sensitivity;
+        // A small floor keeps the rim visibly ticked in silence — the idle look.
+        const length = 3 + strength * gap * 1.4;
+        const r0 = outerRadius + 4;
+        const r1 = r0 + length;
+        const color = paletteAtInt(ramp, 0.35 + (i / tickCount) * 0.5);
+        detailLayer
+          .moveTo(cx + Math.cos(angle) * r0, cy + Math.sin(angle) * r0)
+          .lineTo(cx + Math.cos(angle) * r1, cy + Math.sin(angle) * r1)
+          .stroke({ color, width: 2, alpha: 0.35 + strength * 0.6, cap: "round" });
+      }
+    };
+
+    const drawDots = (
+      cx: number,
+      cy: number,
+      innerRadius: number,
+      gap: number,
+      energy: number,
+      dt: number,
+    ): void => {
+      if (dots.length !== dotCount) seedDots();
+      for (const dot of dots) {
+        dot.angle += dot.speed * dt * (1 + energy * 1.5);
+        const r = innerRadius + gap * (0.15 + dot.lane * 0.7);
+        const x = cx + Math.cos(dot.angle) * r;
+        const y = cy + Math.sin(dot.angle) * r;
+        const color = paletteAtInt(ramp, dot.colorT);
+        if (glowScale > 0) {
+          detailLayer.circle(x, y, dot.size * 2.4).fill({ color, alpha: 0.1 + energy * 0.08 });
+        }
+        detailLayer.circle(x, y, dot.size).fill({ color, alpha: 0.55 + energy * 0.35 });
       }
     };
 
@@ -308,110 +495,18 @@ const circularCamPulse = defineEffect({
       const colorOuter = paletteAtInt(ramp, 1);
 
       // ── Beat ripples ────────────────────────────────────────────────────
-      pulseLayer.clear();
-      if (showPulses) {
-        if (envelopes.beat) {
-          pulseColorCursor = (pulseColorCursor + 0.27) % 1;
-          pulses.push({ offset: 0, life: 1, colorT: pulseColorCursor });
-          // A hard cap so a pathological beat storm cannot grow the array without bound.
-          while (pulses.length > 10) pulses.shift();
-        }
-        for (let i = pulses.length - 1; i >= 0; i -= 1) {
-          const pulse = pulses[i];
-          if (pulse === undefined) continue;
-          pulse.offset += dt * (80 + energy * 160);
-          pulse.life -= dt * 1.4;
-          if (pulse.life <= 0) {
-            pulses.splice(i, 1);
-            continue;
-          }
-          const color = paletteAtInt(ramp, pulse.colorT);
-          const r = outerRadius + pulse.offset;
-          const alpha = pulse.life * pulse.life * 0.55;
-          if (glowScale > 0) {
-            pulseLayer
-              .circle(cx, cy, r)
-              .stroke({ color, width: 8 * glowScale, alpha: alpha * 0.3 });
-          }
-          pulseLayer.circle(cx, cy, r).stroke({ color, width: 2, alpha });
-        }
-      } else if (pulses.length > 0) {
-        pulses.length = 0;
-      }
+      drawBeatRipples(cx, cy, outerRadius, energy, dt);
 
       // ── Twin base rings ─────────────────────────────────────────────────
-      // Each ring is two strokes: a wide faint one behind a thin solid one — the glow trick.
-      ringLayer.clear();
-      if (glowScale > 0) {
-        ringLayer
-          .circle(cx, cy, innerRadius)
-          .stroke({ color: colorInner, width: 7 * glowScale, alpha: 0.16 });
-        ringLayer
-          .circle(cx, cy, outerRadius)
-          .stroke({ color: colorOuter, width: 10 * glowScale, alpha: 0.14 + energy * 0.1 });
-      }
-      ringLayer.circle(cx, cy, innerRadius).stroke({ color: colorInner, width: 2.5, alpha: 0.95 });
-      ringLayer
-        .circle(cx, cy, outerRadius)
-        .stroke({ color: colorOuter, width: 3.5, alpha: 0.8 + energy * 0.2 });
+      drawTwinRings(cx, cy, innerRadius, outerRadius, energy, colorInner, colorOuter);
 
       // ── Counter-rotating arc trios ──────────────────────────────────────
-      arcLayer.clear();
-      const arcSpan = (Math.PI * 2) / ARCS_PER_GROUP * (0.45 + energy * 0.15);
-      for (let i = 0; i < ARCS_PER_GROUP; i += 1) {
-        const base = (i / ARCS_PER_GROUP) * Math.PI * 2;
-        const colorA = paletteAtInt(ramp, 0.3);
-        const colorB = paletteAtInt(ramp, 0.7);
-        // Group A rides just inside the middle of the gap, group B just outside it, so the two
-        // never overdraw each other exactly even where they cross.
-        const radiusA = midRadius - gap * 0.12;
-        const radiusB = midRadius + gap * 0.12;
-        const widthCore = 2 + energy * 1.5;
-        if (glowScale > 0) {
-          drawCometArc(arcLayer, cx, cy, radiusA, base + rotationA, arcSpan, 1, colorA, widthCore * 3 * glowScale, 0.12);
-          drawCometArc(arcLayer, cx, cy, radiusB, base + rotationB, arcSpan, -1, colorB, widthCore * 3 * glowScale, 0.12);
-        }
-        drawCometArc(arcLayer, cx, cy, radiusA, base + rotationA, arcSpan, 1, colorA, widthCore, 0.9);
-        drawCometArc(arcLayer, cx, cy, radiusB, base + rotationB, arcSpan, -1, colorB, widthCore, 0.9);
-      }
+      drawArcTrios(cx, cy, midRadius, gap, energy);
 
       // ── Radial spectrum ticks and orbiting dots ─────────────────────────
       detailLayer.clear();
-      if (tickCount > 0) {
-        // `bands` is MAX_TICKS long; slice a view of the first tickCount entries so the SDK
-        // averages the spectrum into exactly the number of ticks shown. `subarray` shares the
-        // buffer — no allocation per frame.
-        const view = bands.subarray(0, tickCount);
-        bus.bands(view);
-        for (let i = 0; i < tickCount; i += 1) {
-          const angle = (i / tickCount) * Math.PI * 2 - Math.PI / 2;
-          const strength = (view[i] ?? 0) * sensitivity;
-          // A small floor keeps the rim visibly ticked in silence — the idle look.
-          const length = 3 + strength * gap * 1.4;
-          const r0 = outerRadius + 4;
-          const r1 = r0 + length;
-          const color = paletteAtInt(ramp, 0.35 + (i / tickCount) * 0.5);
-          detailLayer
-            .moveTo(cx + Math.cos(angle) * r0, cy + Math.sin(angle) * r0)
-            .lineTo(cx + Math.cos(angle) * r1, cy + Math.sin(angle) * r1)
-            .stroke({ color, width: 2, alpha: 0.35 + strength * 0.6, cap: "round" });
-        }
-      }
-
-      if (dots.length !== dotCount) seedDots();
-      for (const dot of dots) {
-        dot.angle += dot.speed * dt * (1 + energy * 1.5);
-        const r = innerRadius + gap * (0.15 + dot.lane * 0.7);
-        const x = cx + Math.cos(dot.angle) * r;
-        const y = cy + Math.sin(dot.angle) * r;
-        const color = paletteAtInt(ramp, dot.colorT);
-        if (glowScale > 0) {
-          detailLayer
-            .circle(x, y, dot.size * 2.4)
-            .fill({ color, alpha: 0.1 + energy * 0.08 });
-        }
-        detailLayer.circle(x, y, dot.size).fill({ color, alpha: 0.55 + energy * 0.35 });
-      }
+      if (tickCount > 0) drawSpectrumTicks(cx, cy, outerRadius, gap);
+      drawDots(cx, cy, innerRadius, gap, energy, dt);
 
       stage.render();
     });

@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { createThreeStage, defineEffect, onFrame } from "../sdk";
+import { createThreeStage, defineEffect, onFrame, random } from "../sdk";
 import { at, colorHex, int, num, rgb01 } from "../paramUtils";
 
 /**
@@ -80,7 +80,7 @@ function createStars(count: number): StarBuffers {
   const seeds = new Float32Array(count * 3);
 
   for (let i = 0; i < count; i += 1) {
-    respawn(seeds, i, Math.random() * FAR_Z);
+    respawn(seeds, i, random() * FAR_Z);
   }
 
   const positionAttribute = new THREE.BufferAttribute(positions, 3);
@@ -100,8 +100,8 @@ function createStars(count: number): StarBuffers {
  * *area*; using the raw random number would bunch them up in the middle.
  */
 function respawn(seeds: Float32Array, i: number, depth: number): void {
-  const angle = Math.random() * Math.PI * 2;
-  const radius = Math.sqrt(Math.random()) * SPREAD;
+  const angle = random() * Math.PI * 2;
+  const radius = Math.sqrt(random()) * SPREAD;
   seeds[i * 3 + 0] = Math.cos(angle) * radius;
   seeds[i * 3 + 1] = Math.sin(angle) * radius;
   seeds[i * 3 + 2] = -depth;

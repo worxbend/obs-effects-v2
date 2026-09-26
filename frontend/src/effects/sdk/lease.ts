@@ -192,22 +192,20 @@ export function createSharedResource<T>(options: SharedResourceOptions<T>): Shar
       refs += 1;
       cancelLinger();
 
-      if (building === null) {
-        /*
-         * `create()` is called inside a `then`, not directly, for one reason: it is typed
-         * `Promise<T> | T`, so a synchronous creator is allowed to throw synchronously. Called
-         * directly, that throw would escape `acquire` before the lease below existed — leaving the
-         * reference count permanently one too high, which is the one state that stops a device
-         * from ever being released. Deferring the call by a microtask turns any such throw into a
-         * rejection, which the `catch` further down already balances.
-         */
-        building = Promise.resolve()
-          .then(() => options.create())
-          .then((built) => {
-            value = built;
-            return built;
-          });
-      }
+      /*
+       * `create()` is called inside a `then`, not directly, for one reason: it is typed
+       * `Promise<T> | T`, so a synchronous creator is allowed to throw synchronously. Called
+       * directly, that throw would escape `acquire` before the lease below existed — leaving the
+       * reference count permanently one too high, which is the one state that stops a device
+       * from ever being released. Deferring the call by a microtask turns any such throw into a
+       * rejection, which the `catch` further down already balances.
+       */
+      building ??= Promise.resolve()
+        .then(() => options.create())
+        .then((built) => {
+          value = built;
+          return built;
+        });
 
       let released = false;
       const lease: Lease<T> = {

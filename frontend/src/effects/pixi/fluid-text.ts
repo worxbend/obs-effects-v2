@@ -1,7 +1,7 @@
 import * as PIXI from "pixi.js";
 
 import { bool, colorHex, int, num, str } from "../paramUtils";
-import { createPixiStage, defineEffect, onFrame, useFont } from "../sdk";
+import { createPixiStage, defineEffect, onFrame, random, useFont } from "../sdk";
 
 /**
  * Fluid Text
@@ -353,16 +353,16 @@ const fluidText = defineEffect({
       const h = stage.height;
       bgParticles = [];
       for (let i = 0; i < bgCount; i += 1) {
-        const z = Math.random(); // 0 = far, 1 = near
+        const z = random(); // 0 = far, 1 = near
         bgParticles.push({
-          x: Math.random() * w,
-          y: Math.random() * h,
+          x: random() * w,
+          y: random() * h,
           vx: 0,
           vy: 0,
           // Near particles are bigger and brighter — a cheap bokeh-style depth cue.
           radius: 0.5 + z * BG_MAX_RADIUS,
           alpha: 0.05 + z * 0.15,
-          alt: Math.random() > 0.6,
+          alt: random() > 0.6,
           z,
         });
       }
@@ -392,16 +392,16 @@ const fluidText = defineEffect({
             if ((pixels[(y * w + x) * 4] ?? 0) > 128) {
               textParticles.push({
                 // Scattered up to 15px from home, so the word visibly congeals on the first frames.
-                x: x + (Math.random() - 0.5) * 30,
-                y: y + (Math.random() - 0.5) * 30,
+                x: x + (random() - 0.5) * 30,
+                y: y + (random() - 0.5) * 30,
                 vx: 0,
                 vy: 0,
                 homeX: x,
                 homeY: y,
                 radius: 1.5,
-                baseRadius: 1.5 + Math.random() * 1.5,
-                alpha: 0.7 + Math.random() * 0.3,
-                accent: Math.random() > 0.85,
+                baseRadius: 1.5 + random() * 1.5,
+                alpha: 0.7 + random() * 0.3,
+                accent: random() > 0.85,
               });
             }
           }
@@ -455,44 +455,33 @@ const fluidText = defineEffect({
 
     let time = 0;
 
-    onFrame(scope, ctx.fpsCap, ({ dt }) => {
-      // The original applied its forces per Pixi tick (deltaTime ≈ 1 at 60 fps) and advanced its
-      // clock by deltaTime * 0.016. `step` reproduces that tick so every constant keeps its
-      // original meaning, clamped so a stall does not explode the springs.
-      const step = Math.min(dt * 60, 3);
-      time += step * 0.016;
+    /**
+     * The flow velocity one background particle should ease towards this frame: a gentle constant
+     * drift, faster for near particles — parallax — plus the push of every vortex in range.
+     */
+    const getBgFlow = (p: BgParticle): { flowX: number; flowY: number } => {
+      let flowX = 0.2 * (1 + p.z);
+      let flowY = 0.1 * (1 + p.z);
 
-      const w = stage.width;
-      const h = stage.height;
-
-      bgLayer.clear();
-      cohesionLayer.clear();
-      textLayer.clear();
-
-      if (drawBackground && bgGradient !== null) {
-        bgLayer.rect(0, 0, w, h).fill(bgGradient);
+      for (const v of vortices) {
+        const dx = p.x - v.x;
+        const dy = p.y - v.y;
+        const distSq = dx * dx + dy * dy;
+        if (distSq < v.radius * v.radius && distSq > 0) {
+          const dist = Math.sqrt(distSq);
+          const force = (1 - dist / v.radius) * v.strength * vortexStrength;
+          // Velocity perpendicular to the offset from the centre — a spiral, not a drain.
+          flowX += (-dy / dist) * force * 2;
+          flowY += (dx / dist) * force * 2;
+        }
       }
 
-      // ── Background cloud: vortex flow ───────────────────────────────────
-      const flowColor = colorFlow;
-      const flowAltColor = colorFlowAlt;
-      for (const p of bgParticles) {
-        // A gentle constant drift, faster for near particles — parallax.
-        let flowX = 0.2 * (1 + p.z);
-        let flowY = 0.1 * (1 + p.z);
+      return { flowX, flowY };
+    };
 
-        for (const v of vortices) {
-          const dx = p.x - v.x;
-          const dy = p.y - v.y;
-          const distSq = dx * dx + dy * dy;
-          if (distSq < v.radius * v.radius && distSq > 0) {
-            const dist = Math.sqrt(distSq);
-            const force = (1 - dist / v.radius) * v.strength * vortexStrength;
-            // Velocity perpendicular to the offset from the centre — a spiral, not a drain.
-            flowX += (-dy / dist) * force * 2;
-            flowY += (dx / dist) * force * 2;
-          }
-        }
+    const updateBgCloud = (step: number, w: number, h: number): void => {
+      for (const p of bgParticles) {
+        const { flowX, flowY } = getBgFlow(p);
 
         // Ease towards the flow rather than adopting it, so direction changes look inertial.
         p.vx += (flowX - p.vx) * 0.05 * step;
@@ -508,10 +497,57 @@ const fluidText = defineEffect({
 
         bgLayer
           .circle(p.x, p.y, p.radius)
-          .fill({ color: p.alt ? flowAltColor : flowColor, alpha: p.alpha });
+          .fill({ color: p.alt ? colorFlowAlt : colorFlow, alpha: p.alpha });
       }
+    };
 
-      // ── The lettering: submerged displacement ───────────────────────────
+    /**
+     * The bonds between one text particle and its neighbours.
+     *
+     * Only a small index window is checked rather than every pair. The list is built in scan
+     * order, so near-in-index means near-in-space, and the window catches the real neighbours
+     * at a fraction of the cost of the full quadratic comparison.
+     */
+    const applyBonds = (
+      i: number,
+      p: Particle,
+      shimmer: number,
+      ownColor: string,
+      step: number,
+    ): void => {
+      const windowSize = 8;
+      const start = Math.max(0, i - windowSize);
+      const end = Math.min(textParticles.length, i + windowSize);
+      for (let j = start; j < end; j += 1) {
+        if (i === j) continue;
+        const p2 = textParticles[j];
+        if (p2 === undefined) continue;
+        const dx = p2.x - p.x;
+        const dy = p2.y - p.y;
+        const distSq = dx * dx + dy * dy;
+
+        if (distSq < MAX_BOND_RANGE * MAX_BOND_RANGE && distSq > 0) {
+          const dist = Math.sqrt(distSq);
+          // A spring towards the preferred spacing: attracts when stretched past BOND_DIST,
+          // repels when compressed under it. This is the surface tension.
+          const diff = dist - BOND_DIST;
+          p.vx += (dx / dist) * diff * bondStrength * step;
+          p.vy += (dy / dist) * diff * bondStrength * step;
+
+          if (dist < COHESION_DIST) {
+            // The connecting line brightens with the shimmer, so the mesh glints with the waves.
+            const alpha = (1 - dist / COHESION_DIST) * 0.15 * (0.5 + shimmer * 0.5);
+            cohesionLayer
+              .moveTo(p.x, p.y)
+              .lineTo(p2.x, p2.y)
+              .stroke({ color: ownColor, width: 1, alpha });
+          }
+        }
+      }
+    };
+
+    // ── The lettering: submerged displacement ───────────────────────────
+    const updateTextParticles = (step: number): void => {
       // A slow whole-word drift on top of the waves, so the word itself floats.
       const driftX = Math.sin(time * 0.1) * 10;
       const driftY = Math.cos(time * 0.08) * 15;
@@ -542,45 +578,13 @@ const fluidText = defineEffect({
 
         // Micro-turbulence: only inside strong interference patches.
         if (disp.shimmer > 1.0) {
-          p.vx += (Math.random() - 0.5) * disp.shimmer * 0.5;
-          p.vy += (Math.random() - 0.5) * disp.shimmer * 0.5;
+          p.vx += (random() - 0.5) * disp.shimmer * 0.5;
+          p.vy += (random() - 0.5) * disp.shimmer * 0.5;
         }
 
         const ownColor = p.accent ? colorAccent : colorText;
 
-        // ── Bonds ─────────────────────────────────────────────────────────
-        // Only a small index window is checked rather than every pair. The list is built in scan
-        // order, so near-in-index means near-in-space, and the window catches the real neighbours
-        // at a fraction of the cost of the full quadratic comparison.
-        const windowSize = 8;
-        const start = Math.max(0, i - windowSize);
-        const end = Math.min(textParticles.length, i + windowSize);
-        for (let j = start; j < end; j += 1) {
-          if (i === j) continue;
-          const p2 = textParticles[j];
-          if (p2 === undefined) continue;
-          const dx = p2.x - p.x;
-          const dy = p2.y - p.y;
-          const distSq = dx * dx + dy * dy;
-
-          if (distSq < MAX_BOND_RANGE * MAX_BOND_RANGE && distSq > 0) {
-            const dist = Math.sqrt(distSq);
-            // A spring towards the preferred spacing: attracts when stretched past BOND_DIST,
-            // repels when compressed under it. This is the surface tension.
-            const diff = dist - BOND_DIST;
-            p.vx += (dx / dist) * diff * bondStrength * step;
-            p.vy += (dy / dist) * diff * bondStrength * step;
-
-            if (dist < COHESION_DIST) {
-              // The connecting line brightens with the shimmer, so the mesh glints with the waves.
-              const alpha = (1 - dist / COHESION_DIST) * 0.15 * (0.5 + disp.shimmer * 0.5);
-              cohesionLayer
-                .moveTo(p.x, p.y)
-                .lineTo(p2.x, p2.y)
-                .stroke({ color: ownColor, width: 1, alpha });
-            }
-          }
-        }
+        applyBonds(i, p, disp.shimmer, ownColor, step);
 
         p.vx *= frameDamping;
         p.vy *= frameDamping;
@@ -594,6 +598,30 @@ const fluidText = defineEffect({
 
         textLayer.circle(p.x, p.y, p.radius).fill({ color, alpha: finalAlpha });
       }
+    };
+
+    onFrame(scope, ctx.fpsCap, ({ dt }) => {
+      // The original applied its forces per Pixi tick (deltaTime ≈ 1 at 60 fps) and advanced its
+      // clock by deltaTime * 0.016. `step` reproduces that tick so every constant keeps its
+      // original meaning, clamped so a stall does not explode the springs.
+      const step = Math.min(dt * 60, 3);
+      time += step * 0.016;
+
+      const w = stage.width;
+      const h = stage.height;
+
+      bgLayer.clear();
+      cohesionLayer.clear();
+      textLayer.clear();
+
+      if (drawBackground && bgGradient !== null) {
+        bgLayer.rect(0, 0, w, h).fill(bgGradient);
+      }
+
+      // ── Background cloud: vortex flow ───────────────────────────────────
+      updateBgCloud(step, w, h);
+
+      updateTextParticles(step);
 
       stage.render();
     });

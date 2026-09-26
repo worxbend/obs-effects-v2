@@ -9,6 +9,7 @@ import {
   defineEffect,
   firstMatch,
   onFrame,
+  random,
   useChat,
 } from "../sdk";
 import type { PreparedRule } from "../sdk";
@@ -288,13 +289,13 @@ const soundboard = defineEffect({
       const particle: BurstParticle = {
         view,
         age: 0,
-        x: 40 + Math.random() * Math.max(1, stage.width - 80),
+        x: 40 + random() * Math.max(1, stage.width - 80),
         y: stage.height + spriteSize,
-        rise: (stage.height / BURST_SECONDS) * (0.55 + Math.random() * 0.5),
-        wobble: 14 + Math.random() * 26,
-        phase: Math.random() * Math.PI * 2,
-        frequency: 2 + Math.random() * 3,
-        spin: (Math.random() - 0.5) * 1.6,
+        rise: (stage.height / BURST_SECONDS) * (0.55 + random() * 0.5),
+        wobble: 14 + random() * 26,
+        phase: random() * Math.PI * 2,
+        frequency: 2 + random() * 3,
+        spin: (random() - 0.5) * 1.6,
       };
       particles.push(particle);
       stage.stage.addChild(view);
@@ -386,7 +387,8 @@ const soundboard = defineEffect({
         }
         particle.y -= particle.rise * dt;
         particle.view.x =
-          particle.x + Math.sin(particle.age * particle.frequency + particle.phase) * particle.wobble;
+          particle.x +
+          Math.sin(particle.age * particle.frequency + particle.phase) * particle.wobble;
         particle.view.y = particle.y;
         particle.view.rotation += particle.spin * dt;
         // Pop in over the first tenth of the lifetime, fade out over the last half.
@@ -403,9 +405,7 @@ const soundboard = defineEffect({
 
     // Referenced so the counters demonstrably exist for a debugger's breakpoint; they carry no
     // rendering weight and are the effect's only record of dropped or failed playbacks.
-    void played;
-    void dropped;
-    void failed;
+    Object.freeze({ played, dropped, failed });
 
     return {
       setParams(p: Record<string, unknown>): void {

@@ -1,5 +1,5 @@
 import * as PIXI from "pixi.js";
-import { createPixiStage, defineEffect, onFrame } from "../sdk";
+import { createPixiStage, defineEffect, onFrame, random } from "../sdk";
 import { colorHex, int, num } from "../paramUtils";
 
 /**
@@ -178,14 +178,14 @@ export default defineEffect({
 
     /** Gives one particle a fresh random position and velocity. */
     const seed = (p: Particle, anywhere: boolean): void => {
-      p.sprite.x = Math.random() * stage.width;
+      p.sprite.x = random() * stage.width;
       // `anywhere` is true when filling the screen at startup; otherwise the particle re-enters
       // from just below the bottom edge so you never see it appear.
-      p.sprite.y = anywhere ? Math.random() * stage.height : stage.height + size;
-      p.vx = (Math.random() - 0.5) * 12;
-      p.vy = -(8 + Math.random() * 26);
-      p.scale = 0.4 + Math.random();
-      p.phase = Math.random() * Math.PI * 2;
+      p.sprite.y = anywhere ? random() * stage.height : stage.height + size;
+      p.vx = (random() - 0.5) * 12;
+      p.vy = -(8 + random() * 26);
+      p.scale = 0.4 + random();
+      p.phase = random() * Math.PI * 2;
     };
 
     /** Grows or shrinks the pool to `count`, reusing the sprites that already exist. */
@@ -193,7 +193,7 @@ export default defineEffect({
       while (particles.length > count) {
         const removed = particles.pop();
         if (removed) {
-          layer.removeChild(removed.sprite);
+          removed.sprite.removeFromParent();
           // `false` because the shared texture must survive — only this sprite goes away.
           removed.sprite.destroy(false);
         }

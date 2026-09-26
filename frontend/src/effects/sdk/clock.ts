@@ -130,7 +130,7 @@ let framesDrawn = 0;
 
 /** Handle of the armed `requestAnimationFrame`, and of the watchdog/pump timer beside it. */
 let rafHandle = 0;
-let timerHandle: ReturnType<typeof setTimeout> | 0 = 0;
+let timerHandle: ReturnType<typeof setTimeout> | undefined;
 let armed = false;
 
 /** Rolling estimate of the real display interval, used to make the cap comparison forgiving. */
@@ -255,7 +255,7 @@ function disarm(): void {
   if (rafHandle) cancelAnimationFrame(rafHandle);
   if (timerHandle) clearTimeout(timerHandle);
   rafHandle = 0;
-  timerHandle = 0;
+  timerHandle = undefined;
   armed = false;
   driver = "idle";
 }
@@ -263,7 +263,7 @@ function disarm(): void {
 function onAnimationFrame(now: number): void {
   armed = false;
   if (timerHandle) clearTimeout(timerHandle);
-  timerHandle = 0;
+  timerHandle = undefined;
   if (driver === "raf" && lastTickAt >= 0) {
     // Exponential moving average of the real frame interval, used to make the cap test forgiving.
     const measured = now - lastTickAt;
@@ -292,47 +292,50 @@ function tick(now: number): void {
    * Iterate over a copy. A `draw` may dispose its own effect (an error path, or an effect that
    * decides it is finished), which splices the live array while we are walking it.
    */
-  for (const subscriber of [...subscribers]) {
-    if (!subscriber.live) continue;
+  for (const subscriber of subscribers.slice()) {
+    if (subscriber.live && isDue(subscriber, now)) drawSubscriber(subscriber, now);
+  }
+}
 
-    if (subscriber.fpsCap !== null && subscriber.lastDrawAt >= 0) {
-      /*
-       * Capping by skipping ticks, never by `setTimeout`.
-       *
-       * A `setTimeout` loop fights the compositor: it fires between frames, so the browser either
-       * drops the work or presents it late, and the result stutters worse than the uncapped loop
-       * it was meant to calm down. Skipping frames keeps every draw aligned to a real frame.
-       *
-       * Half a display interval is subtracted from the threshold because frames do not arrive on
-       * exact multiples of anything. Without it, a 30 fps cap on a 60 Hz display lands a hair
-       * under the threshold every other frame and yields 20 fps instead of 30.
-       */
-      const wanted = 1000 / subscriber.fpsCap;
-      if (now - subscriber.lastDrawAt < wanted - displayMs / 2) continue;
-    }
+/** Whether `subscriber`'s frame-rate cap lets it draw on the tick at `now`. */
+function isDue(subscriber: Subscriber, now: number): boolean {
+  if (subscriber.fpsCap === null || subscriber.lastDrawAt < 0) return true;
+  /*
+   * Capping by skipping ticks, never by `setTimeout`.
+   *
+   * A `setTimeout` loop fights the compositor: it fires between frames, so the browser either
+   * drops the work or presents it late, and the result stutters worse than the uncapped loop
+   * it was meant to calm down. Skipping frames keeps every draw aligned to a real frame.
+   *
+   * Half a display interval is subtracted from the threshold because frames do not arrive on
+   * exact multiples of anything. Without it, a 30 fps cap on a 60 Hz display lands a hair
+   * under the threshold every other frame and yields 20 fps instead of 30.
+   */
+  const wanted = 1000 / subscriber.fpsCap;
+  return now - subscriber.lastDrawAt >= wanted - displayMs / 2;
+}
 
-    const dt =
-      subscriber.lastDrawAt < 0
-        ? 0
-        : Math.min((now - subscriber.lastDrawAt) / 1000, MAX_DT_SECONDS);
-    subscriber.lastDrawAt = now;
-    subscriber.elapsed += dt;
-    subscriber.frames += 1;
-    framesDrawn += 1;
+/** Advances `subscriber`'s timing and calls its `draw`, unsubscribing it if the callback throws. */
+function drawSubscriber(subscriber: Subscriber, now: number): void {
+  const dt =
+    subscriber.lastDrawAt < 0 ? 0 : Math.min((now - subscriber.lastDrawAt) / 1000, MAX_DT_SECONDS);
+  subscriber.lastDrawAt = now;
+  subscriber.elapsed += dt;
+  subscriber.frames += 1;
+  framesDrawn += 1;
 
-    try {
-      subscriber.draw({ dt, elapsed: subscriber.elapsed, now });
-    } catch (error) {
-      console.error(
-        `[sdk] The frame callback of "${subscriber.label}" threw. Unsubscribing it so the rest of ` +
-          `the page keeps drawing.`,
-        error,
-      );
-      subscriber.live = false;
-      const index = subscribers.indexOf(subscriber);
-      if (index !== -1) subscribers.splice(index, 1);
-      if (subscribers.length === 0) disarm();
-    }
+  try {
+    subscriber.draw({ dt, elapsed: subscriber.elapsed, now });
+  } catch (error) {
+    console.error(
+      `[sdk] The frame callback of "${subscriber.label}" threw. Unsubscribing it so the rest of ` +
+        `the page keeps drawing.`,
+      error,
+    );
+    subscriber.live = false;
+    const index = subscribers.indexOf(subscriber);
+    if (index !== -1) subscribers.splice(index, 1);
+    if (subscribers.length === 0) disarm();
   }
 }
 

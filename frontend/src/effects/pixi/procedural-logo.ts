@@ -1,7 +1,7 @@
 import * as PIXI from "pixi.js";
 
 import { bool, colorHex, int, num } from "../paramUtils";
-import { createPixiStage, defineEffect, onFrame } from "../sdk";
+import { createPixiStage, defineEffect, onFrame, random } from "../sdk";
 
 /**
  * Procedural Logo
@@ -288,33 +288,33 @@ const proceduralLogo = defineEffect({
     let wavyRings: WavyRing[] = [];
 
     const pick = (list: readonly string[]): string =>
-      list[Math.floor(Math.random() * list.length)] ?? "#ffffff";
+      list[Math.floor(random() * list.length)] ?? "#ffffff";
 
     const seed = (): void => {
       blobs = [];
       for (let i = 0; i < blobCount; i += 1) {
         blobs.push({
-          angle: Math.random() * Math.PI * 2,
-          orbitRadius: logoSize * 0.7 + Math.random() * 40,
-          size: 8 + Math.random() * 20,
+          angle: random() * Math.PI * 2,
+          orbitRadius: logoSize * 0.7 + random() * 40,
+          size: 8 + random() * 20,
           // Half orbit each way, so the ring of blobs never rotates as one body.
-          speed: (Math.random() * 0.6 + 0.3) * (Math.random() > 0.5 ? 1 : -1),
-          offset: Math.random() * 100,
+          speed: (random() * 0.6 + 0.3) * (random() > 0.5 ? 1 : -1),
+          offset: random() * 100,
           color: pick(PALETTE),
-          alpha: 0.2 + Math.random() * 0.3,
+          alpha: 0.2 + random() * 0.3,
         });
       }
 
       clouds = [];
       for (let i = 0; i < cloudCount; i += 1) {
         clouds.push({
-          x: (Math.random() - 0.5) * logoSize * 1.2,
-          y: (Math.random() - 0.5) * logoSize * 1.2,
-          radius: 60 + Math.random() * 60,
+          x: (random() - 0.5) * logoSize * 1.2,
+          y: (random() - 0.5) * logoSize * 1.2,
+          radius: 60 + random() * 60,
           color: pick(STAIN_PALETTE),
-          alpha: 0.03 + Math.random() * 0.05,
-          driftSpeed: 0.02 + Math.random() * 0.05,
-          offset: Math.random() * 100,
+          alpha: 0.03 + random() * 0.05,
+          driftSpeed: 0.02 + random() * 0.05,
+          offset: random() * 100,
         });
       }
 
@@ -322,12 +322,12 @@ const proceduralLogo = defineEffect({
       for (let i = 0; i < stainCount; i += 1) {
         // Squaring the random distance clusters them tightly towards the centre rather than
         // spreading them evenly over the disc — which is what makes it read as one mark.
-        const dist = Math.pow(Math.random(), 2) * logoSize * 0.45;
-        const angle = Math.random() * Math.PI * 2;
+        const dist = Math.pow(random(), 2) * logoSize * 0.45;
+        const angle = random() * Math.PI * 2;
         stains.push({
           x: Math.cos(angle) * dist,
           y: Math.sin(angle) * dist,
-          radius: 30 + Math.random() * 20,
+          radius: 30 + random() * 20,
           color: pick(STAIN_PALETTE),
         });
       }
@@ -385,7 +385,14 @@ const proceduralLogo = defineEffect({
     let time = 0;
     let beatDecay = 0;
 
-    onFrame(scope, ctx.fpsCap, ({ dt }) => {
+    // Stain positions cached between the two passes so the drift trig is not repeated. Reused
+    // across frames rather than allocated each one.
+    const stainX: number[] = [];
+    const stainY: number[] = [];
+    const stainR: number[] = [];
+
+    /** Advances the clock and the heartbeat envelope. */
+    const updateBeat = (dt: number): void => {
       const interval = 60 / bpm;
       const previousPhase = time % interval;
       time += dt * speed;
@@ -397,159 +404,142 @@ const proceduralLogo = defineEffect({
         beatDecay = Math.max(beatDecay, 0.55);
       }
       beatDecay = Math.max(0, beatDecay - 5.5 * dt);
-      const beat = beatDecay * punchAmount;
+    };
 
-      const w = stage.width;
-      const h = stage.height;
-      const cx = w * 0.5;
-      const cy = h * 0.5;
-      const punch = 1 + beat * 0.2;
-      // The whole mark floats and breathes, so the held moments between beats are never static.
-      const float = Math.sin(time * 0.8) * 10;
-
-      backdropLayer.clear();
-      if (drawBackground) backdropLayer.rect(0, 0, w, h).fill({ color: backgroundColor });
-
-      // ── Dot grid ────────────────────────────────────────────────────────
+    // ── Dot grid ────────────────────────────────────────────────────────
+    const drawGrid = (w: number, h: number): void => {
       gridLayer.clear();
-      if (showGrid) {
-        const spacing = 40;
-        const offset = (time * 6) % spacing;
-        for (let y = offset; y < h; y += spacing) {
-          for (let x = offset; x < w; x += spacing) {
-            gridLayer.circle(x, y, 1);
-          }
+      if (!showGrid) return;
+      const spacing = 40;
+      const offset = (time * 6) % spacing;
+      for (let y = offset; y < h; y += spacing) {
+        for (let x = offset; x < w; x += spacing) {
+          gridLayer.circle(x, y, 1);
         }
-        gridLayer.fill({ color: "#b4befe", alpha: 0.06 });
       }
+      gridLayer.fill({ color: "#b4befe", alpha: 0.06 });
+    };
 
-      // ── Under-glow ──────────────────────────────────────────────────────
+    // ── Under-glow ──────────────────────────────────────────────────────
+    const drawClouds = (cx: number, oy: number, punch: number): void => {
       cloudLayer.clear();
       for (const cloud of clouds) {
         const x = cx + cloud.x + Math.sin(time * cloud.driftSpeed + cloud.offset) * 60;
-        const y =
-          cy + float + cloud.y + Math.cos(time * cloud.driftSpeed * 0.7 + cloud.offset) * 60;
+        const y = oy + cloud.y + Math.cos(time * cloud.driftSpeed * 0.7 + cloud.offset) * 60;
         cloudLayer
           .circle(x, y, cloud.radius * punch)
           .fill({ color: cloud.color, alpha: cloud.alpha });
       }
+    };
 
-      // ── Gyro rings ──────────────────────────────────────────────────────
+    // ── Gyro rings ──────────────────────────────────────────────────────
+    const drawGyroRings = (cx: number, oy: number, beat: number, punch: number): void => {
       gyroLayer.clear();
-      if (showGyro) {
-        for (const ring of gyroRings) {
-          const rotation = time * ring.speed + ring.phase;
-          // The ellipse's vertical radius is driven by a cosine of the rotation, so the ring
-          // flattens to a line and opens out again — a 3D tilt with no 3D anywhere.
-          const aspect = Math.abs(Math.cos(rotation * 0.5));
-          const radius = ring.radius * punch;
+      if (!showGyro) return;
+      for (const ring of gyroRings) {
+        const rotation = time * ring.speed + ring.phase;
+        // The ellipse's vertical radius is driven by a cosine of the rotation, so the ring
+        // flattens to a line and opens out again — a 3D tilt with no 3D anywhere.
+        const aspect = Math.abs(Math.cos(rotation * 0.5));
+        const radius = ring.radius * punch;
 
-          gyroLayer.ellipse(cx, cy + float, radius, radius * aspect).stroke({
-            color: ring.color,
-            width: 4 + beat * 4,
-            alpha: 0.4 + aspect * 0.4,
-          });
+        gyroLayer.ellipse(cx, oy, radius, radius * aspect).stroke({
+          color: ring.color,
+          width: 4 + beat * 4,
+          alpha: 0.4 + aspect * 0.4,
+        });
 
-          // Four nodes riding the ring, which is what gives it a mechanical read.
-          for (let i = 0; i < 4; i += 1) {
-            const angle = rotation + (i * Math.PI * 2) / 4;
-            gyroLayer.circle(
-              cx + Math.cos(angle) * radius,
-              cy + float + Math.sin(angle) * radius * aspect,
-              4 + beat * 2,
-            );
-          }
-          gyroLayer.fill({ color: ring.color, alpha: 0.8 });
+        // Four nodes riding the ring, which is what gives it a mechanical read.
+        for (let i = 0; i < 4; i += 1) {
+          const angle = rotation + (i * Math.PI * 2) / 4;
+          gyroLayer.circle(
+            cx + Math.cos(angle) * radius,
+            oy + Math.sin(angle) * radius * aspect,
+            4 + beat * 2,
+          );
         }
+        gyroLayer.fill({ color: ring.color, alpha: 0.8 });
       }
+    };
 
-      // ── Wavy rings ──────────────────────────────────────────────────────
+    // ── Wavy rings ──────────────────────────────────────────────────────
+    const drawWavyRings = (cx: number, oy: number, beat: number): void => {
       wavyLayer.clear();
-      if (showWavy) {
-        const beatRadius = beat * 10;
-        for (const ring of wavyRings) {
-          const ringPhase = time * ring.speed;
-          const amp = ring.amp * (1 + beat * 1.5);
-          for (let i = 0; i <= WAVY_STEPS; i += 1) {
-            const angle = (i / WAVY_STEPS) * Math.PI * 2;
-            const r = ring.r + Math.sin(angle * ring.freq + ringPhase) * amp + beatRadius;
-            wavyPoints[i * 2] = cx + Math.cos(angle) * r;
-            wavyPoints[i * 2 + 1] = cy + float + Math.sin(angle) * r;
-          }
-          wavyLayer
-            .poly(Array.from(wavyPoints))
-            .stroke({ color: ring.color, width: ring.weight, alpha: ring.alpha, cap: "round" });
+      if (!showWavy) return;
+      const beatRadius = beat * 10;
+      for (const ring of wavyRings) {
+        const ringPhase = time * ring.speed;
+        const amp = ring.amp * (1 + beat * 1.5);
+        for (let i = 0; i <= WAVY_STEPS; i += 1) {
+          const angle = (i / WAVY_STEPS) * Math.PI * 2;
+          const r = ring.r + Math.sin(angle * ring.freq + ringPhase) * amp + beatRadius;
+          wavyPoints[i * 2] = cx + Math.cos(angle) * r;
+          wavyPoints[i * 2 + 1] = oy + Math.sin(angle) * r;
         }
+        wavyLayer
+          .poly(Array.from(wavyPoints))
+          .stroke({ color: ring.color, width: ring.weight, alpha: ring.alpha, cap: "round" });
+      }
+    };
+
+    /**
+     * Traces one stain: a circle plus three lobes off its edge, which is what makes it bulbous
+     * rather than round. `grow` widens every part, for the outline pass.
+     */
+    const traceStain = (x: number, y: number, r: number, spin: number, grow: number): void => {
+      stainLayer.circle(x, y, r + grow);
+      for (let j = 0; j < 3; j += 1) {
+        const angle = (j * Math.PI * 2) / 3 + spin;
+        stainLayer.circle(
+          x + Math.cos(angle) * (r * 0.5),
+          y + Math.sin(angle) * (r * 0.5),
+          r * 0.75 + grow,
+        );
+      }
+    };
+
+    // ── Ink stains, in two passes ───────────────────────────────────────
+    const drawStains = (cx: number, oy: number, punch: number): void => {
+      stainLayer.clear();
+      if (stains.length === 0) return;
+
+      stainX.length = 0;
+      stainY.length = 0;
+      stainR.length = 0;
+      for (const stain of stains) {
+        stainX.push(cx + stain.x + Math.sin(time * 0.3 + stain.radius) * 12);
+        stainY.push(oy + stain.y + Math.cos(time * 0.25 + stain.x) * 12);
+        stainR.push(stain.radius * punch);
       }
 
-      // ── Ink stains, in two passes ───────────────────────────────────────
-      stainLayer.clear();
-      if (stains.length > 0) {
-        // Positions are cached between the two passes so the drift trig is not repeated.
-        const px: number[] = [];
-        const py: number[] = [];
-        const pr: number[] = [];
-
-        // Pass 1: every outline first, so they merge into one silhouette around the cluster.
-        if (outlineWidth > 0) {
-          for (const stain of stains) {
-            const x = cx + stain.x + Math.sin(time * 0.3 + stain.radius) * 12;
-            const y = cy + float + stain.y + Math.cos(time * 0.25 + stain.x) * 12;
-            const r = stain.radius * punch;
-            px.push(x);
-            py.push(y);
-            pr.push(r);
-
-            stainLayer.circle(x, y, r + outlineWidth);
-            // Three lobes off the edge, which is what makes the outline bulbous rather than round.
-            for (let j = 0; j < 3; j += 1) {
-              const angle = (j * Math.PI * 2) / 3 + stain.radius;
-              stainLayer.circle(
-                x + Math.cos(angle) * (r * 0.5),
-                y + Math.sin(angle) * (r * 0.5),
-                r * 0.75 + outlineWidth,
-              );
-            }
-          }
-          stainLayer.fill({ color: colorOutline, alpha: 1 });
-        } else {
-          for (const stain of stains) {
-            px.push(cx + stain.x + Math.sin(time * 0.3 + stain.radius) * 12);
-            py.push(cy + float + stain.y + Math.cos(time * 0.25 + stain.x) * 12);
-            pr.push(stain.radius * punch);
-          }
-        }
-
-        // Pass 2: the colour, inside the silhouette laid down above.
+      // Pass 1: every outline first, so they merge into one silhouette around the cluster.
+      if (outlineWidth > 0) {
         for (let i = 0; i < stains.length; i += 1) {
           const stain = stains[i];
-          const x = px[i];
-          const y = py[i];
-          const r = pr[i];
-          if (stain === undefined || x === undefined || y === undefined || r === undefined)
-            continue;
-
-          stainLayer.circle(x, y, r);
-          for (let j = 0; j < 3; j += 1) {
-            const angle = (j * Math.PI * 2) / 3 + stain.radius;
-            stainLayer.circle(
-              x + Math.cos(angle) * (r * 0.5),
-              y + Math.sin(angle) * (r * 0.5),
-              r * 0.75,
-            );
-          }
-          stainLayer.fill({ color: stain.color, alpha: 1 });
+          if (stain === undefined) continue;
+          traceStain(stainX[i] ?? 0, stainY[i] ?? 0, stainR[i] ?? 0, stain.radius, outlineWidth);
         }
+        stainLayer.fill({ color: colorOutline, alpha: 1 });
       }
 
-      // ── Orbiting blobs ──────────────────────────────────────────────────
+      // Pass 2: the colour, inside the silhouette laid down above.
+      for (let i = 0; i < stains.length; i += 1) {
+        const stain = stains[i];
+        if (stain === undefined) continue;
+        traceStain(stainX[i] ?? 0, stainY[i] ?? 0, stainR[i] ?? 0, stain.radius, 0);
+        stainLayer.fill({ color: stain.color, alpha: 1 });
+      }
+    };
+
+    // ── Orbiting blobs ──────────────────────────────────────────────────
+    const drawBlobs = (dt: number, cx: number, oy: number, beat: number): void => {
       blobLayer.clear();
       for (const blob of blobs) {
         blob.angle += blob.speed * (1 + beat * 0.5) * dt;
         const wobble = Math.sin(time * 2 + blob.offset) * 20;
         const r = blob.orbitRadius + wobble + beat * 30;
         const x = cx + Math.cos(blob.angle) * r;
-        const y = cy + float + Math.sin(blob.angle) * r;
+        const y = oy + Math.sin(blob.angle) * r;
         const alpha = blob.alpha * (0.8 + 0.2 * Math.sin(time + blob.offset));
         const size = blob.size * (1 + beat * 0.2);
 
@@ -560,11 +550,35 @@ const proceduralLogo = defineEffect({
           .circle(x - size * 0.3, y - size * 0.3, size * 0.2)
           .fill({ color: "#ffffff", alpha: alpha * 0.6 });
       }
+    };
+
+    onFrame(scope, ctx.fpsCap, ({ dt }) => {
+      updateBeat(dt);
+      const beat = beatDecay * punchAmount;
+
+      const w = stage.width;
+      const h = stage.height;
+      const cx = w * 0.5;
+      const cy = h * 0.5;
+      const punch = 1 + beat * 0.2;
+      // The whole mark floats and breathes, so the held moments between beats are never static.
+      const float = Math.sin(time * 0.8) * 10;
+      const oy = cy + float;
+
+      backdropLayer.clear();
+      if (drawBackground) backdropLayer.rect(0, 0, w, h).fill({ color: backgroundColor });
+
+      drawGrid(w, h);
+      drawClouds(cx, oy, punch);
+      drawGyroRings(cx, oy, beat, punch);
+      drawWavyRings(cx, oy, beat);
+      drawStains(cx, oy, punch);
+      drawBlobs(dt, cx, oy, beat);
 
       // ── Central aura ────────────────────────────────────────────────────
       auraLayer.clear();
       auraLayer
-        .circle(cx, cy + float, logoSize * 0.4 * (1 + beat * 0.15))
+        .circle(cx, oy, logoSize * 0.4 * (1 + beat * 0.15))
         .fill({ color: colorAura, alpha: 0.05 * (1 + beat * 0.15) });
 
       stage.render();

@@ -1,7 +1,7 @@
 import * as PIXI from "pixi.js";
 
 import { colorHex, int, num } from "../paramUtils";
-import { createPixiStage, defineEffect, onFrame } from "../sdk";
+import { createPixiStage, defineEffect, onFrame, random } from "../sdk";
 
 /**
  * Data Corruption
@@ -68,7 +68,7 @@ interface CorruptEvent {
 }
 
 function rand(min: number, max: number): number {
-  return min + Math.random() * (max - min);
+  return min + random() * (max - min);
 }
 
 const dataCorruption = defineEffect({
@@ -229,65 +229,80 @@ const dataCorruption = defineEffect({
       const low = Math.min(gapMin, gapMax);
       const high = Math.max(gapMin, gapMax);
       nextEventTime = time + rand(low, high);
-      if (Math.random() < burstChance && time >= burstCooldownUntil) {
+      if (random() < burstChance && time >= burstCooldownUntil) {
         burstsLeft = Math.floor(rand(2, 5));
       }
     };
 
-    /** Builds one event's contents up front, so the shapes stay put while it plays out. */
-    const createEvent = (): CorruptEvent => {
+    const pickKind = (roll: number): EventKind => {
+      if (roll < 0.42) return "tear";
+      if (roll < 0.72) return "block";
+      return "combined";
+    };
+
+    const createTears = (): TearBand[] => {
+      const h = stage.height;
+      const tears: TearBand[] = [];
+      const count = Math.floor(rand(1, 4));
+      for (let i = 0; i < count; i += 1) {
+        tears.push({
+          y: rand(0, h),
+          h: rand(1, 22),
+          shiftX: (random() < 0.5 ? 1 : -1) * rand(6, 90) * tearShift,
+          // One tear in eight is pure white rather than the off-white, which reads as a harder hit.
+          color: random() < 0.12 ? "#ffffff" : colorTear,
+          alpha: rand(0.25, 0.7),
+          rgbShift: rand(4, 20),
+        });
+      }
+      return tears;
+    };
+
+    const createBlock = (ox: number, oy: number, c: number, r: number): Block => {
+      const luma = Math.floor(rand(55, 235));
+      const grey = luma.toString(16).padStart(2, "0");
+      const isChroma = random() < 0.1;
+      // A tenth of the blocks take a strong colour: that is what a corrupted chroma plane
+      // looks like, and it is what stops the patch reading as plain grey noise.
+      let color: string;
+      if (isChroma) {
+        color = random() < 0.5 ? "#1a3a8f" : "#8f1a2a";
+      } else {
+        color = `#${grey}${grey}${grey}`;
+      }
+      return {
+        x: ox + c * blockSize,
+        y: oy + r * blockSize,
+        color,
+        alpha: rand(0.1, 0.4),
+      };
+    };
+
+    const createBlocks = (): Block[] => {
       const w = stage.width;
       const h = stage.height;
-      const roll = Math.random();
-      const kind: EventKind = roll < 0.42 ? "tear" : roll < 0.72 ? "block" : "combined";
-      const tears: TearBand[] = [];
+      const cols = Math.floor(rand(3, 18));
+      const rows = Math.floor(rand(2, 9));
+      // Snapped to the block grid, so the patch aligns the way a codec's blocks would.
+      const ox = Math.floor(rand(0, Math.max(1, w - cols * blockSize)) / blockSize) * blockSize;
+      const oy = Math.floor(rand(0, Math.max(1, h - rows * blockSize)) / blockSize) * blockSize;
+
       const blocks: Block[] = [];
-
-      if (kind !== "block") {
-        const count = Math.floor(rand(1, 4));
-        for (let i = 0; i < count; i += 1) {
-          tears.push({
-            y: rand(0, h),
-            h: rand(1, 22),
-            shiftX: (Math.random() < 0.5 ? 1 : -1) * rand(6, 90) * tearShift,
-            // One tear in eight is pure white rather than the off-white, which reads as a harder hit.
-            color: Math.random() < 0.12 ? "#ffffff" : colorTear,
-            alpha: rand(0.25, 0.7),
-            rgbShift: rand(4, 20),
-          });
+      for (let r = 0; r < rows; r += 1) {
+        for (let c = 0; c < cols; c += 1) {
+          // Only 70% of the patch is filled, so it has ragged edges rather than being a rectangle.
+          if (random() >= 0.7) continue;
+          blocks.push(createBlock(ox, oy, c, r));
         }
       }
+      return blocks;
+    };
 
-      if (kind !== "tear") {
-        const cols = Math.floor(rand(3, 18));
-        const rows = Math.floor(rand(2, 9));
-        // Snapped to the block grid, so the patch aligns the way a codec's blocks would.
-        const ox = Math.floor(rand(0, Math.max(1, w - cols * blockSize)) / blockSize) * blockSize;
-        const oy = Math.floor(rand(0, Math.max(1, h - rows * blockSize)) / blockSize) * blockSize;
-
-        for (let r = 0; r < rows; r += 1) {
-          for (let c = 0; c < cols; c += 1) {
-            // Only 70% of the patch is filled, so it has ragged edges rather than being a rectangle.
-            if (Math.random() >= 0.7) continue;
-            const luma = Math.floor(rand(55, 235));
-            const grey = luma.toString(16).padStart(2, "0");
-            const isChroma = Math.random() < 0.1;
-            blocks.push({
-              x: ox + c * blockSize,
-              y: oy + r * blockSize,
-              // A tenth of the blocks take a strong colour: that is what a corrupted chroma plane
-              // looks like, and it is what stops the patch reading as plain grey noise.
-              color: isChroma
-                ? Math.random() < 0.5
-                  ? "#1a3a8f"
-                  : "#8f1a2a"
-                : `#${grey}${grey}${grey}`,
-              alpha: rand(0.1, 0.4),
-            });
-          }
-        }
-      }
-
+    /** Builds one event's contents up front, so the shapes stay put while it plays out. */
+    const createEvent = (): CorruptEvent => {
+      const kind = pickKind(random());
+      const tears = kind === "block" ? [] : createTears();
+      const blocks = kind === "tear" ? [] : createBlocks();
       return { startTime: time, duration: rand(duration * 0.4, duration * 1.8), tears, blocks };
     };
 
@@ -295,6 +310,35 @@ const dataCorruption = defineEffect({
       blockLayer.clear();
       tearLayer.clear();
       fringeLayer.clear();
+    };
+
+    /** Draws the active event at the given opacity: its block patch, then its tears. */
+    const drawEvent = (event: CorruptEvent, opacity: number): void => {
+      const w = stage.width;
+
+      blockLayer.clear();
+      for (const block of event.blocks) {
+        blockLayer
+          .rect(block.x, block.y, blockSize, blockSize)
+          .fill({ color: block.color, alpha: block.alpha * opacity });
+      }
+
+      tearLayer.clear();
+      fringeLayer.clear();
+      for (const tear of event.tears) {
+        const a = tear.alpha * opacity;
+        if (a < 0.01) continue;
+        const shift = tear.rgbShift;
+        // One channel shoved left and one right, with the intact band drawn over the top. That
+        // ordering is what leaves colour visible only at the band's edges.
+        fringeLayer
+          .rect(tear.shiftX - shift * 1.4, tear.y, w, tear.h)
+          .fill({ color: colorFringeA, alpha: a * 0.45 });
+        fringeLayer
+          .rect(tear.shiftX + shift, tear.y, w, tear.h)
+          .fill({ color: colorFringeB, alpha: a * 0.38 });
+        tearLayer.rect(tear.shiftX, tear.y, w, tear.h).fill({ color: tear.color, alpha: a });
+      }
     };
 
     onFrame(scope, ctx.fpsCap, ({ dt }) => {
@@ -312,33 +356,8 @@ const dataCorruption = defineEffect({
           const p = age / active.duration;
           // Snap in over the first fifteenth, ease out over the second half. Arriving abruptly and
           // leaving smoothly is what makes it read as a fault rather than as a fade.
-          const opacity =
-            Math.min(p * 15, 1) * (p < 0.5 ? 1 : 1 - Math.pow((p - 0.5) * 2, 1.8)) * intensity;
-          const w = stage.width;
-
-          blockLayer.clear();
-          for (const block of active.blocks) {
-            blockLayer
-              .rect(block.x, block.y, blockSize, blockSize)
-              .fill({ color: block.color, alpha: block.alpha * opacity });
-          }
-
-          tearLayer.clear();
-          fringeLayer.clear();
-          for (const tear of active.tears) {
-            const a = tear.alpha * opacity;
-            if (a < 0.01) continue;
-            const shift = tear.rgbShift;
-            // One channel shoved left and one right, with the intact band drawn over the top. That
-            // ordering is what leaves colour visible only at the band's edges.
-            fringeLayer
-              .rect(tear.shiftX - shift * 1.4, tear.y, w, tear.h)
-              .fill({ color: colorFringeA, alpha: a * 0.45 });
-            fringeLayer
-              .rect(tear.shiftX + shift, tear.y, w, tear.h)
-              .fill({ color: colorFringeB, alpha: a * 0.38 });
-            tearLayer.rect(tear.shiftX, tear.y, w, tear.h).fill({ color: tear.color, alpha: a });
-          }
+          const tail = p < 0.5 ? 1 : 1 - Math.pow((p - 0.5) * 2, 1.8);
+          drawEvent(active, Math.min(p * 15, 1) * tail * intensity);
         }
       }
 

@@ -1,7 +1,7 @@
 import * as PIXI from "pixi.js";
 
 import { bool, colorHex, int, num, str } from "../paramUtils";
-import { createPixiStage, defineEffect, onFrame, useFont } from "../sdk";
+import { createPixiStage, defineEffect, onFrame, random, useFont } from "../sdk";
 
 /**
  * Starting Soon Fluid
@@ -102,10 +102,7 @@ class SpatialHash {
       for (let dx = -1; dx <= 1; dx += 1) {
         const bucket = this.cells.get(`${cx + dx},${cy + dy}`);
         if (bucket === undefined) continue;
-        for (let i = 0; i < bucket.length; i += 1) {
-          const other = bucket[i];
-          if (other !== undefined) visit(other);
-        }
+        for (const other of bucket) visit(other);
       }
     }
   }
@@ -309,11 +306,11 @@ const startingSoonFluid = defineEffect({
                 vy: 0,
                 homeX: x,
                 homeY: y,
-                radius: 3.5 + Math.random() * 2.5,
-                alpha: 0.95 + Math.random() * 0.05,
+                radius: 3.5 + random() * 2.5,
+                alpha: 0.95 + random() * 0.05,
                 color: colorText,
                 isText: true,
-                seed: Math.random() * 1000,
+                seed: random() * 1000,
               });
             }
           }
@@ -326,20 +323,20 @@ const startingSoonFluid = defineEffect({
       }
 
       for (let i = 0; i < backgroundCount; i += 1) {
-        const x = Math.random() * w;
-        const y = Math.random() * h;
+        const x = random() * w;
+        const y = random() * h;
         particles.push({
           x,
           y,
-          vx: (Math.random() - 0.5) * 2,
-          vy: (Math.random() - 0.5) * 2,
+          vx: (random() - 0.5) * 2,
+          vy: (random() - 0.5) * 2,
           homeX: x,
           homeY: y,
-          radius: 1.2 + Math.random() * 1.8,
-          alpha: 0.25 + Math.random() * 0.25,
-          color: Math.random() > 0.3 ? colorFlow : colorDeep,
+          radius: 1.2 + random() * 1.8,
+          alpha: 0.25 + random() * 0.25,
+          color: random() > 0.3 ? colorFlow : colorDeep,
           isText: false,
-          seed: Math.random() * 1000,
+          seed: random() * 1000,
         });
       }
     };
@@ -348,6 +345,51 @@ const startingSoonFluid = defineEffect({
     stage.onResize(build);
 
     let time = 0;
+
+    /** A slow wave across the whole word, plus a per-particle shimmer, plus a spring home. */
+    const pullHome = (p: Particle, step: number): void => {
+      const swellX = Math.sin(p.homeX * 0.01 + p.homeY * 0.01 + time * 0.3) * swell;
+      const swellY = Math.cos(p.homeX * 0.01 - p.homeY * 0.01 + time * 0.24) * swell;
+      const shimX = Math.sin(p.seed + time * 0.8) * shimmer;
+      const shimY = Math.cos(p.seed * 0.7 + time * 0.88) * shimmer;
+      p.vx += (p.homeX + swellX + shimX - p.x) * RETURN_FORCE * step;
+      p.vy += (p.homeY + swellY + shimY - p.y) * RETURN_FORCE * step;
+    };
+
+    /** A slow flow field, and wrapping at the edges so the cloud is endless. */
+    const drift = (p: Particle, step: number, w: number, h: number): void => {
+      p.vx += Math.sin(time * 0.12 + p.y * 0.002) * 0.3 * step;
+      p.vy += Math.cos(time * 0.12 + p.x * 0.002) * 0.3 * step;
+      if (p.x < 0) p.x = w;
+      if (p.x > w) p.x = 0;
+      if (p.y < 0) p.y = h;
+      if (p.y > h) p.y = 0;
+    };
+
+    /*
+     * The neighbour visitor is one function for the whole effect rather than a fresh closure per
+     * particle per frame; `repelled` and `repelStep` tell it which particle it is pushing.
+     */
+    let repelled: Particle | null = null;
+    let repelStep = 0;
+    const repelFrom = (other: Particle): void => {
+      const p = repelled;
+      // Text particles ignore each other: neighbouring particles in a stroke are touching by
+      // definition, and letting them push would blow the letters apart.
+      if (p === null || p === other || (p.isText && other.isText)) return;
+      const dx = p.x - other.x;
+      const dy = p.y - other.y;
+      const distSq = dx * dx + dy * dy;
+      // Text particles claim a wider berth, which is what carves the visible gap around the
+      // letters as the cloud flows past.
+      const buffer = p.isText || other.isText ? 24 : 0;
+      const minDist = p.radius + other.radius + buffer;
+      if (distSq >= minDist * minDist) return;
+      const dist = Math.sqrt(distSq) || 0.001;
+      const force = ((minDist - dist) / minDist) * repulsion;
+      p.vx += (dx / dist) * force * repelStep;
+      p.vy += (dy / dist) * force * repelStep;
+    };
 
     onFrame(scope, ctx.fpsCap, ({ dt }) => {
       time += dt;
@@ -367,43 +409,13 @@ const startingSoonFluid = defineEffect({
       particleLayer.clear();
 
       for (const p of particles) {
-        if (p.isText) {
-          // A slow wave across the whole word, plus a per-particle shimmer, plus a spring home.
-          const swellX = Math.sin(p.homeX * 0.01 + p.homeY * 0.01 + time * 0.3) * swell;
-          const swellY = Math.cos(p.homeX * 0.01 - p.homeY * 0.01 + time * 0.24) * swell;
-          const shimX = Math.sin(p.seed + time * 0.8) * shimmer;
-          const shimY = Math.cos(p.seed * 0.7 + time * 0.88) * shimmer;
-          p.vx += (p.homeX + swellX + shimX - p.x) * RETURN_FORCE * step;
-          p.vy += (p.homeY + swellY + shimY - p.y) * RETURN_FORCE * step;
-        } else {
-          // A slow flow field, and wrapping at the edges so the cloud is endless.
-          p.vx += Math.sin(time * 0.12 + p.y * 0.002) * 0.3 * step;
-          p.vy += Math.cos(time * 0.12 + p.x * 0.002) * 0.3 * step;
-          if (p.x < 0) p.x = w;
-          if (p.x > w) p.x = 0;
-          if (p.y < 0) p.y = h;
-          if (p.y > h) p.y = 0;
-        }
+        if (p.isText) pullHome(p, step);
+        else drift(p, step, w, h);
 
         if (repulsion > 0) {
-          hash.forEachNeighbour(p, (other) => {
-            // Text particles ignore each other: neighbouring particles in a stroke are touching by
-            // definition, and letting them push would blow the letters apart.
-            if (p === other || (p.isText && other.isText)) return;
-            const dx = p.x - other.x;
-            const dy = p.y - other.y;
-            const distSq = dx * dx + dy * dy;
-            // Text particles claim a wider berth, which is what carves the visible gap around the
-            // letters as the cloud flows past.
-            const buffer = p.isText || other.isText ? 24 : 0;
-            const minDist = p.radius + other.radius + buffer;
-            if (distSq < minDist * minDist) {
-              const dist = Math.sqrt(distSq) || 0.001;
-              const force = ((minDist - dist) / minDist) * repulsion;
-              p.vx += (dx / dist) * force * step;
-              p.vy += (dy / dist) * force * step;
-            }
-          });
+          repelled = p;
+          repelStep = step;
+          hash.forEachNeighbour(p, repelFrom);
         }
 
         // Damping applied per frame at 60 fps in the original; raised to the frame's share so the

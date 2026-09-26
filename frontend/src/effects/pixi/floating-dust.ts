@@ -1,7 +1,7 @@
 import * as PIXI from "pixi.js";
 
 import { colorInt, num, str } from "../paramUtils";
-import { createPixiStage, defineEffect, onFrame } from "../sdk";
+import { createPixiStage, defineEffect, onFrame, random } from "../sdk";
 
 /**
  * Floating Dust
@@ -57,7 +57,7 @@ import { createPixiStage, defineEffect, onFrame } from "../sdk";
 // point gets a pseudo-random gradient direction (via the shuffled permutation table below), and
 // the value at any point is a smooth blend of the four surrounding corners' contributions. The
 // result is smooth, band-limited "wandering" noise — exactly what a believable air current needs,
-// and something `Math.random()` (which is discontinuous everywhere) cannot provide.
+// and something `random()` (which is discontinuous everywhere) cannot provide.
 
 /** Shuffled permutation table, doubled to 512 entries so lookups never need a modulo. */
 const PERM = new Uint8Array(512);
@@ -65,7 +65,7 @@ const PERM = new Uint8Array(512);
   const p = new Uint8Array(256);
   for (let i = 0; i < 256; i++) p[i] = i;
   for (let i = 255; i > 0; i--) {
-    const j = (Math.random() * (i + 1)) | 0;
+    const j = Math.trunc(random() * (i + 1));
     // The `?? 0` never fires — both indices are in range — but the project compiles with
     // `noUncheckedIndexedAccess`, under which every typed-array read is possibly `undefined`.
     const t = p[i] ?? 0;
@@ -140,7 +140,10 @@ function flowAngle(x: number, y: number, t: number): number {
  * GPU applies for free while drawing — drawing the gradient itself thousands of times would not
  * be free. White is deliberate: tint multiplies, so a white texture takes any tint faithfully.
  */
-function makeSoftDot(radius: number, stops: ReadonlyArray<readonly [number, number]>): PIXI.Texture {
+function makeSoftDot(
+  radius: number,
+  stops: ReadonlyArray<readonly [number, number]>,
+): PIXI.Texture {
   const d = radius * 2 + 2;
   const canvas = document.createElement("canvas");
   canvas.width = d;
@@ -276,13 +279,13 @@ void main() {
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function rnd(lo: number, hi: number): number {
-  return lo + Math.random() * (hi - lo);
+  return lo + random() * (hi - lo);
 }
 
 function pick(arr: readonly number[]): number {
   // White fallback for the empty-array case `noUncheckedIndexedAccess` insists on; callers never
   // pass an empty array (parsePalette guarantees at least one entry).
-  return arr[(Math.random() * arr.length) | 0] ?? 0xffffff;
+  return arr[Math.trunc(random() * arr.length)] ?? 0xffffff;
 }
 
 /**
@@ -296,7 +299,7 @@ function parsePalette(text: string, fallback: readonly number[]): number[] {
   const out: number[] = [];
   for (const piece of text.split(",")) {
     const hex = /^#?([0-9a-fA-F]{6})$/.exec(piece.trim())?.[1];
-    if (hex !== undefined) out.push(parseInt(hex, 16));
+    if (hex !== undefined) out.push(Number.parseInt(hex, 16));
   }
   return out.length > 0 ? out : [...fallback];
 }
@@ -326,7 +329,7 @@ export default defineEffect({
     category: "background",
     tags: ["particles", "dust", "ambient", "fog", "cinematic", "background", "pixi"],
     previewNotes:
-      "Fully opaque — it paints its own background, so use it as a scene backdrop rather than an overlay. The motion is deliberately slow; give a preview ten seconds or raise Speed to see the flow currents. Palettes are comma-separated hex lists, e.g. \"#f0a840, #ffd080\".",
+      'Fully opaque — it paints its own background, so use it as a scene backdrop rather than an overlay. The motion is deliberately slow; give a preview ten seconds or raise Speed to see the flow currents. Palettes are comma-separated hex lists, e.g. "#f0a840, #ffd080".',
     params: [
       {
         key: "background",
@@ -453,7 +456,7 @@ export default defineEffect({
         max: 3,
         step: 0.05,
         description:
-          "Multiplier on the warm glow added around the centre and along the bottom of the frame — the \"projector light\" part of the look.",
+          'Multiplier on the warm glow added around the centre and along the bottom of the frame — the "projector light" part of the look.',
       },
       {
         key: "grain",
@@ -600,7 +603,15 @@ export default defineEffect({
         const ba = rnd(tuning.aLo, tuning.aHi);
         sp.alpha = ba * brightness;
         layer.addChild(sp);
-        parts.push({ sp, x, y, spd: rnd(tuning.spdLo, tuning.spdHi), ba, ph: rnd(0, 6.283), br: rnd(0.22, 0.65) });
+        parts.push({
+          sp,
+          x,
+          y,
+          spd: rnd(tuning.spdLo, tuning.spdHi),
+          ba,
+          ph: rnd(0, 6.283),
+          br: rnd(0.22, 0.65),
+        });
       }
       return parts;
     };
@@ -747,7 +758,13 @@ export default defineEffect({
         if (sizeChanged || nextNearCount !== nearCount || paletteChanged(nextNear, nearPalette)) {
           nearCount = nextNearCount;
           nearPalette = nextNear;
-          nearParts = buildParticleLayer(nearLayer, texGlow, nearCount, nearPalette, LAYER_TUNING.near);
+          nearParts = buildParticleLayer(
+            nearLayer,
+            texGlow,
+            nearCount,
+            nearPalette,
+            LAYER_TUNING.near,
+          );
         }
       },
     };

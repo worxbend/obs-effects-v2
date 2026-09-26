@@ -227,12 +227,8 @@ function SelectInput(props: InputProps): JSX.Element {
 
 /** A free-text parameter. The contract caps these at 1024 characters. */
 function TextInput(props: InputProps): JSX.Element {
-  const current = () =>
-    typeof props.value === "string"
-      ? props.value
-      : typeof props.spec.default === "string"
-        ? props.spec.default
-        : "";
+  const fallback = () => (typeof props.spec.default === "string" ? props.spec.default : "");
+  const current = () => (typeof props.value === "string" ? props.value : fallback());
   return (
     <input
       id={`param-${props.spec.key}`}

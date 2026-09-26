@@ -295,17 +295,21 @@ export default function RouteEditorPage(props: { mode: "create" | "edit" }): JSX
 
   /* ---------------- render ---------------- */
 
+  const heading = () => {
+    if (props.mode === "edit") return "Edit route";
+    return duplicatedFrom() ? "Duplicate route" : "New route";
+  };
+
+  const submitLabel = () => {
+    if (saving()) return "Saving…";
+    return props.mode === "create" ? "Create route" : "Save changes";
+  };
+
   return (
     <>
       <div class="page-head">
         <div>
-          <h1>
-            {props.mode === "edit"
-              ? "Edit route"
-              : duplicatedFrom()
-                ? "Duplicate route"
-                : "New route"}
-          </h1>
+          <h1>{heading()}</h1>
           <p>
             Everything on this page is live: the preview on the right runs the real effect with the
             values you are typing, and saving pushes them to any OBS source already showing this
@@ -354,20 +358,20 @@ export default function RouteEditorPage(props: { mode: "create" | "edit" }): JSX
                 <div class="field">
                   <label class="field-label" for="slug">
                     Slug
+                    <input
+                      id="slug"
+                      type="text"
+                      class={slug() === "" || slugValid() ? undefined : "invalid"}
+                      spellcheck={false}
+                      autocomplete="off"
+                      placeholder="main-camera"
+                      value={slug()}
+                      onInput={(e) => {
+                        setSlug(e.currentTarget.value);
+                        setSlugIssue(null);
+                      }}
+                    />
                   </label>
-                  <input
-                    id="slug"
-                    type="text"
-                    class={slug() === "" || slugValid() ? undefined : "invalid"}
-                    spellcheck={false}
-                    autocomplete="off"
-                    placeholder="main-camera"
-                    value={slug()}
-                    onInput={(e) => {
-                      setSlug(e.currentTarget.value);
-                      setSlugIssue(null);
-                    }}
-                  />
                   <p class="field-help">
                     The address OBS will use: <code>/e/{slug() || "your-slug"}</code>. Lowercase
                     letters, digits and hyphens only, 1–64 characters.
@@ -412,21 +416,21 @@ export default function RouteEditorPage(props: { mode: "create" | "edit" }): JSX
                     <div>
                       <label class="field-label" for="canvas-width">
                         Width
+                        <input
+                          id="canvas-width"
+                          type="number"
+                          inputmode="numeric"
+                          min={CANVAS_LIMITS.minWidth}
+                          max={CANVAS_LIMITS.maxWidth}
+                          step={1}
+                          class={widthIssue() || canvasIssues()["width"] ? "invalid" : undefined}
+                          value={widthText()}
+                          onInput={(e) => {
+                            setWidthText(e.currentTarget.value);
+                            setCanvasIssues({});
+                          }}
+                        />
                       </label>
-                      <input
-                        id="canvas-width"
-                        type="number"
-                        inputmode="numeric"
-                        min={CANVAS_LIMITS.minWidth}
-                        max={CANVAS_LIMITS.maxWidth}
-                        step={1}
-                        class={widthIssue() || canvasIssues()["width"] ? "invalid" : undefined}
-                        value={widthText()}
-                        onInput={(e) => {
-                          setWidthText(e.currentTarget.value);
-                          setCanvasIssues({});
-                        }}
-                      />
                       <Show when={widthIssue() ?? canvasIssues()["width"]}>
                         {(m) => <p class="field-error">{m()}</p>}
                       </Show>
@@ -435,21 +439,21 @@ export default function RouteEditorPage(props: { mode: "create" | "edit" }): JSX
                     <div>
                       <label class="field-label" for="canvas-height">
                         Height
+                        <input
+                          id="canvas-height"
+                          type="number"
+                          inputmode="numeric"
+                          min={CANVAS_LIMITS.minHeight}
+                          max={CANVAS_LIMITS.maxHeight}
+                          step={1}
+                          class={heightIssue() || canvasIssues()["height"] ? "invalid" : undefined}
+                          value={heightText()}
+                          onInput={(e) => {
+                            setHeightText(e.currentTarget.value);
+                            setCanvasIssues({});
+                          }}
+                        />
                       </label>
-                      <input
-                        id="canvas-height"
-                        type="number"
-                        inputmode="numeric"
-                        min={CANVAS_LIMITS.minHeight}
-                        max={CANVAS_LIMITS.maxHeight}
-                        step={1}
-                        class={heightIssue() || canvasIssues()["height"] ? "invalid" : undefined}
-                        value={heightText()}
-                        onInput={(e) => {
-                          setHeightText(e.currentTarget.value);
-                          setCanvasIssues({});
-                        }}
-                      />
                       <Show when={heightIssue() ?? canvasIssues()["height"]}>
                         {(m) => <p class="field-error">{m()}</p>}
                       </Show>
@@ -608,11 +612,7 @@ export default function RouteEditorPage(props: { mode: "create" | "edit" }): JSX
               <div class="card">
                 <div class="btn-row">
                   <button type="submit" class="btn btn-primary" disabled={!canSave()}>
-                    {saving()
-                      ? "Saving…"
-                      : props.mode === "create"
-                        ? "Create route"
-                        : "Save changes"}
+                    {submitLabel()}
                   </button>
                   <button type="button" class="btn" onClick={() => navigate("/admin")}>
                     Back to routes
@@ -745,7 +745,10 @@ function duplicateSlug(source: string, taken: ReadonlySet<string>): string {
 
 /** Cuts a slug to at most `max` characters without leaving a trailing hyphen behind. */
 function trimSlugTo(slug: string, max: number): string {
-  return slug.length <= max ? slug : slug.slice(0, Math.max(1, max)).replace(/-+$/, "");
+  if (slug.length <= max) return slug;
+  let trimmed = slug.slice(0, Math.max(1, max));
+  while (trimmed.endsWith("-")) trimmed = trimmed.slice(0, -1);
+  return trimmed;
 }
 
 /* ------------------------------------------------------------------ */

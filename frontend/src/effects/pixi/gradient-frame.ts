@@ -299,7 +299,7 @@ const gradientFrame = defineEffect({
     stage.onResize(rebuild);
 
     onFrame(scope, ctx.fpsCap, ({ dt }) => {
-      spin += (rotationSpeed * Math.PI) / 180 * dt;
+      spin += ((rotationSpeed * Math.PI) / 180) * dt;
       const rotation = (angle * Math.PI) / 180 + spin;
       glowLayer.rotation = rotation;
       borderLayer.rotation = rotation;

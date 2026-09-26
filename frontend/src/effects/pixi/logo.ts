@@ -1,7 +1,7 @@
 import * as PIXI from "pixi.js";
 
 import { bool, colorHex, int, num, str } from "../paramUtils";
-import { createPixiStage, defineEffect, onFrame, useFont } from "../sdk";
+import { createPixiStage, defineEffect, onFrame, random, useFont } from "../sdk";
 
 /**
  * Logo
@@ -286,13 +286,13 @@ const logo = defineEffect({
         const count = Math.round(orbitCount * ring.share);
         for (let i = 0; i < count; i += 1) {
           orbitDots.push({
-            angle: (i / Math.max(1, count)) * Math.PI * 2 + Math.random() * 0.4,
-            speed: ring.speed * ring.dir * (0.85 + Math.random() * 0.3),
+            angle: (i / Math.max(1, count)) * Math.PI * 2 + random() * 0.4,
+            speed: ring.speed * ring.dir * (0.85 + random() * 0.3),
             radius: logoSize * ring.radius,
-            size: ring.size * (0.7 + Math.random() * 0.6),
-            color: ORBIT_PALETTE[Math.floor(Math.random() * ORBIT_PALETTE.length)] ?? "#ffffff",
-            alphaPhase: Math.random() * Math.PI * 2,
-            alphaSpeed: 0.8 + Math.random() * 1.6,
+            size: ring.size * (0.7 + random() * 0.6),
+            color: ORBIT_PALETTE[Math.floor(random() * ORBIT_PALETTE.length)] ?? "#ffffff",
+            alphaPhase: random() * Math.PI * 2,
+            alphaSpeed: 0.8 + random() * 1.6,
           });
         }
       }
@@ -302,8 +302,8 @@ const logo = defineEffect({
     let time = 0;
     let beatDecay = 0;
 
-    onFrame(scope, ctx.fpsCap, ({ dt }) => {
-      const interval = 60 / bpm;
+    /** Advances the clock and the heartbeat envelope that drives the logo's punch. */
+    const updateBeat = (dt: number, interval: number): void => {
       const previousPhase = time % interval;
       time += dt;
       const phase = time % interval;
@@ -315,76 +315,73 @@ const logo = defineEffect({
       }
       // Per second rather than per frame: the original's 5.5/60 each frame is 5.5 a second.
       beatDecay = Math.max(0, beatDecay - 5.5 * dt);
+    };
 
-      const cx = stage.width * 0.5;
-      const cy = stage.height * 0.5;
-      const float = Math.sin(time * 0.5) * 9;
+    // ── The logo ────────────────────────────────────────────────────────
+    const drawLogo = (cx: number, cy: number, float: number): void => {
+      if (sprite === null || sprite.texture.width <= 0) return;
+      const base = logoSize / sprite.texture.width;
+      const breathe = 1 + 0.06 * Math.sin(time * 0.6);
+      // Three fast sines summed — a tremor, so the logo is never perfectly still.
+      const tremor =
+        1 +
+        0.013 * Math.sin(time * 19.4) +
+        0.009 * Math.sin(time * 27.1) +
+        0.006 * Math.sin(time * 41.7);
+      sprite.scale.set(base * breathe * tremor * (1 + 0.18 * beatDecay * punch));
+      sprite.x = cx + Math.sin(time * 17.3) * 1.8 + Math.sin(time * 31.1) * 1.0;
+      sprite.y = cy + float + Math.cos(time * 23.7) * 1.4 + Math.cos(time * 37.9) * 0.8;
+      sprite.alpha = 0.9 + Math.sin(time * 0.75) * 0.1;
+    };
 
-      // ── The logo ────────────────────────────────────────────────────────
-      if (sprite !== null && sprite.texture.width > 0) {
-        const base = logoSize / sprite.texture.width;
-        const breathe = 1 + 0.06 * Math.sin(time * 0.6);
-        // Three fast sines summed — a tremor, so the logo is never perfectly still.
-        const tremor =
-          1 +
-          0.013 * Math.sin(time * 19.4) +
-          0.009 * Math.sin(time * 27.1) +
-          0.006 * Math.sin(time * 41.7);
-        sprite.scale.set(base * breathe * tremor * (1 + 0.18 * beatDecay * punch));
-        sprite.x = cx + Math.sin(time * 17.3) * 1.8 + Math.sin(time * 31.1) * 1.0;
-        sprite.y = cy + float + Math.cos(time * 23.7) * 1.4 + Math.cos(time * 37.9) * 0.8;
-        sprite.alpha = 0.9 + Math.sin(time * 0.75) * 0.1;
-      }
-
-      const logoX = sprite?.x ?? cx;
-      const logoY = cy + float;
-
-      // ── Aura and arcs ───────────────────────────────────────────────────
+    // ── Aura and arcs ───────────────────────────────────────────────────
+    const drawAura = (cx: number, logoY: number): void => {
       auraLayer.clear();
-      if (showAura) {
-        const aura = logoSize * 0.36 + logoSize * 0.04 * Math.sin(time * 0.5);
+      if (!showAura) return;
+      const aura = logoSize * 0.36 + logoSize * 0.04 * Math.sin(time * 0.5);
 
-        auraLayer.circle(cx, logoY, aura * 2.4).fill({ color: colorPrimary, alpha: 0.04 });
-        auraLayer.circle(cx, logoY, aura * 1.6).fill({ color: colorPrimary, alpha: 0.08 });
-        auraLayer.circle(cx, logoY, aura * 1.0).fill({ color: colorSecondary, alpha: 0.06 });
+      auraLayer.circle(cx, logoY, aura * 2.4).fill({ color: colorPrimary, alpha: 0.04 });
+      auraLayer.circle(cx, logoY, aura * 1.6).fill({ color: colorPrimary, alpha: 0.08 });
+      auraLayer.circle(cx, logoY, aura * 1.0).fill({ color: colorSecondary, alpha: 0.06 });
 
-        // Three arcs at different radii, speeds and directions. Counter-rotation is what stops them
-        // reading as one rigid ring.
-        const arcs = [
-          {
-            r: aura + 8,
-            from: time * 0.75,
-            span: Math.PI * 1.4,
-            color: colorPrimary,
-            a: 0.9,
-            w: 1.5,
-          },
-          {
-            r: aura,
-            from: -time * 0.48 + Math.PI * 0.5,
-            span: Math.PI * 0.8,
-            color: colorSecondary,
-            a: 0.65,
-            w: 1,
-          },
-          {
-            r: aura + 22,
-            from: time * 0.32 + Math.PI,
-            span: Math.PI * 0.55,
-            color: colorTertiary,
-            a: 0.5,
-            w: 1,
-          },
-        ];
-        for (const arc of arcs) {
-          auraLayer
-            .moveTo(cx + Math.cos(arc.from) * arc.r, logoY + Math.sin(arc.from) * arc.r)
-            .arc(cx, logoY, arc.r, arc.from, arc.from + arc.span)
-            .stroke({ color: arc.color, alpha: arc.a, width: arc.w, cap: "round" });
-        }
+      // Three arcs at different radii, speeds and directions. Counter-rotation is what stops them
+      // reading as one rigid ring.
+      const arcs = [
+        {
+          r: aura + 8,
+          from: time * 0.75,
+          span: Math.PI * 1.4,
+          color: colorPrimary,
+          a: 0.9,
+          w: 1.5,
+        },
+        {
+          r: aura,
+          from: -time * 0.48 + Math.PI * 0.5,
+          span: Math.PI * 0.8,
+          color: colorSecondary,
+          a: 0.65,
+          w: 1,
+        },
+        {
+          r: aura + 22,
+          from: time * 0.32 + Math.PI,
+          span: Math.PI * 0.55,
+          color: colorTertiary,
+          a: 0.5,
+          w: 1,
+        },
+      ];
+      for (const arc of arcs) {
+        auraLayer
+          .moveTo(cx + Math.cos(arc.from) * arc.r, logoY + Math.sin(arc.from) * arc.r)
+          .arc(cx, logoY, arc.r, arc.from, arc.from + arc.span)
+          .stroke({ color: arc.color, alpha: arc.a, width: arc.w, cap: "round" });
       }
+    };
 
-      // ── Orbiting dots ───────────────────────────────────────────────────
+    // ── Orbiting dots ───────────────────────────────────────────────────
+    const drawOrbit = (dt: number, cx: number, logoY: number): void => {
       orbitLayer.clear();
       for (const dot of orbitDots) {
         dot.angle += dot.speed * dt;
@@ -398,34 +395,37 @@ const logo = defineEffect({
           )
           .fill({ color: dot.color, alpha });
       }
+    };
 
-      // ── ECG trace ───────────────────────────────────────────────────────
+    // ── ECG trace ───────────────────────────────────────────────────────
+    const drawEcg = (logoX: number, logoY: number, interval: number): void => {
       ecgLayer.clear();
-      if (showEcg) {
-        const half = logoSize;
-        const samples = Math.max(32, Math.round(half * 2));
+      if (!showEcg) return;
+      const half = logoSize;
+      const samples = Math.max(32, Math.round(half * 2));
 
-        // Traced three times at decreasing width and increasing opacity — the same cheap glow the
-        // waveform effects use, and much cheaper than a blur filter.
-        for (const pass of [
-          { width: 18, alpha: 0.08 },
-          { width: 5, alpha: 0.22 },
-          { width: 1.5, alpha: 0.88 },
-        ]) {
-          for (let i = 0; i <= samples; i += 1) {
-            // Each sample is a moment further into the past, which is what makes the trace scroll.
-            const t = time - (samples - i) * ECG_SCROLL;
-            const value = ecgSample((t * BEAT_INTERVAL) / interval) * ecgAmplitude;
-            const x = logoX - half + (i / samples) * half * 2;
-            const y = logoY - value;
-            if (i === 0) ecgLayer.moveTo(x, y);
-            else ecgLayer.lineTo(x, y);
-          }
-          ecgLayer.stroke({ color: colorPrimary, alpha: pass.alpha, width: pass.width });
+      // Traced three times at decreasing width and increasing opacity — the same cheap glow the
+      // waveform effects use, and much cheaper than a blur filter.
+      for (const pass of [
+        { width: 18, alpha: 0.08 },
+        { width: 5, alpha: 0.22 },
+        { width: 1.5, alpha: 0.88 },
+      ]) {
+        for (let i = 0; i <= samples; i += 1) {
+          // Each sample is a moment further into the past, which is what makes the trace scroll.
+          const t = time - (samples - i) * ECG_SCROLL;
+          const value = ecgSample((t * BEAT_INTERVAL) / interval) * ecgAmplitude;
+          const x = logoX - half + (i / samples) * half * 2;
+          const y = logoY - value;
+          if (i === 0) ecgLayer.moveTo(x, y);
+          else ecgLayer.lineTo(x, y);
         }
+        ecgLayer.stroke({ color: colorPrimary, alpha: pass.alpha, width: pass.width });
       }
+    };
 
-      // ── LIVE badge ──────────────────────────────────────────────────────
+    // ── LIVE badge ──────────────────────────────────────────────────────
+    const drawBadge = (cx: number, cy: number): void => {
       badgeLayer.clear();
       badgeText.visible = showLive && liveLabel !== "";
       if (showLive) {
@@ -435,6 +435,24 @@ const logo = defineEffect({
         badgeLayer.circle(bx, by, logoSize * 0.05).fill({ color: "#ff2a2a", alpha: blink });
         badgeText.position.set(bx + logoSize * 0.12, by);
       }
+    };
+
+    onFrame(scope, ctx.fpsCap, ({ dt }) => {
+      const interval = 60 / bpm;
+      updateBeat(dt, interval);
+
+      const cx = stage.width * 0.5;
+      const cy = stage.height * 0.5;
+      const float = Math.sin(time * 0.5) * 9;
+
+      drawLogo(cx, cy, float);
+      const logoX = sprite?.x ?? cx;
+      const logoY = cy + float;
+
+      drawAura(cx, logoY);
+      drawOrbit(dt, cx, logoY);
+      drawEcg(logoX, logoY, interval);
+      drawBadge(cx, cy);
 
       stage.render();
     });

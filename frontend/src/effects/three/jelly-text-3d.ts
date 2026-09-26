@@ -339,7 +339,12 @@ const jellyText3d = defineEffect({
 
           const damping = Math.pow(DAMPING, step);
           for (let axis = 0; axis < 3; axis += 1) {
-            const target = axis === 0 ? targetX : axis === 1 ? targetY : targetZ;
+            let target = targetZ;
+            if (axis === 0) {
+              target = targetX;
+            } else if (axis === 1) {
+              target = targetY;
+            }
             const index = i3 + axis;
             const v =
               ((velocity[index] ?? 0) + (target - (current[index] ?? 0)) * STIFFNESS * step) *

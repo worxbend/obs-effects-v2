@@ -165,7 +165,7 @@ export function mergeParams(
   }
   if (routeParams) {
     for (const spec of descriptor.params) {
-      if (Object.prototype.hasOwnProperty.call(routeParams, spec.key)) {
+      if (Object.hasOwn(routeParams, spec.key)) {
         merged[spec.key] = routeParams[spec.key];
       }
     }

@@ -1,7 +1,7 @@
 import * as PIXI from "pixi.js";
 
 import { colorHex, int, num } from "../paramUtils";
-import { createPixiStage, defineEffect, onFrame } from "../sdk";
+import { createPixiStage, defineEffect, onFrame, random } from "../sdk";
 
 /**
  * Wave Simulation
@@ -109,7 +109,8 @@ const waveSimulation = defineEffect({
         label: "Background",
         kind: "color",
         default: "#050a14",
-        description: "The deep near-black blue behind everything. The old page used this exact colour.",
+        description:
+          "The deep near-black blue behind everything. The old page used this exact colour.",
       },
       {
         key: "crestColor",
@@ -336,9 +337,10 @@ const waveSimulation = defineEffect({
     let vignette = num(ctx.params, "vignette", 0.85, 0, 1);
 
     /** The five accent colours in source order, refreshed whenever colours change. */
-    const paletteOf = (): number[] => [crestColor, accent2, accent3, accent4, troughColor].map(
-      (c) => Number.parseInt(c.slice(1), 16),
-    );
+    const paletteOf = (): number[] =>
+      [crestColor, accent2, accent3, accent4, troughColor].map((c) =>
+        Number.parseInt(c.slice(1), 16),
+      );
     let palette = paletteOf();
     // `noUncheckedIndexedAccess` makes every array read `number | undefined`; the palette always
     // has five entries, so a miss can only be a programming error — fall back to the crest teal.
@@ -385,14 +387,14 @@ const waveSimulation = defineEffect({
 
     const particles: Particle[] = [];
     const spawnParticle = (): Particle => {
-      const angle = Math.random() * Math.PI * 2;
-      const spd = (0.4 + Math.random() * 0.6) * baseSpeed;
+      const angle = random() * Math.PI * 2;
+      const spd = (0.4 + random() * 0.6) * baseSpeed;
       return {
-        x: Math.random() * stage.width,
-        y: Math.random() * stage.height,
+        x: random() * stage.width,
+        y: random() * stage.height,
         vx: Math.cos(angle) * spd,
         vy: Math.sin(angle) * spd,
-        phase: Math.random() * Math.PI * 2,
+        phase: random() * Math.PI * 2,
         paletteIndex: particles.length % SRC_DEFS.length,
       };
     };
@@ -468,7 +470,10 @@ const waveSimulation = defineEffect({
           for (const s of sources) {
             const dx = gx - s.x;
             const dy = gy - s.y;
-            const r = Math.sqrt(dx * dx + dy * dy) + 1;
+            // `sqrt` of a named square rather than `Math.hypot`: this is the grid × sources inner
+            // loop, run every frame, where `hypot`'s overflow-safe path costs noticeably more.
+            const d2 = dx * dx + dy * dy;
+            const r = Math.sqrt(d2) + 1;
             // The 1/(1 + 0.0015r) attenuation gives a natural radial falloff.
             v +=
               (s.amp * Math.sin((r / (s.wl * waveScale) - s.freq * time) * Math.PI * 2)) /
@@ -569,6 +574,26 @@ const waveSimulation = defineEffect({
       }
     };
 
+    /** The wave field value at the grid cell containing (x, y); `cw`/`ch` are the cell size. */
+    const fieldAt = (x: number, y: number, cw: number, ch: number): number => {
+      const col = Math.min(gridCols - 1, Math.max(0, Math.floor(x / cw)));
+      const row = Math.min(gridRows - 1, Math.max(0, Math.floor(y / ch)));
+      return waveField[row * gridCols + col] ?? 0;
+    };
+
+    /** One connection line, `t` being 1 at zero length and 0 at the connect distance. */
+    const drawConnection = (a: Particle, b: Particle, t: number, cw: number, ch: number): void => {
+      const wAmp = fieldAt((a.x + b.x) * 0.5, (a.y + b.y) * 0.5, cw, ch);
+      const wBr = 0.5 + 0.5 * Math.max(-1, Math.min(1, wAmp));
+      const alpha = t * t * (0.09 + 0.2 * wBr);
+      const color = wAmp >= 0 ? colorAt(0) : colorAt(4);
+
+      connGfx
+        .moveTo(a.x, a.y)
+        .lineTo(b.x, b.y)
+        .stroke({ color, alpha, width: 0.5 + t });
+    };
+
     // Lines between nearby particles; brightness and colour are read from the wave amplitude at
     // the line's midpoint, so the connections literally pulse with the field.
     const drawConnections = (): void => {
@@ -592,16 +617,7 @@ const waveSimulation = defineEffect({
           const d2 = dx * dx + dy * dy;
           if (d2 > connD2) continue;
 
-          const d = Math.sqrt(d2);
-          const t = 1 - d / connectDist;
-          const mcol = Math.min(gridCols - 1, Math.max(0, Math.floor(((a.x + b.x) * 0.5) / cw)));
-          const mrow = Math.min(gridRows - 1, Math.max(0, Math.floor(((a.y + b.y) * 0.5) / ch)));
-          const wAmp = waveField[mrow * gridCols + mcol] ?? 0;
-          const wBr = 0.5 + 0.5 * Math.max(-1, Math.min(1, wAmp));
-          const alpha = t * t * (0.09 + 0.2 * wBr);
-          const color = wAmp >= 0 ? colorAt(0) : colorAt(4);
-
-          connGfx.moveTo(a.x, a.y).lineTo(b.x, b.y).stroke({ color, alpha, width: 0.5 + t });
+          drawConnection(a, b, 1 - Math.sqrt(d2) / connectDist, cw, ch);
           connCount++;
         }
       }
@@ -615,12 +631,9 @@ const waveSimulation = defineEffect({
       const pulse = 1 + 0.12 * Math.sin(time * 1.9);
 
       for (const p of particles) {
-        const col = Math.min(gridCols - 1, Math.max(0, Math.floor(p.x / cw)));
-        const row = Math.min(gridRows - 1, Math.max(0, Math.floor(p.y / ch)));
-        const wAmp = waveField[row * gridCols + col] ?? 0;
+        const wAmp = fieldAt(p.x, p.y, cw, ch);
         // Each particle carries its own phase so they never all pulse in sync.
-        const energy =
-          0.5 + 0.5 * Math.sin(time * 2.2 + p.phase) * (0.4 + 0.6 * Math.max(0, wAmp));
+        const energy = 0.5 + 0.5 * Math.sin(time * 2.2 + p.phase) * (0.4 + 0.6 * Math.max(0, wAmp));
         const glowR = 9 * energy * pulse;
         const coreR = 2.5 * energy;
         const color = colorAt(p.paletteIndex);
@@ -638,13 +651,13 @@ const waveSimulation = defineEffect({
       if (!slot) return;
       // A ripple is anchored to a randomly chosen source, so rings always emanate from a place
       // that is visibly emitting waves.
-      const src = sources[Math.floor(Math.random() * sources.length)];
+      const src = sources[Math.floor(random() * sources.length)];
       if (src === undefined) return;
       slot.cx = src.x;
       slot.cy = src.y;
       slot.r = 0;
       slot.maxR = rippleSize * Math.min(stage.width, stage.height);
-      slot.speed = rippleSpeed * (0.8 + 0.4 * Math.random());
+      slot.speed = rippleSpeed * (0.8 + 0.4 * random());
       slot.color = colorAt(src.paletteIndex);
       slot.active = true;
     };
@@ -652,7 +665,7 @@ const waveSimulation = defineEffect({
     const updateRipples = (dt: number): void => {
       nextRipple -= dt;
       if (nextRipple <= 0) {
-        nextRipple = rippleInterval * (0.7 + 0.6 * Math.random());
+        nextRipple = rippleInterval * (0.7 + 0.6 * random());
         spawnRipple();
       }
       for (const r of ripples) {

@@ -190,6 +190,12 @@ function PresetPanel(props: {
 
   const canSave = () => trimmedName() !== "" && nameIssue() === null && !busy();
 
+  const saveLabel = () => {
+    if (busy()) return "Saving…";
+    if (nameMatch()) return "Overwrite";
+    return "Save preset";
+  };
+
   const save = async () => {
     const name = trimmedName();
     if (name === "" || nameIssue() !== null) return;
@@ -354,43 +360,43 @@ function PresetPanel(props: {
       </Show>
 
       <div class="field preset-save">
-        <label class="field-label" for="preset-name">
-          Save the current parameters as a preset
+        <label for="preset-name">
+          <span class="field-label">Save the current parameters as a preset</span>
+          <div class="preset-save-row">
+            <input
+              id="preset-name"
+              type="text"
+              autocomplete="off"
+              spellcheck={false}
+              placeholder="Neon night"
+              maxlength={MAX_PRESET_NAME}
+              class={nameIssue() ? "invalid" : undefined}
+              value={draftName()}
+              onInput={(e) => {
+                setDraftName(e.currentTarget.value);
+                setError(null);
+              }}
+              /*
+               * This input sits inside the route editor's `<form>`, whose submit handler saves the
+               * *route*. Pressing Enter in a text field submits the enclosing form, which would save
+               * the route when the operator meant to save a preset — so Enter is intercepted here
+               * and does the thing the field is for.
+               */
+              onKeyDown={(e) => {
+                if (e.key !== "Enter") return;
+                e.preventDefault();
+                if (canSave()) void save();
+              }}
+            />
+            {/*
+              `type="button"` matters for the same reason: inside a form, a button with no type is a
+              submit button, and this one must never save the route.
+            */}
+            <button type="button" class="btn" disabled={!canSave()} onClick={() => void save()}>
+              {saveLabel()}
+            </button>
+          </div>
         </label>
-        <div class="preset-save-row">
-          <input
-            id="preset-name"
-            type="text"
-            autocomplete="off"
-            spellcheck={false}
-            placeholder="Neon night"
-            maxlength={MAX_PRESET_NAME}
-            class={nameIssue() ? "invalid" : undefined}
-            value={draftName()}
-            onInput={(e) => {
-              setDraftName(e.currentTarget.value);
-              setError(null);
-            }}
-            /*
-             * This input sits inside the route editor's `<form>`, whose submit handler saves the
-             * *route*. Pressing Enter in a text field submits the enclosing form, which would save
-             * the route when the operator meant to save a preset — so Enter is intercepted here
-             * and does the thing the field is for.
-             */
-            onKeyDown={(e) => {
-              if (e.key !== "Enter") return;
-              e.preventDefault();
-              if (canSave()) void save();
-            }}
-          />
-          {/*
-            `type="button"` matters for the same reason: inside a form, a button with no type is a
-            submit button, and this one must never save the route.
-          */}
-          <button type="button" class="btn" disabled={!canSave()} onClick={() => void save()}>
-            {busy() ? "Saving…" : nameMatch() ? "Overwrite" : "Save preset"}
-          </button>
-        </div>
         <Show when={nameIssue()}>{(message) => <p class="field-error">{message()}</p>}</Show>
         <p class="field-help">
           <Show

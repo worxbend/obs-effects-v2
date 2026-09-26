@@ -1,7 +1,7 @@
 import * as PIXI from "pixi.js";
 
 import { bool, colorInt, int, num } from "../paramUtils";
-import { createPixiStage, defineEffect, onFrame, useChat } from "../sdk";
+import { createPixiStage, defineEffect, onFrame, random, useChat } from "../sdk";
 import type { ChatEventKind, ChatImagePart, ChatMessage } from "~/types/contract";
 
 /**
@@ -70,7 +70,7 @@ function seedRng(seed: number): () => number {
 function hashSeed(input: string): number {
   let hash = 2166136261;
   for (let i = 0; i < input.length; i += 1) {
-    hash ^= input.charCodeAt(i);
+    hash ^= input.codePointAt(i) ?? 0;
     hash = Math.imul(hash, 16777619);
   }
   return hash >>> 0;
@@ -101,9 +101,7 @@ function hslToRgb(h: number, s: number, l: number): number {
   else [r, g, b] = [c, 0, x];
 
   return (
-    (Math.round((r + m) * 255) << 16) |
-    (Math.round((g + m) * 255) << 8) |
-    Math.round((b + m) * 255)
+    (Math.round((r + m) * 255) << 16) | (Math.round((g + m) * 255) << 8) | Math.round((b + m) * 255)
   );
 }
 
@@ -136,6 +134,12 @@ function eventLabel(event: ChatEventKind): string {
   return event === "chat" ? "MSG" : event.replace("_", "-").toUpperCase();
 }
 
+/** A numeric field of an event's payload, or `fallback` when it is missing or not a number. */
+function numberField(data: ChatMessage["data"], key: string, fallback: number): number {
+  const value = data[key];
+  return typeof value === "number" ? value : fallback;
+}
+
 /** The body text for a message: the chat line itself, or a synthesised system line for channel
  * events ("cheered 500 bits"), matching the old scene's `formatEventText`. */
 function messageText(msg: ChatMessage): string {
@@ -143,18 +147,18 @@ function messageText(msg: ChatMessage): string {
   if (msg.text.trim() !== "") return msg.text.trim();
   const data = msg.data;
   if (msg.event === "sub") {
-    const months = typeof data["months"] === "number" ? data["months"] : 0;
+    const months = numberField(data, "months", 0);
     return months > 0 ? `subscribed for ${months} months` : "subscribed";
   }
   if (msg.event === "gift_sub") {
-    const total = typeof data["total"] === "number" ? data["total"] : 1;
+    const total = numberField(data, "total", 1);
     return `gifted ${total} subscription${total === 1 ? "" : "s"}`;
   }
   if (msg.event === "cheer") {
-    const bits = typeof data["bits"] === "number" ? data["bits"] : 0;
+    const bits = numberField(data, "bits", 0);
     return `cheered ${bits} bits`;
   }
-  const viewers = typeof data["viewers"] === "number" ? data["viewers"] : 0;
+  const viewers = numberField(data, "viewers", 0);
   return `raided with ${viewers} viewers`;
 }
 
@@ -315,7 +319,7 @@ class TerminalBackground {
         // Occasionally swap a glyph's character, so the columns shimmer instead of scrolling a
         // frozen string. The modulo keeps it cheap: only a sliver of glyphs change per frame.
         if (Math.floor(this.elapsed + column.phase + i * 3) % 40 === 0) {
-          glyph.text = MATRIX_CHARS[Math.floor(Math.random() * MATRIX_CHARS.length)] ?? "0";
+          glyph.text = MATRIX_CHARS[Math.floor(random() * MATRIX_CHARS.length)] ?? "0";
         }
       }
     }
@@ -503,7 +507,7 @@ class HackerCard {
   private makeHeader(msg: ChatMessage, label: string, width: number): PIXI.Container {
     const view = new PIXI.Container();
     const terminalUser =
-      (msg.username || "anonymous").trim().toLowerCase().replace(/\s+/g, "_") || "anonymous";
+      (msg.username || "anonymous").trim().toLowerCase().replaceAll(/\s+/g, "_") || "anonymous";
     const name = new PIXI.Text({
       text: `${terminalUser}@twitch:~/${label.toLowerCase()}`,
       style: { fontFamily: FONT, fontSize: 13, fontWeight: "900", fill: 0x77ff89 },
@@ -661,8 +665,12 @@ class HackerCard {
     g.rect(w - 92, h - 3, 88, 3).fill(rgba(glow, 0.58));
     g.rect(20, 39, w - 40, 1).fill(rgba(0x38ff6b, 0.36));
     // The bottom bar is a progress bar for the typewriter: full width means fully typed.
-    g.rect(20, h - 14, Math.max(24, (w - 40) * clamp(this.visibleChars / this.code.length, 0, 1)), 2)
-      .fill(rgba(0x9dffae, 0.62));
+    g.rect(
+      20,
+      h - 14,
+      Math.max(24, (w - 40) * clamp(this.visibleChars / this.code.length, 0, 1)),
+      2,
+    ).fill(rgba(0x9dffae, 0.62));
 
     // Random one-pixel streaks, reseeded every few frames — cheap static over the card body.
     n.clear();
@@ -687,7 +695,8 @@ class HackerCard {
     const text = this.typedText.text;
     const lastLine = text.split("\n").pop() ?? "";
     const advance = this.cfg().fontSize * 0.5875;
-    const estimatedX = this.typedText.x + Math.min(bounds.width, Math.max(0, lastLine.length * advance));
+    const estimatedX =
+      this.typedText.x + Math.min(bounds.width, Math.max(0, lastLine.length * advance));
     const estimatedY = this.typedText.y + Math.max(0, this.typedText.height - 20);
     this.cursor.rect(estimatedX + 3, estimatedY + 2, 9, 16).fill(rgba(this.cfg().colorText, 0.82));
   }
@@ -919,7 +928,7 @@ const hackerChatCards = defineEffect({
       messageSerial += 1;
       // Every card gets its own seed even for identical messages, so noise/jitter never sync up.
       const cardSeed = hashSeed(
-        ["hacker", userKey, userSeed, msg.event, msg.text, messageSerial, Math.random()].join(":"),
+        ["hacker", userKey, userSeed, msg.event, msg.text, messageSerial, random()].join(":"),
       );
       const card = new HackerCard(cfg, pixelTexture, msg, cardWidth(), userSeed, accent, cardSeed);
       stage.stage.addChild(card.view);

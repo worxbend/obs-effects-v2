@@ -1,7 +1,7 @@
 import * as PIXI from "pixi.js";
 
 import { bool, colorHex, int, num, str } from "../paramUtils";
-import { createPixiStage, defineEffect, onFrame, useFont } from "../sdk";
+import { createPixiStage, defineEffect, onFrame, random, useFont } from "../sdk";
 
 /**
  * Molecular Text
@@ -375,12 +375,12 @@ const molecularText = defineEffect({
       bgParticles = [];
       for (let i = 0; i < bgCount; i += 1) {
         bgParticles.push({
-          x: Math.random() * w,
-          y: Math.random() * h,
-          radius: 1 + Math.random() * 3,
-          alpha: 0.1 + Math.random() * 0.3,
-          color: Math.random() > 0.5 ? colorBokehA : colorBokehB,
-          depth: Math.random(),
+          x: random() * w,
+          y: random() * h,
+          radius: 1 + random() * 3,
+          alpha: 0.1 + random() * 0.3,
+          color: random() > 0.5 ? colorBokehA : colorBokehB,
+          depth: random(),
         });
       }
     };
@@ -420,15 +420,15 @@ const molecularText = defineEffect({
             particles.push({
               // Scattered up to 25px from home with a random kick, so the word visibly coalesces
               // over the first second rather than appearing fully formed.
-              x: x + (Math.random() - 0.5) * 50,
-              y: y + (Math.random() - 0.5) * 50,
-              vx: (Math.random() - 0.5) * 5,
-              vy: (Math.random() - 0.5) * 5,
+              x: x + (random() - 0.5) * 50,
+              y: y + (random() - 0.5) * 50,
+              vx: (random() - 0.5) * 5,
+              vy: (random() - 0.5) * 5,
               homeX: x,
               homeY: y,
-              radius: 1.5 + Math.random() * 1.5,
-              alpha: 0.8 + Math.random() * 0.2,
-              color: Math.random() > 0.7 ? colorAccent : colorPrimary,
+              radius: 1.5 + random() * 1.5,
+              alpha: 0.8 + random() * 0.2,
+              color: random() > 0.7 ? colorAccent : colorPrimary,
             });
           }
         }
@@ -449,33 +449,15 @@ const molecularText = defineEffect({
 
     let time = 0;
 
-    onFrame(scope, ctx.fpsCap, ({ dt }) => {
-      time += dt;
-      // The original applied its forces once per frame at 60 fps; `step` converts seconds back to
-      // those frame units, clamped so a long stall does not fling the lattice apart.
-      const step = Math.min(dt * 60, 3);
-      const frictionStep = Math.pow(friction, step);
-      const w = stage.width;
-      const h = stage.height;
-
-      bgLayer.clear();
-      bgBlurLayer.clear();
-      membraneLayer.clear();
-      textLayer.clear();
-
-      // ── Background fill ─────────────────────────────────────────────────
-      if (drawBackground && bgGradient !== null) {
-        bgLayer.rect(0, 0, w, h).fill(bgGradient);
-      }
-
-      // ── Bokeh vortex ────────────────────────────────────────────────────
+    /** Orbits every bokeh particle around the centre and draws it on its depth's layer. */
+    const stepBokeh = (w: number, h: number, step: number): void => {
       const centerX = w / 2;
       const centerY = h / 2;
 
       for (const p of bgParticles) {
         const dxCenter = p.x - centerX;
         const dyCenter = p.y - centerY;
-        const distCenter = Math.sqrt(dxCenter * dxCenter + dyCenter * dyCenter) || 1;
+        const distCenter = Math.hypot(dxCenter, dyCenter) || 1;
 
         // Velocity perpendicular to the line to the centre: that is what makes an orbit rather
         // than a fall inward. Deeper particles move slower, which reinforces the depth cue.
@@ -499,66 +481,96 @@ const molecularText = defineEffect({
         const layer = p.depth > 0.5 ? bgBlurLayer : bgLayer;
         layer.circle(p.x, p.y, bokehRadius).fill({ color: p.color, alpha: bokehAlpha });
       }
+    };
+
+    const applyHomeSpring = (p: Particle, step: number): void => {
+      // The home position itself sways with the three wave layers, so the spring is always
+      // aiming at a moving target and the whole word ripples as one surface.
+      let waveDx = 0;
+      let waveDy = 0;
+      for (const layer of WAVE_LAYERS) {
+        const angle =
+          time * layer.speed * waveSpeed + p.homeX * layer.freq + p.homeY * layer.freq * 0.5;
+        waveDx += Math.cos(angle) * layer.amp * waveAmp;
+        waveDy += Math.sin(angle) * layer.amp * waveAmp;
+      }
+
+      p.vx += (p.homeX + waveDx - p.x) * returnForce * step;
+      p.vy += (p.homeY + waveDy - p.y) * returnForce * step;
+    };
+
+    const applyNeighbours = (i: number, p: Particle, step: number): void => {
+      // Neighbour forces and membrane lines, against nearby array indices only — see the
+      // header comment for why that is close enough and vastly cheaper than all pairs.
+      const start = Math.max(0, i - NEIGHBOUR_RANGE);
+      const end = Math.min(particles.length, i + NEIGHBOUR_RANGE);
+      const cohesionSq = cohesionDist * cohesionDist;
+
+      for (let j = start; j < end; j += 1) {
+        if (i === j) continue;
+        const other = particles[j];
+        if (other === undefined) continue;
+        const dx = other.x - p.x;
+        const dy = other.y - p.y;
+        const distSq = dx * dx + dy * dy;
+        if (distSq >= cohesionSq) continue;
+
+        const dist = Math.sqrt(distSq) || 0.1;
+
+        // Cohesion is a spring towards 80% of the reach: closer pairs are pushed slightly
+        // apart by it, further pairs pulled in, so the lattice finds an even spacing.
+        const pull = (dist - cohesionDist * 0.8) * cohesionStrength;
+        p.vx += (dx / dist) * pull * step;
+        p.vy += (dy / dist) * pull * step;
+
+        if (dist < repulsionDist) {
+          const push = (repulsionDist - dist) * repulsionStrength;
+          p.vx -= (dx / dist) * push * step;
+          p.vy -= (dy / dist) * push * step;
+        }
+
+        // The membrane: a line whose opacity falls with distance, so links visibly stretch
+        // thin and snap as the lattice deforms.
+        const lineAlpha = (1 - dist / cohesionDist) * 0.2;
+        membraneLayer
+          .moveTo(p.x, p.y)
+          .lineTo(other.x, other.y)
+          .stroke({ color: p.color, width: 1, alpha: lineAlpha });
+      }
+    };
+
+    onFrame(scope, ctx.fpsCap, ({ dt }) => {
+      time += dt;
+      // The original applied its forces once per frame at 60 fps; `step` converts seconds back to
+      // those frame units, clamped so a long stall does not fling the lattice apart.
+      const step = Math.min(dt * 60, 3);
+      const frictionStep = Math.pow(friction, step);
+      const w = stage.width;
+      const h = stage.height;
+
+      bgLayer.clear();
+      bgBlurLayer.clear();
+      membraneLayer.clear();
+      textLayer.clear();
+
+      // ── Background fill ─────────────────────────────────────────────────
+      if (drawBackground && bgGradient !== null) {
+        bgLayer.rect(0, 0, w, h).fill(bgGradient);
+      }
+
+      // ── Bokeh vortex ────────────────────────────────────────────────────
+      stepBokeh(w, h, step);
 
       // ── The lattice ─────────────────────────────────────────────────────
       for (let i = 0; i < particles.length; i += 1) {
         const p = particles[i];
         if (p === undefined) continue;
 
-        // The home position itself sways with the three wave layers, so the spring is always
-        // aiming at a moving target and the whole word ripples as one surface.
-        let waveDx = 0;
-        let waveDy = 0;
-        for (const layer of WAVE_LAYERS) {
-          const angle =
-            time * layer.speed * waveSpeed + p.homeX * layer.freq + p.homeY * layer.freq * 0.5;
-          waveDx += Math.cos(angle) * layer.amp * waveAmp;
-          waveDy += Math.sin(angle) * layer.amp * waveAmp;
-        }
+        applyHomeSpring(p, step);
+        applyNeighbours(i, p, step);
 
-        p.vx += (p.homeX + waveDx - p.x) * returnForce * step;
-        p.vy += (p.homeY + waveDy - p.y) * returnForce * step;
-
-        // Neighbour forces and membrane lines, against nearby array indices only — see the
-        // header comment for why that is close enough and vastly cheaper than all pairs.
-        const start = Math.max(0, i - NEIGHBOUR_RANGE);
-        const end = Math.min(particles.length, i + NEIGHBOUR_RANGE);
-        const cohesionSq = cohesionDist * cohesionDist;
-
-        for (let j = start; j < end; j += 1) {
-          if (i === j) continue;
-          const other = particles[j];
-          if (other === undefined) continue;
-          const dx = other.x - p.x;
-          const dy = other.y - p.y;
-          const distSq = dx * dx + dy * dy;
-          if (distSq >= cohesionSq) continue;
-
-          const dist = Math.sqrt(distSq) || 0.1;
-
-          // Cohesion is a spring towards 80% of the reach: closer pairs are pushed slightly
-          // apart by it, further pairs pulled in, so the lattice finds an even spacing.
-          const pull = (dist - cohesionDist * 0.8) * cohesionStrength;
-          p.vx += (dx / dist) * pull * step;
-          p.vy += (dy / dist) * pull * step;
-
-          if (dist < repulsionDist) {
-            const push = (repulsionDist - dist) * repulsionStrength;
-            p.vx -= (dx / dist) * push * step;
-            p.vy -= (dy / dist) * push * step;
-          }
-
-          // The membrane: a line whose opacity falls with distance, so links visibly stretch
-          // thin and snap as the lattice deforms.
-          const lineAlpha = (1 - dist / cohesionDist) * 0.2;
-          membraneLayer
-            .moveTo(p.x, p.y)
-            .lineTo(other.x, other.y)
-            .stroke({ color: p.color, width: 1, alpha: lineAlpha });
-        }
-
-        p.vx = p.vx * frictionStep + (Math.random() - 0.5) * jitter * step;
-        p.vy = p.vy * frictionStep + (Math.random() - 0.5) * jitter * step;
+        p.vx = p.vx * frictionStep + (random() - 0.5) * jitter * step;
+        p.vy = p.vy * frictionStep + (random() - 0.5) * jitter * step;
         p.x += p.vx * step;
         p.y += p.vy * step;
 
@@ -616,10 +628,10 @@ const molecularText = defineEffect({
           // A colour change alone re-rolls each particle's colour without disturbing positions,
           // so the word does not visibly re-assemble over a tint tweak.
           for (const particle of particles) {
-            particle.color = Math.random() > 0.7 ? colorAccent : colorPrimary;
+            particle.color = random() > 0.7 ? colorAccent : colorPrimary;
           }
           for (const particle of bgParticles) {
-            particle.color = Math.random() > 0.5 ? colorBokehA : colorBokehB;
+            particle.color = random() > 0.5 ? colorBokehA : colorBokehB;
           }
         }
 

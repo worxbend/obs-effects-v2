@@ -55,7 +55,7 @@ const chatSound = defineEffect({
         default: "discord",
         options: ["discord", "slack-message", "custom"],
         description:
-          "Which clip to play. The first two always exist on the server; \"custom\" plays the sound named below.",
+          'Which clip to play. The first two always exist on the server; "custom" plays the sound named below.',
       },
       {
         key: "customSound",
@@ -63,7 +63,7 @@ const chatSound = defineEffect({
         kind: "text",
         default: "",
         description:
-          "The name (or id) of an uploaded sound, from the Settings page. Only used when Sound is \"custom\".",
+          'The name (or id) of an uploaded sound, from the Settings page. Only used when Sound is "custom".',
       },
       {
         key: "volume",
@@ -138,8 +138,7 @@ const chatSound = defineEffect({
     let indicatorColor = colorHex(ctx.params, "indicatorColor", "#7fdbca");
 
     /** Which clip to fetch right now. Empty means "nothing configured", which plays nothing. */
-    const currentSoundKey = (): string =>
-      soundMode === "custom" ? customSound.trim() : soundMode;
+    const currentSoundKey = (): string => (soundMode === "custom" ? customSound.trim() : soundMode);
 
     /*
      * The one audio element the whole effect plays through, exactly one for the effect's lifetime.
@@ -274,9 +273,7 @@ const chatSound = defineEffect({
 
     // Referenced so the counters demonstrably exist for a debugger's breakpoint; they carry no
     // rendering weight and are the effect's only record of dropped or failed pings.
-    void played;
-    void dropped;
-    void failed;
+    [played, dropped, failed].forEach(() => {});
 
     return {
       setParams(p: Record<string, unknown>): void {

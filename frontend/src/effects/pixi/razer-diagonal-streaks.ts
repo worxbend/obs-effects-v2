@@ -1,7 +1,7 @@
 import * as PIXI from "pixi.js";
 
 import { colorHex, colorInt, int, num } from "../paramUtils";
-import { createEnvelopes, createPixiStage, defineEffect, onFrame, useAudio } from "../sdk";
+import { createEnvelopes, createPixiStage, defineEffect, onFrame, random, useAudio } from "../sdk";
 
 /**
  * Razer Diagonal Streaks
@@ -257,17 +257,17 @@ const razerDiagonalStreaks = defineEffect({
       for (let i = 0; i < count; i += 1) {
         // Depth drives everything, and it is squared for the length so the near band is
         // dramatically longer rather than evenly graded — which is what sells the parallax.
-        const depth = Math.random();
+        const depth = random();
         streaks.push({
-          u: uMin + Math.random() * uSpan,
-          w: wMin + Math.random() * wSpan,
-          len: 60 + depth * depth * 520 + Math.random() * 80,
+          u: uMin + random() * uSpan,
+          w: wMin + random() * wSpan,
+          len: 60 + depth * depth * 520 + random() * 80,
           width: 4 + depth * 18,
-          color: colors[Math.floor(Math.random() * colors.length)] ?? "#44ff00",
+          color: colors[Math.floor(random() * colors.length)] ?? "#44ff00",
           alpha: 0.28 + depth * 0.62,
           speed: 90 + depth * 360,
-          twinklePhase: Math.random() * Math.PI * 2,
-          twinkleRate: 0.4 + Math.random() * 1.4,
+          twinklePhase: random() * Math.PI * 2,
+          twinkleRate: 0.4 + random() * 1.4,
           depth,
         });
       }
@@ -283,8 +283,8 @@ const razerDiagonalStreaks = defineEffect({
       // Re-spread rather than re-seed, so a resize does not restart the animation: the field keeps
       // its depths and colours and only its positions are spread over the new extent.
       for (const streak of streaks) {
-        streak.u = uMin + Math.random() * uSpan;
-        streak.w = wMin + Math.random() * wSpan;
+        streak.u = uMin + random() * uSpan;
+        streak.w = wMin + random() * wSpan;
       }
     });
 

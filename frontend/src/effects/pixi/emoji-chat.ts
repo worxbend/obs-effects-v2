@@ -141,19 +141,85 @@ interface ToneRule {
 /** The fast path: a recognised emoji anywhere in the message settles the mood immediately. Rules
  * are ordered strongest-signal-first, so 😂 wins over a 👍 later in the same message. */
 const EMOJI_RULES: ToneRule[] = [
-  { tone: "amusement", expression: "laugh", confidence: 0.98, terms: ["😂", "🤣", "😆", "😹", "😝", "😜"] },
-  { tone: "love", expression: "lovely", confidence: 0.98, terms: ["😍", "😘", "🥰", "😻", "❤️", "❤", "🫶", "🧡", "💛", "💚", "💙", "💜", "🤍", "🖤", "💖", "💕", "💗", "💓", "💞", "💘"] },
-  { tone: "anger", expression: "angry", confidence: 0.98, terms: ["😡", "😠", "🤬", "😤", "💢", "👿"] },
+  {
+    tone: "amusement",
+    expression: "laugh",
+    confidence: 0.98,
+    terms: ["😂", "🤣", "😆", "😹", "😝", "😜"],
+  },
+  {
+    tone: "love",
+    expression: "lovely",
+    confidence: 0.98,
+    terms: [
+      "😍",
+      "😘",
+      "🥰",
+      "😻",
+      "❤️",
+      "❤",
+      "🫶",
+      "🧡",
+      "💛",
+      "💚",
+      "💙",
+      "💜",
+      "🤍",
+      "🖤",
+      "💖",
+      "💕",
+      "💗",
+      "💓",
+      "💞",
+      "💘",
+    ],
+  },
+  {
+    tone: "anger",
+    expression: "angry",
+    confidence: 0.98,
+    terms: ["😡", "😠", "🤬", "😤", "💢", "👿"],
+  },
   { tone: "sadness", expression: "cry", confidence: 0.98, terms: ["😭", "😢", "🥲", "😿"] },
-  { tone: "sadness", expression: "sad", confidence: 0.96, terms: ["☹️", "☹", "🙁", "😞", "😔", "😟", "🥺", "😕", "😣", "😖", "😫", "😩", "💔"] },
-  { tone: "fear", expression: "scared", confidence: 0.96, terms: ["😱", "😨", "😰", "😥", "😓", "🫣"] },
-  { tone: "surprise", expression: "surprised", confidence: 0.96, terms: ["😮", "😯", "😲", "🤯", "😳", "🙀", "🫢", "👀"] },
-  { tone: "disgust", expression: "unimpressed", confidence: 0.95, terms: ["🤢", "🤮", "😒", "🙄", "😑", "😐", "🫤", "👎"] },
+  {
+    tone: "sadness",
+    expression: "sad",
+    confidence: 0.96,
+    terms: ["☹️", "☹", "🙁", "😞", "😔", "😟", "🥺", "😕", "😣", "😖", "😫", "😩", "💔"],
+  },
+  {
+    tone: "fear",
+    expression: "scared",
+    confidence: 0.96,
+    terms: ["😱", "😨", "😰", "😥", "😓", "🫣"],
+  },
+  {
+    tone: "surprise",
+    expression: "surprised",
+    confidence: 0.96,
+    terms: ["😮", "😯", "😲", "🤯", "😳", "🙀", "🫢", "👀"],
+  },
+  {
+    tone: "disgust",
+    expression: "unimpressed",
+    confidence: 0.95,
+    terms: ["🤢", "🤮", "😒", "🙄", "😑", "😐", "🫤", "👎"],
+  },
   { tone: "joy", expression: "cool", confidence: 0.94, terms: ["😎", "🤙"] },
   { tone: "neutral", expression: "sleepy", confidence: 0.94, terms: ["😴", "🥱", "💤"] },
   { tone: "joy", expression: "wink", confidence: 0.94, terms: ["😉"] },
-  { tone: "joy", expression: "happy", confidence: 0.93, terms: ["😀", "😃", "😄", "😁", "😊", "🙂", "☺️", "☺", "🤗", "😺", "😸", "👍", "👌"] },
-  { tone: "excitement", expression: "star", confidence: 0.93, terms: ["🤩", "🥳", "🎉", "✨", "⭐", "🌟", "🔥"] },
+  {
+    tone: "joy",
+    expression: "happy",
+    confidence: 0.93,
+    terms: ["😀", "😃", "😄", "😁", "😊", "🙂", "☺️", "☺", "🤗", "😺", "😸", "👍", "👌"],
+  },
+  {
+    tone: "excitement",
+    expression: "star",
+    confidence: 0.93,
+    terms: ["🤩", "🥳", "🎉", "✨", "⭐", "🌟", "🔥"],
+  },
   { tone: "embarrassment", expression: "awkward", confidence: 0.91, terms: ["😅", "😬", "🙃"] },
 ];
 
@@ -164,67 +230,314 @@ const DICTIONARY_RULES: ToneRule[] = [
     tone: "anger",
     expression: "angry",
     confidence: 0.88,
-    terms: ["mad", "angry", "rage", "furious", "hate", "annoyed", "pissed", "wtf", "terrible", "awful", "stupid", "idiot", "trash", "злий", "зла", "злюсь", "злюся", "злість", "лють", "лютий", "люта", "бісить", "дратує", "дратуюсь", "дратуюся", "ненавиджу", "задовбало", "задовбав", "дістало", "розлючений", "розлючена", "скажений", "скажена"],
+    terms: [
+      "mad",
+      "angry",
+      "rage",
+      "furious",
+      "hate",
+      "annoyed",
+      "pissed",
+      "wtf",
+      "terrible",
+      "awful",
+      "stupid",
+      "idiot",
+      "trash",
+      "злий",
+      "зла",
+      "злюсь",
+      "злюся",
+      "злість",
+      "лють",
+      "лютий",
+      "люта",
+      "бісить",
+      "дратує",
+      "дратуюсь",
+      "дратуюся",
+      "ненавиджу",
+      "задовбало",
+      "задовбав",
+      "дістало",
+      "розлючений",
+      "розлючена",
+      "скажений",
+      "скажена",
+    ],
   },
   {
     tone: "sadness",
     expression: "sad",
     confidence: 0.86,
-    terms: ["sad", "miss", "down", "lonely", "sorry", "bad", "hurt", "depressed", "upset", "sorrow", "heartbroken", "unhappy", "miserable", "сумно", "сумний", "сумна", "сумую", "скучив", "скучила", "скучаю", "погано", "боляче", "самотньо", "журба", "прикро", "невесело", "депресія", "депресивно", "розбитий", "розбита"],
+    terms: [
+      "sad",
+      "miss",
+      "down",
+      "lonely",
+      "sorry",
+      "bad",
+      "hurt",
+      "depressed",
+      "upset",
+      "sorrow",
+      "heartbroken",
+      "unhappy",
+      "miserable",
+      "сумно",
+      "сумний",
+      "сумна",
+      "сумую",
+      "скучив",
+      "скучила",
+      "скучаю",
+      "погано",
+      "боляче",
+      "самотньо",
+      "журба",
+      "прикро",
+      "невесело",
+      "депресія",
+      "депресивно",
+      "розбитий",
+      "розбита",
+    ],
   },
   {
     tone: "grief",
     expression: "cry",
     confidence: 0.88,
-    terms: ["cry", "crying", "tears", "sob", "weeping", "плачу", "плакати", "сльози", "сльоза", "ридаю", "ридати", "плак", "заплакав", "заплакала"],
+    terms: [
+      "cry",
+      "crying",
+      "tears",
+      "sob",
+      "weeping",
+      "плачу",
+      "плакати",
+      "сльози",
+      "сльоза",
+      "ридаю",
+      "ридати",
+      "плак",
+      "заплакав",
+      "заплакала",
+    ],
   },
   {
     tone: "fear",
     expression: "scared",
     confidence: 0.84,
-    terms: ["scared", "afraid", "fear", "yikes", "terrified", "panic", "nervous", "worried", "anxious", "oh no", "страшно", "боюсь", "боюся", "боїшся", "лячно", "жах", "жахливо", "паніка", "панікую", "тривожно", "тривога", "переживаю", "моторошно"],
+    terms: [
+      "scared",
+      "afraid",
+      "fear",
+      "yikes",
+      "terrified",
+      "panic",
+      "nervous",
+      "worried",
+      "anxious",
+      "oh no",
+      "страшно",
+      "боюсь",
+      "боюся",
+      "боїшся",
+      "лячно",
+      "жах",
+      "жахливо",
+      "паніка",
+      "панікую",
+      "тривожно",
+      "тривога",
+      "переживаю",
+      "моторошно",
+    ],
   },
   {
     tone: "surprise",
     expression: "surprised",
     confidence: 0.83,
-    terms: ["wow", "whoa", "really", "omg", "surprise", "shocked", "unexpected", "can't believe", "no way", "ого", "вау", "нічого собі", "серйозно", "шок", "шокований", "шокована", "не вірю", "офігів", "офігіла", "капец", "неочікувано"],
+    terms: [
+      "wow",
+      "whoa",
+      "really",
+      "omg",
+      "surprise",
+      "shocked",
+      "unexpected",
+      "can't believe",
+      "no way",
+      "ого",
+      "вау",
+      "нічого собі",
+      "серйозно",
+      "шок",
+      "шокований",
+      "шокована",
+      "не вірю",
+      "офігів",
+      "офігіла",
+      "капец",
+      "неочікувано",
+    ],
   },
   {
     tone: "amusement",
     expression: "laugh",
     confidence: 0.87,
-    terms: ["haha", "ahah", "hehe", "lol", "lmao", "rofl", "hilarious", "funny", "joke", "смішно", "ахаха", "хаха", "хехе", "ор", "ору", "ржу", "угар", "жиза", "сміх", "сміюсь", "сміюся"],
+    terms: [
+      "haha",
+      "ahah",
+      "hehe",
+      "lol",
+      "lmao",
+      "rofl",
+      "hilarious",
+      "funny",
+      "joke",
+      "смішно",
+      "ахаха",
+      "хаха",
+      "хехе",
+      "ор",
+      "ору",
+      "ржу",
+      "угар",
+      "жиза",
+      "сміх",
+      "сміюсь",
+      "сміюся",
+    ],
   },
   {
     tone: "joy",
     expression: "happy",
     confidence: 0.84,
-    terms: ["happy", "awesome", "great", "nice", "good", "hello", "yay", "glad", "wonderful", "perfect", "радість", "радію", "щасливий", "щаслива", "клас", "супер", "топ", "добре", "гарно", "чудово", "прекрасно", "привіт", "ура", "кайф"],
+    terms: [
+      "happy",
+      "awesome",
+      "great",
+      "nice",
+      "good",
+      "hello",
+      "yay",
+      "glad",
+      "wonderful",
+      "perfect",
+      "радість",
+      "радію",
+      "щасливий",
+      "щаслива",
+      "клас",
+      "супер",
+      "топ",
+      "добре",
+      "гарно",
+      "чудово",
+      "прекрасно",
+      "привіт",
+      "ура",
+      "кайф",
+    ],
   },
   {
     tone: "love",
     expression: "lovely",
     confidence: 0.88,
-    terms: ["love", "lovely", "cute", "sweet", "adorable", "beautiful", "люблю", "кохаю", "милий", "мила", "милота", "серденько", "серце", "обіймаю", "обійми", "гарнюня"],
+    terms: [
+      "love",
+      "lovely",
+      "cute",
+      "sweet",
+      "adorable",
+      "beautiful",
+      "люблю",
+      "кохаю",
+      "милий",
+      "мила",
+      "милота",
+      "серденько",
+      "серце",
+      "обіймаю",
+      "обійми",
+      "гарнюня",
+    ],
   },
   {
     tone: "approval",
     expression: "happy",
     confidence: 0.78,
-    terms: ["yes", "ok", "okay", "sure", "got it", "thanks", "thank you", "agree", "yep", "так", "ок", "окей", "гаразд", "дякую", "спасибі", "згоден", "згодна", "домовились", "підтримую", "плюсую"],
+    terms: [
+      "yes",
+      "ok",
+      "okay",
+      "sure",
+      "got it",
+      "thanks",
+      "thank you",
+      "agree",
+      "yep",
+      "так",
+      "ок",
+      "окей",
+      "гаразд",
+      "дякую",
+      "спасибі",
+      "згоден",
+      "згодна",
+      "домовились",
+      "підтримую",
+      "плюсую",
+    ],
   },
   {
     tone: "disgust",
     expression: "unimpressed",
     confidence: 0.82,
-    terms: ["disgust", "gross", "cringe", "meh", "boring", "not impressed", "ew", "фу", "бридко", "гидко", "крінж", "нудно", "байдуже", "таке собі", "мерзенно", "не вражає"],
+    terms: [
+      "disgust",
+      "gross",
+      "cringe",
+      "meh",
+      "boring",
+      "not impressed",
+      "ew",
+      "фу",
+      "бридко",
+      "гидко",
+      "крінж",
+      "нудно",
+      "байдуже",
+      "таке собі",
+      "мерзенно",
+      "не вражає",
+    ],
   },
   {
     tone: "neutral",
     expression: "sleepy",
     confidence: 0.8,
-    terms: ["sleep", "sleepy", "tired", "exhausted", "good night", "night", "спати", "сон", "сплю", "добраніч", "ніч", "втомився", "втомилась", "втома", "сонний", "сонна", "виснажений", "виснажена"],
+    terms: [
+      "sleep",
+      "sleepy",
+      "tired",
+      "exhausted",
+      "good night",
+      "night",
+      "спати",
+      "сон",
+      "сплю",
+      "добраніч",
+      "ніч",
+      "втомився",
+      "втомилась",
+      "втома",
+      "сонний",
+      "сонна",
+      "виснажений",
+      "виснажена",
+    ],
   },
   {
     tone: "joy",
@@ -236,13 +549,38 @@ const DICTIONARY_RULES: ToneRule[] = [
     tone: "amusement",
     expression: "wink",
     confidence: 0.78,
-    terms: ["kidding", "joke", "just kidding", "jk", "teasing", "жарт", "жартую", "прикол", "рофл", "пожартував", "пожартувала"],
+    terms: [
+      "kidding",
+      "joke",
+      "just kidding",
+      "jk",
+      "teasing",
+      "жарт",
+      "жартую",
+      "прикол",
+      "рофл",
+      "пожартував",
+      "пожартувала",
+    ],
   },
   {
     tone: "embarrassment",
     expression: "awkward",
     confidence: 0.78,
-    terms: ["oops", "my bad", "awkward", "embarrassing", "sorry", "вибач", "сорі", "перепрошую", "незручно", "ой", "моя помилка", "мій косяк"],
+    terms: [
+      "oops",
+      "my bad",
+      "awkward",
+      "embarrassing",
+      "sorry",
+      "вибач",
+      "сорі",
+      "перепрошую",
+      "незручно",
+      "ой",
+      "моя помилка",
+      "мій косяк",
+    ],
   },
 ];
 
@@ -267,10 +605,7 @@ function emojiTone(text: string): ToneResult {
 /** Lowercases with Ukrainian locale rules (so І → і, which plain `toLowerCase` also does, but the
  * locale form is explicit about the intent), normalises apostrophe variants, and tokenises. */
 function normalizeDictionaryText(text: string): { lower: string; tokens: Set<string> } {
-  const lower = text
-    .toLocaleLowerCase("uk-UA")
-    .replace(/[’`´]/g, "'")
-    .replace(/ё/g, "е");
+  const lower = text.toLocaleLowerCase("uk-UA").replaceAll(/[’`´]/g, "'").replaceAll("ё", "е");
   const tokens = new Set(lower.split(/[^\p{L}\p{N}']+/u).filter(Boolean));
   return { lower, tokens };
 }
@@ -312,7 +647,9 @@ function localTone(text: string): ToneResult {
 function eventText(msg: ChatMessage): string {
   if (msg.event === "sub") {
     const months = msg.data["months"];
-    return typeof months === "number" && months > 0 ? `subscribed for ${months} months` : "subscribed";
+    return typeof months === "number" && months > 0
+      ? `subscribed for ${months} months`
+      : "subscribed";
   }
   if (msg.event === "gift_sub") {
     const raw = msg.data["total"];
@@ -338,7 +675,7 @@ function visibleText(msg: ChatMessage): string {
   const joined = msg.parts
     .map((part) => (part.type === "text" ? part.text : part.name))
     .join("")
-    .replace(/\s+/g, " ")
+    .replaceAll(/\s+/g, " ")
     .trim();
   return joined || eventText(msg);
 }
@@ -371,7 +708,7 @@ function clamp(value: number, min: number, max: number): number {
 function hashSeed(value: string): number {
   let hash = 2166136261;
   for (let i = 0; i < value.length; i++) {
-    hash ^= value.charCodeAt(i);
+    hash ^= value.codePointAt(i) ?? 0;
     hash = Math.imul(hash, 16777619);
   }
   return hash >>> 0;
@@ -414,23 +751,74 @@ function drawSoftPill(
   const c = 0.5522847498;
 
   g.moveTo(x + r * 0.98, y + topLift);
-  g.bezierCurveTo(x + width * 0.32, y - 2 + topLift, x + width * 0.68, y + 2 - topLift, x + width - r * 0.98, y + topLift * 0.6);
-  g.bezierCurveTo(x + width - r + r * c + rightBump, y, x + width + rightBump, y + r - r * c, x + width + rightBump, y + r);
-  g.bezierCurveTo(x + width + rightBump, y + r + r * c, x + width - r + r * c, y + height, x + width - r, y + height + bottomLift);
-  g.bezierCurveTo(x + width * 0.66, y + height + 2 + bottomLift, x + width * 0.32, y + height - 2 - bottomLift, x + r, y + height + bottomLift * 0.7);
-  g.bezierCurveTo(x + r - r * c + leftBump, y + height, x + leftBump, y + r + r * c, x + leftBump, y + r);
+  g.bezierCurveTo(
+    x + width * 0.32,
+    y - 2 + topLift,
+    x + width * 0.68,
+    y + 2 - topLift,
+    x + width - r * 0.98,
+    y + topLift * 0.6,
+  );
+  g.bezierCurveTo(
+    x + width - r + r * c + rightBump,
+    y,
+    x + width + rightBump,
+    y + r - r * c,
+    x + width + rightBump,
+    y + r,
+  );
+  g.bezierCurveTo(
+    x + width + rightBump,
+    y + r + r * c,
+    x + width - r + r * c,
+    y + height,
+    x + width - r,
+    y + height + bottomLift,
+  );
+  g.bezierCurveTo(
+    x + width * 0.66,
+    y + height + 2 + bottomLift,
+    x + width * 0.32,
+    y + height - 2 - bottomLift,
+    x + r,
+    y + height + bottomLift * 0.7,
+  );
+  g.bezierCurveTo(
+    x + r - r * c + leftBump,
+    y + height,
+    x + leftBump,
+    y + r + r * c,
+    x + leftBump,
+    y + r,
+  );
   g.bezierCurveTo(x + leftBump, y + r - r * c, x + r - r * c, y, x + r, y + topLift);
   g.closePath();
   g.fill(fill);
 }
 
-function smile(g: PIXI.Graphics, x: number, y: number, w: number, depth: number, color = BROWN, stroke = 4): void {
+function smile(
+  g: PIXI.Graphics,
+  x: number,
+  y: number,
+  w: number,
+  depth: number,
+  color = BROWN,
+  stroke = 4,
+): void {
   g.moveTo(x, y);
   g.quadraticCurveTo(x + w / 2, y + depth, x + w, y);
   g.stroke({ color, width: stroke, cap: "round" });
 }
 
-function frown(g: PIXI.Graphics, x: number, y: number, w: number, depth: number, color = BROWN, stroke = 4): void {
+function frown(
+  g: PIXI.Graphics,
+  x: number,
+  y: number,
+  w: number,
+  depth: number,
+  color = BROWN,
+  stroke = 4,
+): void {
   g.moveTo(x, y);
   g.quadraticCurveTo(x + w / 2, y - depth, x + w, y);
   g.stroke({ color, width: stroke, cap: "round" });
@@ -443,8 +831,12 @@ function closedEye(g: PIXI.Graphics, x: number, y: number, flip = 1): void {
 }
 
 function xEye(g: PIXI.Graphics, x: number, y: number): void {
-  g.moveTo(x - 7, y - 7).lineTo(x + 7, y + 7).stroke({ color: BROWN, width: 4, cap: "round" });
-  g.moveTo(x + 7, y - 7).lineTo(x - 7, y + 7).stroke({ color: BROWN, width: 4, cap: "round" });
+  g.moveTo(x - 7, y - 7)
+    .lineTo(x + 7, y + 7)
+    .stroke({ color: BROWN, width: 4, cap: "round" });
+  g.moveTo(x + 7, y - 7)
+    .lineTo(x - 7, y + 7)
+    .stroke({ color: BROWN, width: 4, cap: "round" });
 }
 
 function tear(g: PIXI.Graphics, x: number, y: number, size = 12): void {
@@ -464,6 +856,69 @@ function heart(g: PIXI.Graphics, x: number, y: number, size = 9, color = 0xf23a5
   g.lineTo(x, y + size);
   g.closePath();
   g.fill(color);
+}
+
+/** The shared geometry and animation phases one face is drawn from. */
+interface FacePose {
+  cx: number;
+  cy: number;
+  eyeL: number;
+  eyeR: number;
+  t: number;
+  bob: number;
+  soft: number;
+  quick: number;
+  shake: number;
+  tearDrop: number;
+  pulse: number;
+  blink: number;
+}
+
+/** Wide white eyes and an open mouth; a scared face also shakes and shows its tongue. */
+function drawStartledFace(g: PIXI.Graphics, pose: FacePose, scared: boolean): void {
+  const { cx, cy, eyeL, eyeR, soft, quick, shake, pulse, blink } = pose;
+  const eyeShake = scared ? shake : 0;
+  const eyeRadius = 10 + Math.max(quick, 0) * 1.2;
+  g.circle(eyeL + eyeShake, cy - 10 + soft * 0.25, eyeRadius).fill(0xffffff);
+  g.circle(eyeR + eyeShake, cy - 10 + soft * 0.25, eyeRadius).fill(0xffffff);
+  g.circle(eyeL + eyeShake, cy - 10 + blink * 0.35, 4).fill(BROWN);
+  g.circle(eyeR + eyeShake, cy - 10 + blink * 0.35, 4).fill(BROWN);
+  if (scared) {
+    g.ellipse(cx + shake * 0.4, cy + 15 + soft * 0.4, 11 + pulse, 16 + pulse * 2).fill(BROWN);
+    g.rect(cx - 5, cy + 18, 10, 6).fill(TONGUE);
+  } else {
+    g.ellipse(cx, cy + 15 + soft * 0.4, 8 + pulse * 0.7, 10 + pulse).fill(BROWN);
+  }
+}
+
+/** Closed eyes and a flat mouth; a sleepy face drips a tear, a night face blows bubbles. */
+function drawDrowsyFace(g: PIXI.Graphics, pose: FacePose, sleepy: boolean): void {
+  const { cx, cy, eyeL, eyeR, t, soft, tearDrop } = pose;
+  closedEye(g, eyeL, cy - 9 + soft * 0.3, -1);
+  closedEye(g, eyeR, cy - 9 + soft * 0.3, -1);
+  g.rect(cx - 15, cy + 12 + soft * 0.45, 30, 4).fill(BROWN);
+  if (sleepy) {
+    tear(g, eyeR + 16 + Math.sin(t * 0.08) * 1.5, cy + 13 + ((tearDrop + 5) % 13), 9);
+    return;
+  }
+  g.circle(cx + 21 + Math.sin(t * 0.08) * 2, cy - 24 - ((t * 0.18) % 7), 5).fill(0x2f8bf3);
+  g.circle(cx + 30 + Math.sin(t * 0.07 + 1) * 2, cy - 35 - ((t * 0.15) % 7), 4).fill(0x2f8bf3);
+  g.circle(cx + 39 + Math.sin(t * 0.06 + 2) * 2, cy - 45 - ((t * 0.12) % 7), 3).fill(0x2f8bf3);
+}
+
+/** A wide open grin with teeth; laughing cries from both eyes, relief sweats from one. */
+function drawLaughingFace(g: PIXI.Graphics, pose: FacePose, laughing: boolean): void {
+  const { cx, cy, eyeL, eyeR, t, bob, quick, tearDrop } = pose;
+  closedEye(g, eyeL, cy - 10 + bob * 0.3, 1);
+  closedEye(g, eyeR, cy - 10 + bob * 0.3, 1);
+  halfEllipseDown(g, cx, cy + 10 + bob * 0.35, 22, 14 + Math.max(quick, 0) * 2, BROWN);
+  g.rect(cx - 18, cy + 8 + bob * 0.35, 36, 6).fill(0xffffff);
+  if (laughing) {
+    tear(g, eyeL - 14, cy + 10 + ((tearDrop + 3) % 12), 8);
+    tear(g, eyeR + 14, cy + 10 + ((tearDrop + 9) % 12), 8);
+  } else {
+    tear(g, eyeR + 15 + Math.sin(t * 0.1) * 1.4, cy - 18 + ((tearDrop + 5) % 10), 8);
+  }
 }
 
 /**
@@ -580,7 +1035,15 @@ class EmojiStickerChip {
     });
     this.view.alpha = 0;
     this.view.scale.set(0.96);
-    this.view.addChild(this.shadow, this.body, this.shine, this.face, this.label, this.senderBadge, this.senderLabel);
+    this.view.addChild(
+      this.shadow,
+      this.body,
+      this.shine,
+      this.face,
+      this.label,
+      this.senderBadge,
+      this.senderLabel,
+    );
     this.redraw();
   }
 
@@ -629,10 +1092,22 @@ class EmojiStickerChip {
   private redraw(): void {
     // The pill colour follows the mood: red for anger, orange for the sad family, yellow else.
     const angry = this.data.expression === "angry";
-    const sad = this.data.expression === "sad" || this.data.expression === "down" || this.data.expression === "cry";
-    const base = angry ? ANGRY_RED : sad ? SAD_ORANGE : YELLOW;
-    const edge = angry ? ANGRY_EDGE : sad ? SAD_EDGE : GOLD;
-    const highlight = angry ? ANGRY_LIGHT : sad ? SAD_LIGHT : LIGHT;
+    const sad =
+      this.data.expression === "sad" ||
+      this.data.expression === "down" ||
+      this.data.expression === "cry";
+    let base = YELLOW;
+    let edge = GOLD;
+    let highlight = LIGHT;
+    if (angry) {
+      base = ANGRY_RED;
+      edge = ANGRY_EDGE;
+      highlight = ANGRY_LIGHT;
+    } else if (sad) {
+      base = SAD_ORANGE;
+      edge = SAD_EDGE;
+      highlight = SAD_LIGHT;
+    }
     const rSeed = this.seed ^ this.width ^ (this.data.expression.length * 317);
 
     this.shadow.clear();
@@ -640,7 +1115,15 @@ class EmojiStickerChip {
 
     this.body.clear();
     drawSoftPill(this.body, 0, 0, this.width, this.height, base, rSeed);
-    drawSoftPill(this.body, 2, 3, this.width - 4, this.height * 0.48, rgba(highlight, 0.34), rSeed ^ 0xaaa);
+    drawSoftPill(
+      this.body,
+      2,
+      3,
+      this.width - 4,
+      this.height * 0.48,
+      rgba(highlight, 0.34),
+      rSeed ^ 0xaaa,
+    );
     this.body.rect(18, this.height - 8, this.width - 42, 4).fill(rgba(edge, 0.18));
 
     this.shine.clear();
@@ -653,7 +1136,8 @@ class EmojiStickerChip {
   }
 
   private senderText(): string {
-    const raw = this.data.sender?.trim() || "anonymous";
+    const trimmed = this.data.sender?.trim() ?? "";
+    const raw = trimmed === "" ? "anonymous" : trimmed;
     return raw.length > 18 ? `${raw.slice(0, 16)}..` : raw;
   }
 
@@ -662,7 +1146,8 @@ class EmojiStickerChip {
     this.senderLabel.text = text;
     this.senderLabel.scale.set(1);
     const maxTextWidth = 118;
-    if (this.senderLabel.width > maxTextWidth) this.senderLabel.scale.x = maxTextWidth / this.senderLabel.width;
+    if (this.senderLabel.width > maxTextWidth)
+      this.senderLabel.scale.x = maxTextWidth / this.senderLabel.width;
 
     const badgeW = Math.ceil(clamp(this.senderLabel.width + 22, 54, 142));
     const badgeH = 24;
@@ -673,7 +1158,15 @@ class EmojiStickerChip {
     this.senderBadge.clear();
     drawSoftPill(this.senderBadge, x + 2, y + 3, badgeW, badgeH, rgba(0x3c2c00, 0.14), seed);
     drawSoftPill(this.senderBadge, x, y, badgeW, badgeH, 0xffec7a, seed);
-    drawSoftPill(this.senderBadge, x + 3, y + 2, badgeW - 6, badgeH * 0.46, rgba(0xffffff, 0.24), seed ^ 0x99);
+    drawSoftPill(
+      this.senderBadge,
+      x + 3,
+      y + 2,
+      badgeW - 6,
+      badgeH * 0.46,
+      rgba(0xffffff, 0.24),
+      seed ^ 0x99,
+    );
     this.senderBadge.rect(x + 13, y + badgeH - 5, badgeW - 26, 3).fill(rgba(0xe3a600, 0.28));
 
     this.senderLabel.x = Math.round(x + (badgeW - this.senderLabel.width) / 2);
@@ -698,6 +1191,20 @@ class EmojiStickerChip {
     const tearDrop = (t * 0.65) % 19;
     const pulse = 1 + Math.sin(t * 0.14) * 0.12;
     const blink = Math.sin(t * 0.055) > 0.965 ? 3 : 0;
+    const pose: FacePose = {
+      cx,
+      cy,
+      eyeL,
+      eyeR,
+      t,
+      bob,
+      soft,
+      quick,
+      shake,
+      tearDrop,
+      pulse,
+      blink,
+    };
 
     switch (expression) {
       case "happy":
@@ -727,24 +1234,11 @@ class EmojiStickerChip {
         break;
       case "surprised":
       case "scared":
-        g.circle(eyeL + (expression === "scared" ? shake : 0), cy - 10 + soft * 0.25, 10 + Math.max(quick, 0) * 1.2).fill(0xffffff);
-        g.circle(eyeR + (expression === "scared" ? shake : 0), cy - 10 + soft * 0.25, 10 + Math.max(quick, 0) * 1.2).fill(0xffffff);
-        g.circle(eyeL + (expression === "scared" ? shake : 0), cy - 10 + blink * 0.35, 4).fill(BROWN);
-        g.circle(eyeR + (expression === "scared" ? shake : 0), cy - 10 + blink * 0.35, 4).fill(BROWN);
-        g.ellipse(cx + (expression === "scared" ? shake * 0.4 : 0), cy + 15 + soft * 0.4, expression === "scared" ? 11 + pulse : 8 + pulse * 0.7, expression === "scared" ? 16 + pulse * 2 : 10 + pulse).fill(BROWN);
-        if (expression === "scared") g.rect(cx - 5, cy + 18, 10, 6).fill(TONGUE);
+        drawStartledFace(g, pose, expression === "scared");
         break;
       case "sleepy":
       case "night":
-        closedEye(g, eyeL, cy - 9 + soft * 0.3, -1);
-        closedEye(g, eyeR, cy - 9 + soft * 0.3, -1);
-        g.rect(cx - 15, cy + 12 + soft * 0.45, 30, 4).fill(BROWN);
-        if (expression === "sleepy") tear(g, eyeR + 16 + Math.sin(t * 0.08) * 1.5, cy + 13 + ((tearDrop + 5) % 13), 9);
-        else {
-          g.circle(cx + 21 + Math.sin(t * 0.08) * 2, cy - 24 - ((t * 0.18) % 7), 5).fill(0x2f8bf3);
-          g.circle(cx + 30 + Math.sin(t * 0.07 + 1) * 2, cy - 35 - ((t * 0.15) % 7), 4).fill(0x2f8bf3);
-          g.circle(cx + 39 + Math.sin(t * 0.06 + 2) * 2, cy - 45 - ((t * 0.12) % 7), 3).fill(0x2f8bf3);
-        }
+        drawDrowsyFace(g, pose, expression === "sleepy");
         break;
       case "awkward":
         frown(g, eyeL - 10, cy - 12 + soft * 0.4, 18, 7);
@@ -755,16 +1249,7 @@ class EmojiStickerChip {
         break;
       case "laugh":
       case "relieved":
-        closedEye(g, eyeL, cy - 10 + bob * 0.3, 1);
-        closedEye(g, eyeR, cy - 10 + bob * 0.3, 1);
-        halfEllipseDown(g, cx, cy + 10 + bob * 0.35, 22, 14 + Math.max(quick, 0) * 2, BROWN);
-        g.rect(cx - 18, cy + 8 + bob * 0.35, 36, 6).fill(0xffffff);
-        if (expression === "laugh") {
-          tear(g, eyeL - 14, cy + 10 + ((tearDrop + 3) % 12), 8);
-          tear(g, eyeR + 14, cy + 10 + ((tearDrop + 9) % 12), 8);
-        } else {
-          tear(g, eyeR + 15 + Math.sin(t * 0.1) * 1.4, cy - 18 + ((tearDrop + 5) % 10), 8);
-        }
+        drawLaughingFace(g, pose, expression === "laugh");
         break;
       case "grin":
         closedEye(g, eyeL, cy - 11 + bob * 0.25, 1);
@@ -774,12 +1259,18 @@ class EmojiStickerChip {
         break;
       case "wink":
         g.circle(eyeL, cy - 9, 5).fill(BROWN);
-        g.moveTo(eyeR - 9, cy - 8 + quick * 0.7).lineTo(eyeR + 9, cy - 8 - quick * 0.7).stroke({ color: BROWN, width: 4, cap: "round" });
+        g.moveTo(eyeR - 9, cy - 8 + quick * 0.7)
+          .lineTo(eyeR + 9, cy - 8 - quick * 0.7)
+          .stroke({ color: BROWN, width: 4, cap: "round" });
         smile(g, cx - 16, cy + 12 + soft * 0.4, 29, 10 + Math.max(quick, 0));
         break;
       case "angry":
-        g.moveTo(eyeL - 11 + shake, cy - 18).lineTo(eyeL + 8 + shake, cy - 10 + quick).stroke({ color: BROWN, width: 5, cap: "round" });
-        g.moveTo(eyeR + 11 + shake, cy - 18).lineTo(eyeR - 8 + shake, cy - 10 - quick).stroke({ color: BROWN, width: 5, cap: "round" });
+        g.moveTo(eyeL - 11 + shake, cy - 18)
+          .lineTo(eyeL + 8 + shake, cy - 10 + quick)
+          .stroke({ color: BROWN, width: 5, cap: "round" });
+        g.moveTo(eyeR + 11 + shake, cy - 18)
+          .lineTo(eyeR - 8 + shake, cy - 10 - quick)
+          .stroke({ color: BROWN, width: 5, cap: "round" });
         g.circle(eyeL + shake * 0.4, cy - 5, 5 + Math.max(quick, 0) * 0.5).fill(BROWN);
         g.circle(eyeR + shake * 0.4, cy - 5, 5 + Math.max(-quick, 0) * 0.5).fill(BROWN);
         frown(g, cx - 16 + shake * 0.35, cy + 20 + soft * 0.35, 32, 13 + Math.abs(quick), BROWN, 5);
@@ -799,7 +1290,12 @@ class EmojiStickerChip {
         g.circle(eyeL - 10, cy + 8, 7 + Math.max(quick, 0) * 0.7).fill(rgba(PINK, 0.58));
         g.circle(eyeR + 10, cy + 8, 7 + Math.max(quick, 0) * 0.7).fill(rgba(PINK, 0.58));
         heart(g, eyeR + 22 + Math.sin(t * 0.11) * 1.5, cy - 25 - bob, 8 * pulse);
-        heart(g, eyeR + 18 + Math.sin(t * 0.09 + 1) * 1.2, cy + 20 - bob * 0.6, 7 * (1 + Math.sin(t * 0.17 + 2) * 0.12));
+        heart(
+          g,
+          eyeR + 18 + Math.sin(t * 0.09 + 1) * 1.2,
+          cy + 20 - bob * 0.6,
+          7 * (1 + Math.sin(t * 0.17 + 2) * 0.12),
+        );
         break;
       case "yikes":
         xEye(g, eyeL, cy - 10);
@@ -976,7 +1472,11 @@ const emojiChat = defineEffect({
         const rng = seedRng(card.layoutSeed ^ 0xfacefeed);
         const drift = range > 0 ? (rng() - 0.5) * Math.min(range, settings.driftRange) : 0;
         const stackDrift = Math.sin(index * 1.7 + card.layoutSeed) * Math.min(34, range * 0.14);
-        const x = clamp(center + drift + stackDrift, margin, Math.max(margin, screenW - card.width - margin));
+        const x = clamp(
+          center + drift + stackDrift,
+          margin,
+          Math.max(margin, screenW - card.width - margin),
+        );
         card.setTarget(Math.round(x), Math.round(y));
         y -= settings.cardGap;
       });
@@ -987,7 +1487,15 @@ const emojiChat = defineEffect({
     const nextSeed = (msg: ChatMessage, text: string): number => {
       serial += 1;
       return hashSeed(
-        ["emoji-chat", msg.username, msg.event, text, msg.seed, serial, performance.now().toFixed(3)].join(":"),
+        [
+          "emoji-chat",
+          msg.username,
+          msg.event,
+          text,
+          msg.seed,
+          serial,
+          performance.now().toFixed(3),
+        ].join(":"),
       );
     };
 
@@ -1024,7 +1532,7 @@ const emojiChat = defineEffect({
       const delta = dt * 60;
       for (let i = cards.length - 1; i >= 0; i--) {
         const card = cards[i];
-        if (card !== undefined && card.update(delta)) {
+        if (card?.update(delta)) {
           card.destroy();
           cards.splice(i, 1);
           layoutCards();

@@ -1,7 +1,7 @@
 import * as PIXI from "pixi.js";
 
 import { bool, num } from "../paramUtils";
-import { createPixiStage, defineEffect, onFrame, useChat } from "../sdk";
+import { createPixiStage, defineEffect, onFrame, random, useChat } from "../sdk";
 
 /**
  * Mr. Robot CRT
@@ -275,16 +275,16 @@ const mrRobotCrt = defineEffect({
       // what sells the picture dropping out, not only bands that brighten.
       const palette = [COLD_BLUE, GLITCH_CYN, COLD_WHITE, GLITCH_RED, 0x000000, BG_DARK, AMBER];
       const bands: GlitchBand[] = [];
-      const count = Math.round((10 + Math.floor(Math.random() * 12)) * glitchBands);
+      const count = Math.round((10 + Math.floor(random() * 12)) * glitchBands);
 
       for (let i = 0; i < count; i += 1) {
         bands.push({
-          y: Math.random() * h,
+          y: random() * h,
           // Heights weighted towards 1 and 2 pixels, with the occasional 4-pixel slab.
-          h: [1, 1, 1, 2, 2, 2, 4][Math.floor(Math.random() * 7)] ?? 1,
-          shiftX: (Math.random() - 0.5) * 72 * glitchShift,
-          color: palette[Math.floor(Math.random() * palette.length)] ?? COLD_BLUE,
-          alpha: 0.14 + Math.random() * 0.58,
+          h: [1, 1, 1, 2, 2, 2, 4][Math.floor(random() * 7)] ?? 1,
+          shiftX: (random() - 0.5) * 72 * glitchShift,
+          color: palette[Math.floor(random() * palette.length)] ?? COLD_BLUE,
+          alpha: 0.14 + random() * 0.58,
         });
       }
 
@@ -317,21 +317,21 @@ const mrRobotCrt = defineEffect({
       if (staticRate > 0) {
         microTimer -= delta * staticRate;
         if (microTimer <= 0) {
-          const count = 2 + Math.floor(Math.random() * 4);
+          const count = 2 + Math.floor(random() * 4);
           for (let i = 0; i < count; i += 1) {
-            const bw = 20 + Math.random() * 70;
+            const bw = 20 + random() * 70;
             microBursts.push({
-              x: Math.random() * Math.max(1, w - bw),
-              y: Math.random() * h,
+              x: random() * Math.max(1, w - bw),
+              y: random() * h,
               w: bw,
-              color: [COLD_BLUE, COLD_WHITE, AMBER, 0xffffff][Math.floor(Math.random() * 4)] ??
-                COLD_WHITE,
-              alpha: 0.06 + Math.random() * 0.14,
+              color:
+                [COLD_BLUE, COLD_WHITE, AMBER, 0xffffff][Math.floor(random() * 4)] ?? COLD_WHITE,
+              alpha: 0.06 + random() * 0.14,
               life: 0,
-              maxLife: 8 + Math.random() * 12,
+              maxLife: 8 + random() * 12,
             });
           }
-          microTimer = 180 + Math.random() * 300; // every 3–8 s at the 60 fps baseline
+          microTimer = 180 + random() * 300; // every 3–8 s at the 60 fps baseline
         }
       }
 
@@ -357,11 +357,11 @@ const mrRobotCrt = defineEffect({
       if (grainDensity <= 0) return;
       const count = Math.round(((w * h) / 3000) * grainDensity);
       for (let i = 0; i < count; i += 1) {
-        const dark = Math.random() < 0.7;
+        const dark = random() < 0.7;
         const color = dark ? 0x080c14 : 0x8aaac4;
         noiseGfx
-          .rect(Math.random() * w, Math.random() * h, 2, 2)
-          .fill({ color, alpha: 0.06 + Math.random() * 0.1 });
+          .rect(random() * w, random() * h, 2, 2)
+          .fill({ color, alpha: 0.06 + random() * 0.1 });
       }
     };
 
@@ -392,7 +392,7 @@ const mrRobotCrt = defineEffect({
       for (const band of glitch.bands) {
         // In the back half, bands start randomly skipping frames — the signal re-locking in
         // stutters instead of fading smoothly away.
-        if (progress > 0.5 && Math.random() < (progress - 0.5) * 2.4) continue;
+        if (progress > 0.5 && random() < (progress - 0.5) * 2.4) continue;
 
         const bx = Math.max(0, band.shiftX);
         const bw = sw - Math.abs(band.shiftX);
@@ -403,9 +403,7 @@ const mrRobotCrt = defineEffect({
         // The stronger bands get the chromatic aberration: a red ghost line offset up-left and a
         // cyan one down-right, like colour channels landing in the wrong place.
         if (band.alpha > 0.22) {
-          glitchGfx
-            .rect(bx - 4, band.y, bw, 1)
-            .fill({ color: GLITCH_RED, alpha: 0.22 * fade });
+          glitchGfx.rect(bx - 4, band.y, bw, 1).fill({ color: GLITCH_RED, alpha: 0.22 * fade });
           glitchGfx
             .rect(bx + 4, band.y + band.h, bw, 1)
             .fill({ color: GLITCH_CYN, alpha: 0.22 * fade });

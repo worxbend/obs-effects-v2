@@ -338,6 +338,11 @@ interface Layout {
   cellHeight: number;
 }
 
+/** The horizontal step for one slot: its measured advance plus tracking, never below a pixel. */
+function slotAdvance(grid: Layout, slot: Slot, trackingPx: number): number {
+  return Math.max(1, (slot.isDigit ? grid.digitAdvance : grid.colonAdvance) + trackingPx);
+}
+
 const meridianCountdown = defineEffect({
   descriptor: {
     id: "meridian-countdown",
@@ -1001,13 +1006,232 @@ const meridianCountdown = defineEffect({
     restartTiming();
     buildLayout(wantedText(Date.now()));
 
+    /**
+     * Rolls any digit whose value has moved, or advances the exit once the countdown is over.
+     *
+     * The glyph string can only change on a whole-second boundary, so it is formatted once a
+     * second rather than once a frame. `formatRemaining` builds four short-lived strings every
+     * time it runs, and doing that sixty times a second to produce the very same characters is
+     * pure garbage for the collector to sweep up — for no visible difference at all.
+     */
+    const trackClock = (
+      grid: Layout,
+      dt: number,
+      wallNow: number,
+      remainingMs: number,
+      isCountdown: boolean,
+    ): void => {
+      if (exitT >= 0) {
+        exitT += dt;
+        return;
+      }
+
+      const tick = isCountdown ? Math.ceil(remainingMs / 1000) : Math.floor(wallNow / 1000);
+      if (tick !== lastTick) {
+        lastTick = tick;
+        const wanted = wantedText(wallNow);
+        for (let i = 0; i < grid.slots.length; i += 1) {
+          const slot = grid.slots[i];
+          if (slot === undefined) continue;
+          const glyph = wanted[i] ?? slot.target;
+          if (glyph !== slot.target) startRoll(slot, glyph);
+        }
+      }
+
+      // Zero is a one-shot: the moment the deadline passes the exit takes over, and the digits
+      // stop tracking the clock entirely.
+      if (isCountdown && remainingMs <= 0) exitT = 0;
+    };
+
+    /**
+     * Lays the slots out centred on `centreX`, and returns the width of the whole row.
+     *
+     * Tracking is applied to the measured grid, not to the text style, so the urgency easing
+     * costs one container move per slot rather than re-rasterising every glyph.
+     */
+    const placeSlots = (
+      grid: Layout,
+      centreX: number,
+      centreY: number,
+      trackingPx: number,
+    ): number => {
+      let blockWidth = 0;
+      for (const slot of grid.slots) blockWidth += slotAdvance(grid, slot, trackingPx);
+
+      let penX = centreX - blockWidth / 2;
+      for (const slot of grid.slots) {
+        const advance = slotAdvance(grid, slot, trackingPx);
+        slot.container.position.set(penX + advance / 2, centreY);
+        penX += advance;
+      }
+      return blockWidth;
+    };
+
     /*
      * What the clipping band was last drawn for. `NaN` compares unequal to everything, so the first
-     * frame always draws it. See the rebuild check in the frame callback.
+     * frame always draws it. See `updateMask`.
      */
     let maskTop = Number.NaN;
     let maskHeight = Number.NaN;
     let maskWidth = Number.NaN;
+
+    /*
+     * The clipping band.
+     *
+     * Only the top and bottom edges do any work — nothing ever moves sideways out of a cell — so
+     * the rectangle is drawn three canvases wide and offset one canvas to the left. That costs
+     * nothing and means the band cannot clip the row from the side at an extreme Horizontal
+     * Position, where the line reaches past the edge of the frame.
+     *
+     * It is rebuilt only when one of the three numbers that define it actually moves, rather than
+     * every frame. Redrawing a `Graphics` re-uploads its geometry, and a mask's geometry is
+     * re-uploaded into the stencil buffer as well, so this is the one shape in the effect worth
+     * holding on to: it changes when the canvas is resized, when Numeral Size is changed, or when
+     * Vertical Position is dragged, and at no other time.
+     */
+    const updateMask = (grid: Layout, centreY: number): void => {
+      const bandTop = centreY - grid.cellHeight / 2;
+      if (bandTop === maskTop && grid.cellHeight === maskHeight && stage.width === maskWidth) {
+        return;
+      }
+      maskTop = bandTop;
+      maskHeight = grid.cellHeight;
+      maskWidth = stage.width;
+      numeralsMask.clear();
+      numeralsMask
+        .rect(-maskWidth, bandTop, maskWidth * 3, grid.cellHeight)
+        .fill({ color: 0xffffff });
+    };
+
+    /** Advances every roll in flight. */
+    const advanceRolls = (grid: Layout, dt: number, rollSeconds: number): void => {
+      for (const slot of grid.slots) {
+        if (!slot.rolling || slot.back === null) continue;
+        slot.t += dt;
+        const progress = (slot.t - slot.delay) / rollSeconds;
+        const eased = easeOutExpo(clamp01(progress));
+        // The outgoing glyph leaves through the top of the band while the incoming one comes up
+        // from below it, both clipped by the mask so only a cell's worth of each is ever seen.
+        slot.front.y = -eased * grid.cellHeight;
+        slot.back.y = (1 - eased) * grid.cellHeight;
+        if (progress >= 1) finishRoll(slot);
+      }
+    };
+
+    /** Empties the row and cross-fades the kickers once the countdown is over. */
+    const advanceExit = (grid: Layout, rollSeconds: number): void => {
+      if (exitT < 0) {
+        kickerLabel.alpha = 1;
+        kickerZero.alpha = 0;
+        return;
+      }
+
+      const lastIndex = grid.slots.length - 1;
+      for (let i = 0; i <= lastIndex; i += 1) {
+        const slot = grid.slots[i];
+        if (slot === undefined) continue;
+        // Right to left, so the seconds empty first and the eye follows the cascade back to the
+        // start of the line.
+        const eased = easeOutExpo(
+          clamp01((exitT - (lastIndex - i) * EXIT_STAGGER_S) / rollSeconds),
+        );
+        if (slot.isDigit) {
+          slot.front.y = -eased * grid.cellHeight;
+          if (slot.back !== null) slot.back.visible = false;
+        } else {
+          // Colons never move, so they leave by fading. A colon left hanging on its own once the
+          // digits have gone reads as a mistake rather than as a design.
+          slot.front.alpha = 1 - eased;
+        }
+      }
+
+      const fade = clamp01(exitT / ZERO_KICKER_FADE_S);
+      kickerLabel.alpha = 1 - fade;
+      kickerZero.alpha = fade * ZERO_KICKER_ALPHA;
+    };
+
+    /*
+     * How full the arc is.
+     *
+     * A countdown empties over its whole span, so a ten-minute countdown's ring is a ten-minute
+     * clock face. Time-of-day mode has no span to deplete, so its ring empties once per minute,
+     * which gives the composition the same slow continuous motion.
+     *
+     * At zero the ring closes into a full circle rather than vanishing — the countdown finishes
+     * its sentence.
+     */
+    const arcSweepFraction = (
+      isCountdown: boolean,
+      remainingMs: number,
+      wallNow: number,
+      rollSeconds: number,
+    ): number => {
+      if (exitT >= 0) return easeOutExpo(clamp01(exitT / rollSeconds));
+      return isCountdown
+        ? clamp01(remainingMs / Math.max(1, targetAt - startAt))
+        : 1 - (wallNow % MS_PER_MINUTE) / MS_PER_MINUTE;
+    };
+
+    /**
+     * How strongly the arc is drawn: lifted by urgency, then — after zero — held, and settled back
+     * to a faint complete ring.
+     */
+    const arcAlphaAt = (urgency: number, rollSeconds: number): number => {
+      const alpha = lerp(
+        settings.arcOpacity,
+        Math.min(1, settings.arcOpacity + URGENCY_ARC_LIFT),
+        urgency,
+      );
+      if (exitT < 0) return alpha;
+      const fade = clamp01((exitT - (rollSeconds + ZERO_ARC_HOLD_S)) / ZERO_ARC_FADE_S);
+      return lerp(alpha, ZERO_ARC_ALPHA, fade);
+    };
+
+    /** Strokes the arc, unless it is switched off or too empty or faint to see. */
+    const drawArc = (
+      centreX: number,
+      centreY: number,
+      sweepFraction: number,
+      alpha: number,
+    ): void => {
+      if (!settings.showArc || sweepFraction <= 0.001 || alpha <= 0.001) return;
+      chrome
+        .arc(
+          centreX,
+          centreY,
+          settings.arcRadius,
+          ARC_START_ANGLE,
+          ARC_START_ANGLE + sweepFraction * Math.PI * 2,
+        )
+        .stroke({
+          color: settings.accentColor,
+          width: settings.arcWidth,
+          alpha,
+          cap: "round",
+        });
+    };
+
+    /*
+     * The rule spans the numerals' optical width. Two things move it: urgency pulls it in by a
+     * few per cent, and — only if the operator asked for it — the slow loudness envelope breathes
+     * it by at most two per cent either way. `envelopes.slow` sits near the middle of its range
+     * on ordinary speech, so subtracting a half makes quiet pull the rule in and loud push it out.
+     */
+    const drawRule = (
+      grid: Layout,
+      centreX: number,
+      centreY: number,
+      blockWidth: number,
+      urgency: number,
+    ): void => {
+      const breathe = 1 + (envelopes.slow - 0.5) * AUDIO_RULE_SWING * settings.audioReactivity;
+      const ruleWidth = blockWidth * (1 - URGENCY_RULE_SHORTENING * urgency) * breathe;
+      const ruleY = centreY + grid.cellHeight / 2 + settings.fontSize * RULE_GAP_RATIO;
+      chrome
+        .moveTo(centreX - ruleWidth / 2, ruleY)
+        .lineTo(centreX + ruleWidth / 2, ruleY)
+        .stroke({ color: settings.numeralColor, width: 1, alpha: RULE_ALPHA });
+    };
 
     onFrame(scope, ctx.fpsCap, ({ dt, now }) => {
       // Sample first, then advance the envelopes: they smooth whatever the bus last read, so
@@ -1031,119 +1255,19 @@ const meridianCountdown = defineEffect({
           : 0;
 
       // ── Roll any digit whose value has moved ────────────────────────────
-      if (exitT < 0) {
-        /*
-         * The glyph string can only change on a whole-second boundary, so it is formatted once a
-         * second rather than once a frame. `formatRemaining` builds four short-lived strings every
-         * time it runs, and doing that sixty times a second to produce the very same characters is
-         * pure garbage for the collector to sweep up — for no visible difference at all.
-         */
-        const tick = isCountdown ? Math.ceil(remainingMs / 1000) : Math.floor(wallNow / 1000);
-        if (tick !== lastTick) {
-          lastTick = tick;
-          const wanted = wantedText(wallNow);
-          for (let i = 0; i < grid.slots.length; i += 1) {
-            const slot = grid.slots[i];
-            if (slot === undefined) continue;
-            const glyph = wanted[i] ?? slot.target;
-            if (glyph !== slot.target) startRoll(slot, glyph);
-          }
-        }
-
-        // Zero is a one-shot: the moment the deadline passes the exit takes over, and the digits
-        // stop tracking the clock entirely.
-        if (isCountdown && remainingMs <= 0) exitT = 0;
-      } else {
-        exitT += dt;
-      }
+      trackClock(grid, dt, wallNow, remainingMs, isCountdown);
 
       // ── Geometry, recomputed from the live canvas size ──────────────────
       const centreX = settings.anchorX * stage.width;
       const centreY = settings.anchorY * stage.height;
-
-      // Tracking is applied to the measured grid, not to the text style, so the urgency easing
-      // costs one container move per slot rather than re-rasterising every glyph.
       const trackingPx =
         (settings.tracking - settings.urgencyTightening * urgency) * settings.fontSize;
-      const advanceOf = (slot: Slot): number =>
-        Math.max(1, (slot.isDigit ? grid.digitAdvance : grid.colonAdvance) + trackingPx);
+      const blockWidth = placeSlots(grid, centreX, centreY, trackingPx);
+      updateMask(grid, centreY);
 
-      let blockWidth = 0;
-      for (const slot of grid.slots) blockWidth += advanceOf(slot);
-
-      let penX = centreX - blockWidth / 2;
-      for (const slot of grid.slots) {
-        const advance = advanceOf(slot);
-        slot.container.position.set(penX + advance / 2, centreY);
-        penX += advance;
-      }
-
-      /*
-       * The clipping band.
-       *
-       * Only the top and bottom edges do any work — nothing ever moves sideways out of a cell — so
-       * the rectangle is drawn three canvases wide and offset one canvas to the left. That costs
-       * nothing and means the band cannot clip the row from the side at an extreme Horizontal
-       * Position, where the line reaches past the edge of the frame.
-       *
-       * It is rebuilt only when one of the three numbers that define it actually moves, rather than
-       * every frame. Redrawing a `Graphics` re-uploads its geometry, and a mask's geometry is
-       * re-uploaded into the stencil buffer as well, so this is the one shape in the effect worth
-       * holding on to: it changes when the canvas is resized, when Numeral Size is changed, or when
-       * Vertical Position is dragged, and at no other time.
-       */
-      const bandTop = centreY - grid.cellHeight / 2;
-      if (bandTop !== maskTop || grid.cellHeight !== maskHeight || stage.width !== maskWidth) {
-        maskTop = bandTop;
-        maskHeight = grid.cellHeight;
-        maskWidth = stage.width;
-        numeralsMask.clear();
-        numeralsMask
-          .rect(-maskWidth, bandTop, maskWidth * 3, grid.cellHeight)
-          .fill({ color: 0xffffff });
-      }
-
-      // ── Advance the rolls ───────────────────────────────────────────────
-      for (const slot of grid.slots) {
-        if (!slot.rolling || slot.back === null) continue;
-        slot.t += dt;
-        const progress = (slot.t - slot.delay) / rollSeconds;
-        const eased = easeOutExpo(clamp01(progress));
-        // The outgoing glyph leaves through the top of the band while the incoming one comes up
-        // from below it, both clipped by the mask so only a cell's worth of each is ever seen.
-        slot.front.y = -eased * grid.cellHeight;
-        slot.back.y = (1 - eased) * grid.cellHeight;
-        if (progress >= 1) finishRoll(slot);
-      }
-
-      // ── The exit, if the countdown is over ──────────────────────────────
-      if (exitT >= 0) {
-        const lastIndex = grid.slots.length - 1;
-        for (let i = 0; i <= lastIndex; i += 1) {
-          const slot = grid.slots[i];
-          if (slot === undefined) continue;
-          // Right to left, so the seconds empty first and the eye follows the cascade back to the
-          // start of the line.
-          const eased = easeOutExpo(
-            clamp01((exitT - (lastIndex - i) * EXIT_STAGGER_S) / rollSeconds),
-          );
-          if (slot.isDigit) {
-            slot.front.y = -eased * grid.cellHeight;
-            if (slot.back !== null) slot.back.visible = false;
-          } else {
-            // Colons never move, so they leave by fading. A colon left hanging on its own once the
-            // digits have gone reads as a mistake rather than as a design.
-            slot.front.alpha = 1 - eased;
-          }
-        }
-
-        const fade = clamp01(exitT / ZERO_KICKER_FADE_S);
-        kickerLabel.alpha = 1 - fade;
-        kickerZero.alpha = fade * ZERO_KICKER_ALPHA;
-      } else {
-        kickerLabel.alpha = 1;
-        kickerZero.alpha = 0;
-      }
+      // ── Advance the rolls, and the exit if the countdown is over ────────
+      advanceRolls(grid, dt, rollSeconds);
+      advanceExit(grid, rollSeconds);
 
       kickerLabel.visible = settings.label !== "";
       kickerZero.visible = settings.zeroLabel !== "";
@@ -1159,62 +1283,13 @@ const meridianCountdown = defineEffect({
 
       // ── The arc and the rule ────────────────────────────────────────────
       chrome.clear();
-
-      /*
-       * How full the arc is.
-       *
-       * A countdown empties over its whole span, so a ten-minute countdown's ring is a ten-minute
-       * clock face. Time-of-day mode has no span to deplete, so its ring empties once per minute,
-       * which gives the composition the same slow continuous motion.
-       */
-      let sweepFraction = isCountdown
-        ? clamp01(remainingMs / Math.max(1, targetAt - startAt))
-        : 1 - (wallNow % MS_PER_MINUTE) / MS_PER_MINUTE;
-
-      let arcAlpha = lerp(
-        settings.arcOpacity,
-        Math.min(1, settings.arcOpacity + URGENCY_ARC_LIFT),
-        urgency,
+      drawArc(
+        centreX,
+        centreY,
+        arcSweepFraction(isCountdown, remainingMs, wallNow, rollSeconds),
+        arcAlphaAt(urgency, rollSeconds),
       );
-
-      if (exitT >= 0) {
-        // At zero the ring closes into a full circle rather than vanishing — the countdown finishes
-        // its sentence — holds there, and then settles back to a faint complete ring.
-        sweepFraction = easeOutExpo(clamp01(exitT / rollSeconds));
-        const fade = clamp01((exitT - (rollSeconds + ZERO_ARC_HOLD_S)) / ZERO_ARC_FADE_S);
-        arcAlpha = lerp(arcAlpha, ZERO_ARC_ALPHA, fade);
-      }
-
-      if (settings.showArc && sweepFraction > 0.001 && arcAlpha > 0.001) {
-        chrome
-          .arc(
-            centreX,
-            centreY,
-            settings.arcRadius,
-            ARC_START_ANGLE,
-            ARC_START_ANGLE + sweepFraction * Math.PI * 2,
-          )
-          .stroke({
-            color: settings.accentColor,
-            width: settings.arcWidth,
-            alpha: arcAlpha,
-            cap: "round",
-          });
-      }
-
-      /*
-       * The rule spans the numerals' optical width. Two things move it: urgency pulls it in by a
-       * few per cent, and — only if the operator asked for it — the slow loudness envelope breathes
-       * it by at most two per cent either way. `envelopes.slow` sits near the middle of its range
-       * on ordinary speech, so subtracting a half makes quiet pull the rule in and loud push it out.
-       */
-      const breathe = 1 + (envelopes.slow - 0.5) * AUDIO_RULE_SWING * settings.audioReactivity;
-      const ruleWidth = blockWidth * (1 - URGENCY_RULE_SHORTENING * urgency) * breathe;
-      const ruleY = centreY + grid.cellHeight / 2 + settings.fontSize * RULE_GAP_RATIO;
-      chrome
-        .moveTo(centreX - ruleWidth / 2, ruleY)
-        .lineTo(centreX + ruleWidth / 2, ruleY)
-        .stroke({ color: settings.numeralColor, width: 1, alpha: RULE_ALPHA });
+      drawRule(grid, centreX, centreY, blockWidth, urgency);
 
       root.alpha = settings.opacity;
 

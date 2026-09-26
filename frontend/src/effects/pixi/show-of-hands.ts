@@ -9,6 +9,7 @@ import {
   palette,
   paletteAtInt,
   paletteParam,
+  random,
   useAudio,
   useChat,
   useFont,
@@ -780,7 +781,7 @@ const showOfHands = defineEffect({
     const releaseDemoVotes = (): void => {
       for (let i = order.length - 1; i >= 0; i -= 1) {
         const token = order[i];
-        if (token === undefined || !token.demo) continue;
+        if (!token?.demo) continue;
         order.splice(i, 1);
         detachFromColumn(token);
         if (token.voter.length > 0 && votes.get(token.voter) === token) votes.delete(token.voter);
@@ -837,7 +838,7 @@ const showOfHands = defineEffect({
         if (spare === undefined) break;
         const index = pool.indexOf(spare);
         if (index >= 0) pool.splice(index, 1);
-        tokenLayer.removeChild(spare.sprite);
+        spare.sprite.removeFromParent();
         // `false`, because the rounded-square texture is shared by every other token.
         spare.sprite.destroy(false);
       }
@@ -988,8 +989,8 @@ const showOfHands = defineEffect({
       token.voter = voter;
       token.demo = castingDemo;
       if (castingDemo) demoPlaced = true;
-      token.tilt = ((Math.random() * 2 - 1) * MAX_TILT_DEG * Math.PI) / 180;
-      token.phase = Math.random() * Math.PI * 2;
+      token.tilt = ((random() * 2 - 1) * MAX_TILT_DEG * Math.PI) / 180;
+      token.phase = random() * Math.PI * 2;
 
       column.tokens.push(token);
       order.push(token);
@@ -1003,7 +1004,7 @@ const showOfHands = defineEffect({
       } else {
         // A small horizontal scatter at the release point stops a run of votes falling down one
         // perfectly straight line, which would read as a machine feeding counters into a slot.
-        token.x = targetX + (Math.random() * 2 - 1) * layout.pitch * 0.4;
+        token.x = targetX + (random() * 2 - 1) * layout.pitch * 0.4;
         token.y = -layout.token * 2;
       }
       token.vx = 0;
@@ -1049,7 +1050,7 @@ const showOfHands = defineEffect({
       }
 
       const existing = votes.get(voter);
-      if (existing === undefined || !existing.active) {
+      if (!existing?.active) {
         dropToken(columnIndex, tint, voter, instant);
         return;
       }
@@ -1075,29 +1076,41 @@ const showOfHands = defineEffect({
       }
     };
 
+    /** The column with the tallest pile; the first of them on a tie. */
+    const tallestColumn = (): number => {
+      let leader = 0;
+      for (let i = 1; i < columns.length; i += 1) {
+        const column = columns[i];
+        const best = columns[leader];
+        if (
+          column !== undefined &&
+          best !== undefined &&
+          column.tokens.length > best.tokens.length
+        ) {
+          leader = i;
+        }
+      }
+      return leader;
+    };
+
+    /**
+     * A raid carries no opinion, so this is openly a piece of showmanship: the arriving crowd
+     * piles onto whichever side the room is already on. One token per ten raiders keeps a big
+     * raid from burying the votes that were actually cast.
+     */
+    const dropRaidBurst = (message: ChatMessage, instant: boolean): void => {
+      const viewers = Number(message.data["viewers"]);
+      const burst = Number.isFinite(viewers) ? Math.floor(Math.min(40, viewers / 10)) : 0;
+      if (burst <= 0) return;
+      const leader = tallestColumn();
+      const tint = chatColorInt(message);
+      for (let i = 0; i < burst; i += 1) dropToken(leader, tint, "", instant);
+    };
+
     /** Turns one chat message into whatever it is worth: a vote, a raid burst, or nothing. */
     const handleMessage = (message: ChatMessage, instant: boolean): void => {
       if (message.event === "raid" && raidBurst) {
-        // A raid carries no opinion, so this is openly a piece of showmanship: the arriving crowd
-        // piles onto whichever side the room is already on. One token per ten raiders keeps a big
-        // raid from burying the votes that were actually cast.
-        const viewers = Number(message.data["viewers"]);
-        const burst = Number.isFinite(viewers) ? Math.floor(Math.min(40, viewers / 10)) : 0;
-        if (burst <= 0) return;
-        let leader = 0;
-        for (let i = 1; i < columns.length; i += 1) {
-          const column = columns[i];
-          const best = columns[leader];
-          if (
-            column !== undefined &&
-            best !== undefined &&
-            column.tokens.length > best.tokens.length
-          ) {
-            leader = i;
-          }
-        }
-        const tint = chatColorInt(message);
-        for (let i = 0; i < burst; i += 1) dropToken(leader, tint, "", instant);
+        dropRaidBurst(message, instant);
         return;
       }
 
@@ -1137,11 +1150,11 @@ const showOfHands = defineEffect({
      */
     const castDemoVote = (instant: boolean): void => {
       if (columns.length === 0) return;
-      const number = Math.floor(Math.random() * DEMO_VOTERS);
+      const number = Math.floor(random() * DEMO_VOTERS);
       const preference = (number * 7 + 1) % columns.length;
-      const contrary = Math.random() < 0.16;
+      const contrary = random() < 0.16;
       const columnIndex = contrary
-        ? Math.floor(Math.random() * columns.length) % columns.length
+        ? Math.floor(random() * columns.length) % columns.length
         : preference;
       const tint = DEMO_COLORS[number % DEMO_COLORS.length] ?? 0xffffff;
       castingDemo = true;
@@ -1154,37 +1167,35 @@ const showOfHands = defineEffect({
       }
     };
 
-    onFrame(scope, ctx.fpsCap, ({ dt, elapsed, now }) => {
-      bus.sample(now);
-      envelopes.update(dt);
-
-      updateLayout();
-
-      if (demoVotes && chat.source === "simulated") {
-        /*
-         * A poll with nothing in it is not a preview of anything, so demo mode opens with a handful
-         * of votes already cast, placed instantly rather than rained in. After that the synthetic
-         * votes arrive one at a time, which is what shows the drop and the migration.
-         */
-        if (!demoSeeded) {
-          for (let i = 0; i < DEMO_SEED_VOTES; i += 1) castDemoVote(true);
-          demoSeeded = true;
-        }
-        demoTimer -= dt;
-        if (demoTimer <= 0) {
-          castDemoVote(false);
-          demoTimer = DEMO_MIN_GAP_S + Math.random() * (DEMO_MAX_GAP_S - DEMO_MIN_GAP_S);
-        }
-      } else {
+    /** Runs demo mode while the chat feed is simulated, and clears its votes once it is not. */
+    const runDemo = (dt: number): void => {
+      if (!demoVotes || chat.source !== "simulated") {
         // Demo mode no longer applies — either the operator switched it off or real chat arrived —
         // so the invented votes go, leaving whatever real chat has cast standing on its own.
         if (demoPlaced) releaseDemoVotes();
         // Do not let a long spell of live chat bank enough credit to fire a burst of synthetic
         // votes the moment the feed happens to fall back to simulated.
         demoTimer = Math.max(demoTimer, DEMO_MIN_GAP_S);
+        return;
       }
+      /*
+       * A poll with nothing in it is not a preview of anything, so demo mode opens with a handful
+       * of votes already cast, placed instantly rather than rained in. After that the synthetic
+       * votes arrive one at a time, which is what shows the drop and the migration.
+       */
+      if (!demoSeeded) {
+        for (let i = 0; i < DEMO_SEED_VOTES; i += 1) castDemoVote(true);
+        demoSeeded = true;
+      }
+      demoTimer -= dt;
+      if (demoTimer <= 0) {
+        castDemoVote(false);
+        demoTimer = DEMO_MIN_GAP_S + random() * (DEMO_MAX_GAP_S - DEMO_MIN_GAP_S);
+      }
+    };
 
-      /* Which column leads, and by how much, for the dimming decision. */
+    /** Which column leads, or -1 when none leads by enough to dim the others. */
+    const decidedLeader = (): number => {
       let leader = -1;
       let bestCount = -1;
       let runnerUpCount = -1;
@@ -1200,6 +1211,64 @@ const showOfHands = defineEffect({
       }
       const decided =
         dimLosers && bestCount >= LEAD_MARGIN && bestCount - runnerUpCount >= LEAD_MARGIN;
+      return decided ? leader : -1;
+    };
+
+    /**
+     * Eases one column's dimming toward its target and restyles its heading, label and count.
+     * Returns whether its baseline rule needs re-recording.
+     */
+    const updateColumn = (
+      column: Column,
+      i: number,
+      target: number,
+      dimRetention: number,
+    ): boolean => {
+      column.dim = target + (column.dim - target) * dimRetention;
+      // An exponential ease approaches its target without ever arriving, which would leave the
+      // rules a hair different on every frame forever and defeat the dirty check. Below a
+      // fifth of a percent the difference is invisible, so it is snapped away.
+      if (Math.abs(column.dim - target) < 0.002) column.dim = target;
+
+      const base = baseColors[i] ?? 0xffffff;
+      const shade = mixColor(base, DIM_GREY, 1 - column.dim);
+      const left = layout.left[i] ?? 0;
+
+      const dirty =
+        column.drawnDim !== column.dim || column.drawnShade !== shade || column.drawnLeft !== left;
+      column.drawnDim = column.dim;
+      column.drawnShade = shade;
+      column.drawnLeft = left;
+
+      restyleHead(column, base);
+
+      /*
+       * The dimming is applied as a tint and an alpha on the heading *container*, never by
+       * rewriting the text style. Assigning to a `TextStyle` marks the text dirty and re-draws
+       * its glyphs into a fresh texture; doing that every frame of a one-second fade, for every
+       * column, would rasterise text sixty times a second for no visible gain. A container tint
+       * is a single number the GPU multiplies while drawing.
+       */
+      column.head.alpha = column.dim;
+      column.head.tint = mixColor(0xffffff, DIM_GREY, 1 - column.dim);
+
+      const count = column.tokens.length;
+      if (count !== column.shownCount) {
+        column.countView.text = String(count);
+        column.shownCount = count;
+      }
+      column.countView.visible = showCounts;
+
+      column.labelView.x = left;
+      column.labelView.y = layout.baseY + labelFontSize * 0.55;
+      column.countView.x = left + layout.width - column.countView.width;
+      column.countView.y = layout.baseY + labelFontSize * 0.55;
+      return dirty;
+    };
+
+    /** Dims every column but a decided leader, and re-records the baseline rules if they moved. */
+    const updateColumns = (dt: number): void => {
+      const leader = decidedLeader();
 
       // Per-frame decay converted to per-second, so the fade takes the same time at 30 fps as at
       // 144 fps rather than being three times faster on the quicker display.
@@ -1218,61 +1287,87 @@ const showOfHands = defineEffect({
       for (let i = 0; i < columns.length; i += 1) {
         const column = columns[i];
         if (column === undefined) continue;
-        const target = decided && i !== leader ? DIM_ALPHA : 1;
-        column.dim = target + (column.dim - target) * dimRetention;
-        // An exponential ease approaches its target without ever arriving, which would leave the
-        // rules a hair different on every frame forever and defeat the check above. Below a
-        // fifth of a percent the difference is invisible, so it is snapped away.
-        if (Math.abs(column.dim - target) < 0.002) column.dim = target;
-
-        const base = baseColors[i] ?? 0xffffff;
-        const shade = mixColor(base, DIM_GREY, 1 - column.dim);
-        const left = layout.left[i] ?? 0;
-
-        if (column.drawnDim !== column.dim || column.drawnShade !== shade) rulesDirty = true;
-        if (column.drawnLeft !== left) rulesDirty = true;
-        column.drawnDim = column.dim;
-        column.drawnShade = shade;
-        column.drawnLeft = left;
-
-        restyleHead(column, base);
-
-        /*
-         * The dimming is applied as a tint and an alpha on the heading *container*, never by
-         * rewriting the text style. Assigning to a `TextStyle` marks the text dirty and re-draws
-         * its glyphs into a fresh texture; doing that every frame of a one-second fade, for every
-         * column, would rasterise text sixty times a second for no visible gain. A container tint
-         * is a single number the GPU multiplies while drawing.
-         */
-        column.head.alpha = column.dim;
-        column.head.tint = mixColor(0xffffff, DIM_GREY, 1 - column.dim);
-
-        const count = column.tokens.length;
-        if (count !== column.shownCount) {
-          column.countView.text = String(count);
-          column.shownCount = count;
-        }
-        column.countView.visible = showCounts;
-
-        column.labelView.x = left;
-        column.labelView.y = layout.baseY + labelFontSize * 0.55;
-        column.countView.x = left + layout.width - column.countView.width;
-        column.countView.y = layout.baseY + labelFontSize * 0.55;
+        const target = leader >= 0 && i !== leader ? DIM_ALPHA : 1;
+        if (updateColumn(column, i, target, dimRetention)) rulesDirty = true;
       }
 
-      if (rulesDirty) {
-        rulesColumns = columns.length;
-        rulesBaseY = layout.baseY;
-        rulesWidth = layout.width;
-        rules.clear();
-        for (const column of columns) {
-          rules
-            .moveTo(column.drawnLeft, layout.baseY)
-            .lineTo(column.drawnLeft + layout.width, layout.baseY)
-            .stroke({ color: column.drawnShade, alpha: 0.85 * column.drawnDim, width: 1 });
-        }
+      if (rulesDirty) redrawRules();
+    };
+
+    const redrawRules = (): void => {
+      rulesColumns = columns.length;
+      rulesBaseY = layout.baseY;
+      rulesWidth = layout.width;
+      rules.clear();
+      for (const column of columns) {
+        rules
+          .moveTo(column.drawnLeft, layout.baseY)
+          .lineTo(column.drawnLeft + layout.width, layout.baseY)
+          .stroke({ color: column.drawnShade, alpha: 0.85 * column.drawnDim, width: 1 });
+      }
+    };
+
+    /** The per-frame constants every token's spring and wobble are computed from. */
+    interface Motion {
+      omega: number;
+      zeta: number;
+      steps: number;
+      step: number;
+      shiver: number;
+      kick: number;
+      scale: number;
+      elapsed: number;
+    }
+
+    /** Advances one token's spring and reports whether it has come to rest on its slot. */
+    const integrateToken = (token: Token, motion: Motion): boolean => {
+      const { omega, zeta, steps, step } = motion;
+      const targetX = slotX(token.col, token.slot);
+      const targetY = slotY(token.slot);
+
+      for (let s = 0; s < steps; s += 1) {
+        const ax = -omega * omega * (token.x - targetX) - 2 * zeta * omega * token.vx;
+        const ay = -omega * omega * (token.y - targetY) - 2 * zeta * omega * token.vy;
+        // The velocity is updated before the position — a semi-implicit integrator, which stays
+        // stable for a stiff spring where the naive order would let the token gain energy and
+        // eventually fly off the screen.
+        token.vx += ax * step;
+        token.vy += ay * step;
+        token.x += token.vx * step;
+        token.y += token.vy * step;
       }
 
+      const dx = token.x - targetX;
+      const dy = token.y - targetY;
+      return (
+        dx * dx + dy * dy < SETTLED_DISTANCE * SETTLED_DISTANCE &&
+        token.vx * token.vx + token.vy * token.vy < SETTLED_SPEED * SETTLED_SPEED
+      );
+    };
+
+    /** Moves one token's sprite to its simulated place and tints it with its column's dimming. */
+    const paintToken = (token: Token, settled: boolean, motion: Motion): void => {
+      // Only a settled pile shivers. A token still in the air is already moving, and adding the
+      // audio wobble to it would read as a wind rather than as a thump on the desk.
+      const wobble = settled ? motion.shiver : 0;
+      const sprite = token.sprite;
+      sprite.x = token.x + Math.sin(motion.elapsed * 37 + token.phase) * wobble;
+      sprite.y = token.y + Math.cos(motion.elapsed * 41 + token.phase) * wobble * 0.6;
+      sprite.rotation = token.tilt;
+      sprite.scale.set(motion.scale);
+
+      const column = columns[token.col];
+      const dim = column?.dim ?? 1;
+      const base = tintFromChat ? token.chatTint : (baseColors[token.col] ?? 0xffffff);
+      const tint = mixColor(base, DIM_GREY, 1 - dim);
+      if (tint !== token.appliedTint) {
+        sprite.tint = tint;
+        token.appliedTint = tint;
+      }
+      sprite.alpha = dim;
+    };
+
+    const updateTokens = (dt: number, elapsed: number): void => {
       /*
        * The spring. `omega` is stiffness — a shorter drop time means a stiffer spring — and `zeta`
        * is friction, where 1 settles without overshoot and lower values overshoot more. Both are
@@ -1292,49 +1387,23 @@ const showOfHands = defineEffect({
       const kick = envelopes.beat ? BEAT_KICK * Math.min(1, jitter) : 0;
       const scale = layout.token / TOKEN_VISIBLE_SIZE;
 
+      const motion: Motion = { omega, zeta, steps, step, shiver, kick, scale, elapsed };
+
       for (const token of order) {
-        const targetX = slotX(token.col, token.slot);
-        const targetY = slotY(token.slot);
-
-        for (let s = 0; s < steps; s += 1) {
-          const ax = -omega * omega * (token.x - targetX) - 2 * zeta * omega * token.vx;
-          const ay = -omega * omega * (token.y - targetY) - 2 * zeta * omega * token.vy;
-          // The velocity is updated before the position — a semi-implicit integrator, which stays
-          // stable for a stiff spring where the naive order would let the token gain energy and
-          // eventually fly off the screen.
-          token.vx += ax * step;
-          token.vy += ay * step;
-          token.x += token.vx * step;
-          token.y += token.vy * step;
-        }
-
-        const dx = token.x - targetX;
-        const dy = token.y - targetY;
-        const settled =
-          dx * dx + dy * dy < SETTLED_DISTANCE * SETTLED_DISTANCE &&
-          token.vx * token.vx + token.vy * token.vy < SETTLED_SPEED * SETTLED_SPEED;
-
+        const settled = integrateToken(token, motion);
         if (settled && kick > 0) token.vy -= kick;
-
-        // Only a settled pile shivers. A token still in the air is already moving, and adding the
-        // audio wobble to it would read as a wind rather than as a thump on the desk.
-        const wobble = settled ? shiver : 0;
-        const sprite = token.sprite;
-        sprite.x = token.x + Math.sin(elapsed * 37 + token.phase) * wobble;
-        sprite.y = token.y + Math.cos(elapsed * 41 + token.phase) * wobble * 0.6;
-        sprite.rotation = token.tilt;
-        sprite.scale.set(scale);
-
-        const column = columns[token.col];
-        const dim = column?.dim ?? 1;
-        const base = tintFromChat ? token.chatTint : (baseColors[token.col] ?? 0xffffff);
-        const tint = mixColor(base, DIM_GREY, 1 - dim);
-        if (tint !== token.appliedTint) {
-          sprite.tint = tint;
-          token.appliedTint = tint;
-        }
-        sprite.alpha = dim;
+        paintToken(token, settled, motion);
       }
+    };
+
+    onFrame(scope, ctx.fpsCap, ({ dt, elapsed, now }) => {
+      bus.sample(now);
+      envelopes.update(dt);
+
+      updateLayout();
+      runDemo(dt);
+      updateColumns(dt);
+      updateTokens(dt, elapsed);
 
       // Pixi's own render loop is switched off by `createPixiStage`, so nothing reaches the canvas
       // until this line runs.

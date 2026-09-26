@@ -74,7 +74,7 @@ export function AdminShell(props: { children?: JSX.Element }): JSX.Element {
   /** True when the backend requires a password, so there is something to sign out of. */
   const showSignOut = createMemo(() => {
     const info = session();
-    return info !== null && info !== undefined && info.authRequired && info.authenticated;
+    return info?.authRequired === true && info.authenticated;
   });
 
   const [signingOut, setSigningOut] = createSignal(false);
@@ -100,8 +100,7 @@ export function AdminShell(props: { children?: JSX.Element }): JSX.Element {
     <div class="shell">
       <header class="topbar">
         <a href="/admin" class="brand">
-          <span class="brand-dot" aria-hidden="true" />
-          OBS Effects
+          <span class="brand-dot" aria-hidden="true" /> OBS Effects
         </a>
 
         {/*

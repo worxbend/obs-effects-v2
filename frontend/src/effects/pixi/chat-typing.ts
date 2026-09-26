@@ -169,7 +169,8 @@ const chatTyping = defineEffect({
         label: "Background Colour",
         kind: "color",
         default: "#0c0f14",
-        description: "Colour of the plate drawn behind each line so text stays readable over video.",
+        description:
+          "Colour of the plate drawn behind each line so text stays readable over video.",
       },
       {
         key: "bgAlpha",
@@ -179,7 +180,8 @@ const chatTyping = defineEffect({
         min: 0,
         max: 1,
         step: 0.05,
-        description: "Opacity of the background plates. 0 leaves bare text on the transparent stage.",
+        description:
+          "Opacity of the background plates. 0 leaves bare text on the transparent stage.",
       },
       {
         key: "showEmotes",
@@ -251,7 +253,7 @@ const chatTyping = defineEffect({
     };
 
     const startFade = (line: Line): void => {
-      if (line.fadeStartedAt === null) line.fadeStartedAt = time;
+      line.fadeStartedAt ??= time;
     };
 
     const removeLine = (line: Line): void => {
@@ -383,53 +385,48 @@ const chatTyping = defineEffect({
     const off = chat.onMessage(enqueue);
     scope.defer(off);
 
-    onFrame(scope, ctx.fpsCap, ({ dt }) => {
-      time += dt;
-
-      // Start the next line when the typist is free.
-      if (!typing && queue.length > 0) {
-        const message = queue.shift();
-        if (message !== undefined) beginLine(message);
-      }
-
-      // Type. The carry accumulates fractional atoms; whole ones are spent.
-      if (typing) {
-        typeCarry += typeSpeed * dt;
-        const current = lines[lines.length - 1];
-        while (typeCarry >= 1 && current !== undefined) {
-          typeCarry -= 1;
-          if (!typeAtom(current)) {
-            current.doneAt = time;
-            typing = false;
-            drawPlate(current);
-            break;
-          }
-        }
-        if (typing && current !== undefined) drawPlate(current);
-      } else {
+    /** Types the fractional atoms banked this frame into the line in progress. */
+    const typeFrame = (dt: number): void => {
+      if (!typing) {
         // No line in progress: cap the carry so a long quiet spell does not bank enough credit
         // to print the next message instantly, which would break the typewriter illusion.
         typeCarry = Math.min(typeCarry, 1);
+        return;
       }
-
-      // Age out finished lines and advance fades. Iterated over a copy because a completed fade
-      // removes its line from `lines`.
-      for (const line of lines.slice()) {
-        if (line.doneAt !== null && line.fadeStartedAt === null && time - line.doneAt > fadeAfter) {
-          startFade(line);
-        }
-        if (line.fadeStartedAt !== null) {
-          const progress = (time - line.fadeStartedAt) / fadeDuration;
-          if (progress >= 1) {
-            removeLine(line);
-          } else {
-            line.container.alpha = 1 - progress;
-          }
+      // The carry accumulates fractional atoms; whole ones are spent.
+      typeCarry += typeSpeed * dt;
+      const current = lines.at(-1);
+      while (typeCarry >= 1 && current !== undefined) {
+        typeCarry -= 1;
+        if (!typeAtom(current)) {
+          current.doneAt = time;
+          typing = false;
+          drawPlate(current);
+          break;
         }
       }
+      if (typing && current !== undefined) drawPlate(current);
+    };
 
-      // Layout: stack from the bottom-left corner upward, newest at the bottom. Recomputed every
-      // frame from the live stage size, which is also what makes resize handling automatic.
+    /** Starts a finished line's fade once it has lingered long enough, and advances the fade. */
+    const ageLine = (line: Line): void => {
+      if (line.doneAt !== null && line.fadeStartedAt === null && time - line.doneAt > fadeAfter) {
+        startFade(line);
+      }
+      if (line.fadeStartedAt === null) return;
+      const progress = (time - line.fadeStartedAt) / fadeDuration;
+      if (progress >= 1) {
+        removeLine(line);
+      } else {
+        line.container.alpha = 1 - progress;
+      }
+    };
+
+    /**
+     * Stacks the lines from the bottom-left corner upward, newest at the bottom. Recomputed every
+     * frame from the live stage size, which is also what makes resize handling automatic.
+     */
+    const layoutLines = (): void => {
       const lineHeight = fontSize * LINE_HEIGHT_FACTOR;
       const edge = fontSize * EDGE_PADDING_FACTOR;
       let y = stage.height - edge - lineHeight;
@@ -440,24 +437,45 @@ const chatTyping = defineEffect({
         line.container.y = y;
         y -= lineHeight + fontSize * 0.25;
       }
+    };
 
-      // The blinking cursor sits at the pen of the line being typed. Half the period on, half
-      // off — visible only while typing, because a cursor with nothing to type is noise.
+    /**
+     * The blinking cursor sits at the pen of the line being typed. Half the period on, half
+     * off — visible only while typing, because a cursor with nothing to type is noise.
+     */
+    const drawCursor = (): void => {
       cursor.clear();
-      const current = lines[lines.length - 1];
-      if (typing && current !== undefined) {
-        const on = (time % CURSOR_BLINK_S) < CURSOR_BLINK_S / 2;
-        if (on) {
-          cursor
-            .rect(
-              current.container.x + current.content.x + current.penX + fontSize * 0.1,
-              current.container.y + fontSize * (LINE_HEIGHT_FACTOR - 1) / 2,
-              fontSize * 0.5,
-              fontSize,
-            )
-            .fill({ color: colorText, alpha: 0.9 });
-        }
+      const current = lines.at(-1);
+      if (!typing || current === undefined) return;
+      const on = time % CURSOR_BLINK_S < CURSOR_BLINK_S / 2;
+      if (!on) return;
+      cursor
+        .rect(
+          current.container.x + current.content.x + current.penX + fontSize * 0.1,
+          current.container.y + (fontSize * (LINE_HEIGHT_FACTOR - 1)) / 2,
+          fontSize * 0.5,
+          fontSize,
+        )
+        .fill({ color: colorText, alpha: 0.9 });
+    };
+
+    onFrame(scope, ctx.fpsCap, ({ dt }) => {
+      time += dt;
+
+      // Start the next line when the typist is free.
+      if (!typing && queue.length > 0) {
+        const message = queue.shift();
+        if (message !== undefined) beginLine(message);
       }
+
+      typeFrame(dt);
+
+      // Age out finished lines and advance fades. Iterated over a copy because a completed fade
+      // removes its line from `lines`.
+      for (const line of lines.slice()) ageLine(line);
+
+      layoutLines();
+      drawCursor();
 
       stage.render();
     });

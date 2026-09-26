@@ -1,5 +1,5 @@
 import * as PIXI from "pixi.js";
-import { createPixiStage, defineEffect, onFrame } from "../sdk";
+import { createPixiStage, defineEffect, onFrame, random } from "../sdk";
 import { colorHex, int, num } from "../paramUtils";
 
 /**
@@ -48,11 +48,11 @@ import { colorHex, int, num } from "../paramUtils";
 const GLYPHS = "0123456789ABCDEFGHJKLMNPRSTUVWXYZｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾅﾆﾇﾈﾉﾊﾋﾌﾍﾎﾏﾐﾑﾒﾓﾔﾕﾖﾗﾘﾙﾚﾛﾜﾝ";
 
 function randomGlyph(): string {
-  // `Math.random()` returns a value in [0, 1) — it never reaches 1 — so `index` is always a valid
+  // `random()` returns a value in [0, 1) — it never reaches 1 — so `index` is always a valid
   // position in the string. TypeScript's `noUncheckedIndexedAccess` option cannot prove that, and
   // types the read as "a string or undefined"; the `?? "0"` is what satisfies it, and picks a
   // character that is already in the set so an impossible miss would still look right on screen.
-  const index = Math.floor(Math.random() * GLYPHS.length);
+  const index = Math.floor(random() * GLYPHS.length);
   return GLYPHS[index] ?? "0";
 }
 
@@ -172,7 +172,7 @@ export default defineEffect({
     /** Frees every Text object in the current columns. Called before any rebuild and on dispose. */
     const clearColumns = (): void => {
       for (const column of columns) {
-        layer.removeChild(column.container);
+        column.container.removeFromParent();
         // `true` destroys the little text texture too — that is the memory that actually matters.
         column.container.destroy({ children: true, texture: true, textureSource: true });
       }
@@ -202,7 +202,7 @@ export default defineEffect({
       });
 
       for (let s = 0; s < slots; s += 1) {
-        if (Math.random() > density) continue; // this slot stays empty
+        if (random() > density) continue; // this slot stays empty
 
         const container = new PIXI.Container();
         container.x = s * columnWidth;
@@ -220,14 +220,14 @@ export default defineEffect({
         }
 
         // Start each column at a random height so they do not all begin at the top together.
-        const top = -Math.random() * height;
+        const top = -random() * height;
         container.y = top;
         layer.addChild(container);
         columns.push({
           container,
           cells,
           offset: 0,
-          speed: 0.6 + Math.random() * 0.8, // relative multiplier, scaled by fallSpeed each frame
+          speed: 0.6 + random() * 0.8, // relative multiplier, scaled by fallSpeed each frame
           top,
         });
       }
@@ -258,6 +258,26 @@ export default defineEffect({
      * apply to `ticker.deltaMS` by hand — so the arithmetic below is untouched and the fall speed
      * is the same as before at any refresh rate. What is new is that `ctx.fpsCap` is now obeyed.
      */
+    // Once the column has travelled one whole glyph height, snap it back up by that height and
+    // shift the characters instead. Visually identical, but nothing is ever created here.
+    const recycleRows = (column: Column): void => {
+      while (column.offset >= fontSize) {
+        column.offset -= fontSize;
+        column.container.y -= fontSize;
+        // Shift every character one slot up the column. Reading the two cells into local
+        // variables first is what lets the compiler see they exist: `cells[i]` on its own is
+        // typed "a Text or undefined" under `noUncheckedIndexedAccess`.
+        const cells = column.cells;
+        for (let i = 0; i < cells.length - 1; i += 1) {
+          const current = cells[i];
+          const below = cells[i + 1];
+          if (current && below) current.text = below.text;
+        }
+        const head = cells.at(-1);
+        if (head) head.text = randomGlyph();
+      }
+    };
+
     onFrame(scope, ctx.fpsCap, ({ dt }) => {
       const height = stage.height;
 
@@ -266,23 +286,7 @@ export default defineEffect({
         column.container.y += step;
         column.offset += step;
 
-        // Once the column has travelled one whole glyph height, snap it back up by that height and
-        // shift the characters instead. Visually identical, but nothing is ever created here.
-        while (column.offset >= fontSize) {
-          column.offset -= fontSize;
-          column.container.y -= fontSize;
-          // Shift every character one slot up the column. Reading the two cells into local
-          // variables first is what lets the compiler see they exist: `cells[i]` on its own is
-          // typed "a Text or undefined" under `noUncheckedIndexedAccess`.
-          const cells = column.cells;
-          for (let i = 0; i < cells.length - 1; i += 1) {
-            const current = cells[i];
-            const below = cells[i + 1];
-            if (current && below) current.text = below.text;
-          }
-          const head = cells[cells.length - 1];
-          if (head) head.text = randomGlyph();
-        }
+        recycleRows(column);
 
         // When the column has fallen entirely past the bottom, send it back above the top edge.
         if (column.container.y > height) {

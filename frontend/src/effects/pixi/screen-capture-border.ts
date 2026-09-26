@@ -1,7 +1,7 @@
 import * as PIXI from "pixi.js";
 
 import { colorInt, int, num } from "../paramUtils";
-import { createPixiStage, defineEffect, onFrame } from "../sdk";
+import { createPixiStage, defineEffect, onFrame, random } from "../sdk";
 
 /**
  * Screen Capture Border
@@ -117,8 +117,7 @@ const screenCaptureBorder = defineEffect({
         min: 0,
         max: 400,
         step: 5,
-        description:
-          "How many tiny glowing dots crawl along the edges. 0 turns them off entirely.",
+        description: "How many tiny glowing dots crawl along the edges. 0 turns them off entirely.",
       },
       {
         key: "speed",
@@ -241,8 +240,8 @@ const screenCaptureBorder = defineEffect({
           frequency: 1.5 + (i % 3) * 0.9 + t * 1.2,
           // Alternate bands drift in opposite directions so the stack shimmers instead of sliding.
           speed: (i % 2 === 0 ? 1 : -1) * (0.12 + t * 0.08),
-          phase: Math.random() * Math.PI * 2,
-          sidePhase: Math.random() * Math.PI * 2,
+          phase: random() * Math.PI * 2,
+          sidePhase: random() * Math.PI * 2,
         });
       }
     };
@@ -251,15 +250,15 @@ const screenCaptureBorder = defineEffect({
       sparks.length = 0;
       for (let i = 0; i < sparkCount; i += 1) {
         sparks.push({
-          side: Math.floor(Math.random() * 4) as Side,
-          t: Math.random(),
-          speed: 0.015 + Math.random() * 0.045,
+          side: Math.floor(random() * 4) as Side,
+          t: random(),
+          speed: 0.015 + random() * 0.045,
           // The 1.8 power biases sparks toward the very edge, matching the bands' fade-in.
-          depthFrac: Math.random() ** 1.8,
-          radius: 0.08 + Math.random() * 0.18,
-          alpha: 0.14 + Math.random() * 0.34,
-          phase: Math.random() * Math.PI * 2,
-          colorIndex: Math.floor(Math.random() * colors.length),
+          depthFrac: random() ** 1.8,
+          radius: 0.08 + random() * 0.18,
+          alpha: 0.14 + random() * 0.34,
+          phase: random() * Math.PI * 2,
+          colorIndex: Math.floor(random() * colors.length),
         });
       }
     };
@@ -466,14 +465,14 @@ const screenCaptureBorder = defineEffect({
           } else {
             while (sparks.length < sparkCount) {
               sparks.push({
-                side: Math.floor(Math.random() * 4) as Side,
-                t: Math.random(),
-                speed: 0.015 + Math.random() * 0.045,
-                depthFrac: Math.random() ** 1.8,
-                radius: 0.08 + Math.random() * 0.18,
-                alpha: 0.14 + Math.random() * 0.34,
-                phase: Math.random() * Math.PI * 2,
-                colorIndex: Math.floor(Math.random() * colors.length),
+                side: Math.floor(random() * 4) as Side,
+                t: random(),
+                speed: 0.015 + random() * 0.045,
+                depthFrac: random() ** 1.8,
+                radius: 0.08 + random() * 0.18,
+                alpha: 0.14 + random() * 0.34,
+                phase: random() * Math.PI * 2,
+                colorIndex: Math.floor(random() * colors.length),
               });
             }
           }
