@@ -37,7 +37,7 @@ class PresetServiceSuite extends FunSuite {
   test("creating a preset stores it with a server-assigned id and timestamps") {
     val (_, _, preset) = createdPreset()
     assertEquals(preset.name, "Neon night")
-    assertEquals(preset.effectId.value, "plasma-field")
+    assertEquals(preset.effectId.value, Fixtures.PlasmaFieldId)
     assertEquals(preset.params, Map(ParamKey.unsafe("speed") -> JsonNumber(3.0)))
     assertEquals(preset.createdAt, createdAt)
     assertEquals(preset.updatedAt, createdAt)
@@ -76,7 +76,7 @@ class PresetServiceSuite extends FunSuite {
     val (service, _, _) = createdPreset()
     assertEquals(
       service.create(Fixtures.rawPreset(name = "NEON NIGHT")),
-      Left(AppError.NameConflict("plasma-field", "NEON NIGHT"))
+      Left(AppError.NameConflict(Fixtures.PlasmaFieldId, "NEON NIGHT"))
     )
   }
 
@@ -88,8 +88,8 @@ class PresetServiceSuite extends FunSuite {
   test("creating a preset for an effect that is not in the inventory is an unknown-effect error") {
     val (service, _) = serviceAt(createdAt)
     assertEquals(
-      service.create(Fixtures.rawPreset(effectId = "ghost-effect")),
-      Left(AppError.UnknownEffect("ghost-effect"))
+      service.create(Fixtures.rawPreset(effectId = Fixtures.GhostEffectId)),
+      Left(AppError.UnknownEffect(Fixtures.GhostEffectId))
     )
   }
 
@@ -149,7 +149,7 @@ class PresetServiceSuite extends FunSuite {
     val _ = service.create(Fixtures.rawPreset(name = "Cold morning"))
     assertEquals(
       service.update(preset.id.value, Fixtures.rawPreset(name = "cold morning")),
-      Left(AppError.NameConflict("plasma-field", "cold morning"))
+      Left(AppError.NameConflict(Fixtures.PlasmaFieldId, "cold morning"))
     )
   }
 
@@ -171,8 +171,8 @@ class PresetServiceSuite extends FunSuite {
 
   test("presets are listed by effect id and then by name, ignoring case") {
     val (service, _) = serviceAt(createdAt)
-    val _ = service.create(Fixtures.rawPreset(name = "zebra", effectId = "plasma-field"))
-    val _ = service.create(Fixtures.rawPreset(name = "Apple", effectId = "plasma-field"))
+    val _ = service.create(Fixtures.rawPreset(name = "zebra", effectId = Fixtures.PlasmaFieldId))
+    val _ = service.create(Fixtures.rawPreset(name = "Apple", effectId = Fixtures.PlasmaFieldId))
     val _ = service.create(Fixtures.rawPreset(name = "Anything", effectId = "starfield"))
 
     assertEquals(
@@ -183,7 +183,7 @@ class PresetServiceSuite extends FunSuite {
 
   test("the effectId filter narrows the list to one effect") {
     val (service, _) = serviceAt(createdAt)
-    val _ = service.create(Fixtures.rawPreset(effectId = "plasma-field"))
+    val _ = service.create(Fixtures.rawPreset(effectId = Fixtures.PlasmaFieldId))
     val _ = service.create(Fixtures.rawPreset(effectId = "starfield"))
 
     assertEquals(service.list(Some("starfield")).map(_.effectId.value), List("starfield"))
@@ -191,7 +191,7 @@ class PresetServiceSuite extends FunSuite {
 
   test("filtering by an effect nobody has heard of gives an empty list rather than an error") {
     val (service, _, _) = createdPreset()
-    assertEquals(service.list(Some("ghost-effect")), Nil)
+    assertEquals(service.list(Some(Fixtures.GhostEffectId)), Nil)
   }
 
   test("filtering by something that is not even a well-formed effect id gives an empty list") {

@@ -31,9 +31,12 @@ import java.time.Instant
   */
 class WireSuite extends FunSuite {
 
+  /** The name of the preset the wire tests round-trip. */
+  private val PresetName = "Neon night"
+
   private val route = RouteConfig(
     id = RouteId.unsafe("66c9f0b2e1a4c3d2b1a09876"),
-    slug = Slug.unsafe("main-camera"),
+    slug = Slug.unsafe(Fixtures.MainCameraSlug),
     effectId = Fixtures.plasmaField.id,
     enabled = true,
     params = Map(ParamKey.unsafe("speed") -> JsonNumber(2.0)),
@@ -49,8 +52,8 @@ class WireSuite extends FunSuite {
   test("a route is serialised with the field names from the contract") {
     val json = Wire.toDto(route).asJson
     assertEquals(json.hcursor.get[String]("id"), Right("66c9f0b2e1a4c3d2b1a09876"))
-    assertEquals(json.hcursor.get[String]("slug"), Right("main-camera"))
-    assertEquals(json.hcursor.get[String]("effectId"), Right("plasma-field"))
+    assertEquals(json.hcursor.get[String]("slug"), Right(Fixtures.MainCameraSlug))
+    assertEquals(json.hcursor.get[String]("effectId"), Right(Fixtures.PlasmaFieldId))
     assertEquals(json.hcursor.get[String]("updatedAt"), Right("2026-08-23T14:07:41.004Z"))
     assertEquals(json.hcursor.downField("params").get[Double]("speed"), Right(2.0))
   }
@@ -64,7 +67,7 @@ class WireSuite extends FunSuite {
     val body = """{"slug":"main-camera","effectId":"plasma-field","enabled":true,"params":{},
                  |"id":"66c9f0b2e1a4c3d2b1a09876","createdAt":"whenever"}""".stripMargin
     val decoded = parse(body).flatMap(_.as[Wire.RouteRequestDto])
-    assertEquals(decoded.map(_.slug), Right("main-camera"))
+    assertEquals(decoded.map(_.slug), Right(Fixtures.MainCameraSlug))
   }
 
   test("a validation failure becomes 422 with the issue list in details") {
@@ -78,9 +81,9 @@ class WireSuite extends FunSuite {
   }
 
   test("a slug conflict becomes 409 with the slug in details") {
-    val (status, envelope, _) = ErrorMapping.toWire(AppError.SlugConflict("main-camera"))
+    val (status, envelope, _) = ErrorMapping.toWire(AppError.SlugConflict(Fixtures.MainCameraSlug))
     assertEquals(status, StatusCode.Conflict)
-    assertEquals(envelope.error.details.flatMap(_.hcursor.get[String]("slug").toOption), Some("main-camera"))
+    assertEquals(envelope.error.details.flatMap(_.hcursor.get[String]("slug").toOption), Some(Fixtures.MainCameraSlug))
   }
 
   test("an error with nothing to add omits details entirely") {
@@ -209,7 +212,7 @@ class WireSuite extends FunSuite {
       AppError.BadRequest("nope"),
       AppError.Unauthorized("nope"),
       AppError.NotFound("nope"),
-      AppError.SlugConflict("main-camera"),
+      AppError.SlugConflict(Fixtures.MainCameraSlug),
       AppError.UnknownEffect("ghost"),
       AppError.ValidationFailed(Nil),
       AppError.internal("nope")
@@ -232,7 +235,7 @@ class WireSuite extends FunSuite {
 
   private val preset = Preset(
     id = PresetId.unsafe("66ca1f39e1a4c3d2b1a01234"),
-    name = "Neon night",
+    name = PresetName,
     effectId = Fixtures.plasmaField.id,
     params = Map(ParamKey.unsafe("speed") -> JsonNumber(3.0)),
     createdAt = Instant.parse("2026-08-24T09:00:00.000Z"),
@@ -245,7 +248,7 @@ class WireSuite extends FunSuite {
       json.asObject.map(_.keys.toSet),
       Some(Set("id", "name", "effectId", "params", "createdAt", "updatedAt"))
     )
-    assertEquals(json.hcursor.get[String]("name"), Right("Neon night"))
+    assertEquals(json.hcursor.get[String]("name"), Right(PresetName))
     assertEquals(json.hcursor.downField("params").get[Double]("speed"), Right(3.0))
   }
 
@@ -258,7 +261,7 @@ class WireSuite extends FunSuite {
   test("a preset write request accepts a body that also carries the server-owned fields") {
     val body = """{"id":"ignored","name":"Neon night","effectId":"plasma-field","params":{},"createdAt":"whenever"}"""
     val decoded = parse(body).flatMap(_.as[Wire.PresetRequestDto])
-    assertEquals(decoded.map(_.name), Right("Neon night"))
+    assertEquals(decoded.map(_.name), Right(PresetName))
   }
 
   test("the export envelope keeps an uncapped fpsCap as an explicit null") {
@@ -292,7 +295,7 @@ class WireSuite extends FunSuite {
         """"createdAt":"2026-08-23T14:05:09.123Z","updatedAt":"2026-08-23T14:07:41.004Z"}"""
 
     val decoded = parse(exported).flatMap(_.as[Wire.ImportRouteDto]).map(Wire.toRaw)
-    assertEquals(decoded.map(_.route.slug), Right("main-camera"))
+    assertEquals(decoded.map(_.route.slug), Right(Fixtures.MainCameraSlug))
     assertEquals(decoded.map(_.createdAt), Right(Some("2026-08-23T14:05:09.123Z")))
     assertEquals(decoded.map(_.route.canvas.flatMap(_.width)), Right(Some(1280.0)))
   }
@@ -309,16 +312,19 @@ class WireSuite extends FunSuite {
   }
 
   test("the name-conflict error carries both the effect and the name, because a name is only unique per effect") {
-    val (status, envelope, retryAfter) = ErrorMapping.toWire(AppError.NameConflict("plasma-field", "Neon night"))
+    val (status, envelope, retryAfter) = ErrorMapping.toWire(AppError.NameConflict(Fixtures.PlasmaFieldId, PresetName))
     assertEquals(status, StatusCode.Conflict)
     assertEquals(envelope.error.code, "NAME_CONFLICT")
     assertEquals(retryAfter, None)
-    assertEquals(envelope.error.details.flatMap(_.hcursor.get[String]("effectId").toOption), Some("plasma-field"))
-    assertEquals(envelope.error.details.flatMap(_.hcursor.get[String]("name").toOption), Some("Neon night"))
+    assertEquals(
+      envelope.error.details.flatMap(_.hcursor.get[String]("effectId").toOption),
+      Some(Fixtures.PlasmaFieldId)
+    )
+    assertEquals(envelope.error.details.flatMap(_.hcursor.get[String]("name").toOption), Some(PresetName))
   }
 
   test("the name-conflict error survives a round trip through the wire form") {
-    val error = AppError.NameConflict("plasma-field", "Neon night")
+    val error = AppError.NameConflict(Fixtures.PlasmaFieldId, PresetName)
     assertEquals(ErrorMapping.fromWire(ErrorMapping.toWire(error)), error)
   }
 

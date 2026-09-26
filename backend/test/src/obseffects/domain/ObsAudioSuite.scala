@@ -10,6 +10,9 @@ import munit.FunSuite
   */
 class ObsAudioSuite extends FunSuite {
 
+  /** The default local OBS WebSocket address. */
+  private val LocalObsUrl = "ws://localhost:4455"
+
   test("a fresh installation is switched off, with the address most people need already filled in") {
     assertEquals(ObsAudioSettings.Default.enabled, false)
     assertEquals(ObsAudioSettings.Default.password, None)
@@ -19,9 +22,9 @@ class ObsAudioSuite extends FunSuite {
   }
 
   test("both WebSocket schemes are accepted, and the value is trimmed") {
-    assertEquals(ObsAudioSettings.parseUrl("ws://localhost:4455"), Right("ws://localhost:4455"))
+    assertEquals(ObsAudioSettings.parseUrl(LocalObsUrl), Right(LocalObsUrl))
     assertEquals(ObsAudioSettings.parseUrl("wss://obs.example.com:4455"), Right("wss://obs.example.com:4455"))
-    assertEquals(ObsAudioSettings.parseUrl("  ws://localhost:4455  "), Right("ws://localhost:4455"))
+    assertEquals(ObsAudioSettings.parseUrl("  ws://localhost:4455  "), Right(LocalObsUrl))
   }
 
   test("a host and port with no scheme is rejected, rather than being read as a scheme") {

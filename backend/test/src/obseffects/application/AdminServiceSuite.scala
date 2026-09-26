@@ -17,6 +17,9 @@ import java.time.{Clock, Instant, ZoneOffset}
   */
 class AdminServiceSuite extends FunSuite {
 
+  /** A slug that breaks the slug format. */
+  private val InvalidSlug = "Not A Slug"
+
   private val exportedAt = Instant.parse("2026-08-24T10:11:12.000Z")
   private val importedAt = Instant.parse("2026-08-25T08:00:00.000Z")
 
@@ -67,7 +70,7 @@ class AdminServiceSuite extends FunSuite {
 
     assertEquals(envelope.schemaVersion, BackupEnvelope.CurrentSchemaVersion)
     assertEquals(envelope.exportedAt, exportedAt)
-    assertEquals(envelope.routes.map(_.slug.value), List("main-camera"))
+    assertEquals(envelope.routes.map(_.slug.value), List(Fixtures.MainCameraSlug))
     assertEquals(envelope.presets.map(_.name), List("Neon night"))
   }
 
@@ -132,7 +135,7 @@ class AdminServiceSuite extends FunSuite {
     )
 
     val after = restored.admin.exportAll()
-    assertEquals(after.routes.map(_.slug.value), List("main-camera"))
+    assertEquals(after.routes.map(_.slug.value), List(Fixtures.MainCameraSlug))
     assertEquals(after.routes.head.params, Map(ParamKey.unsafe("speed") -> JsonNumber(2.0)))
     assertEquals(after.routes.head.canvas, envelope.routes.head.canvas)
     assertEquals(after.presets.map(_.name), List("Neon night"))
@@ -216,7 +219,7 @@ class AdminServiceSuite extends FunSuite {
     val harness = populated()
 
     val _ = harness.admin.importAll(
-      Fixtures.importFile(mode = "merge", routes = List(Fixtures.importRoute(slug = "second-camera")))
+      Fixtures.importFile(mode = "merge", routes = List(Fixtures.importRoute(slug = Fixtures.SecondCameraSlug)))
     )
 
     // "main-camera" was created by the fixture and is not in the file. In merge mode it is still
@@ -228,9 +231,12 @@ class AdminServiceSuite extends FunSuite {
   test("merge deletes nothing that the file does not mention") {
     val harness = populated()
     val _ = harness.admin.importAll(
-      Fixtures.importFile(mode = "merge", routes = List(Fixtures.importRoute(slug = "second-camera")))
+      Fixtures.importFile(mode = "merge", routes = List(Fixtures.importRoute(slug = Fixtures.SecondCameraSlug)))
     )
-    assertEquals(harness.admin.exportAll().routes.map(_.slug.value), List("main-camera", "second-camera"))
+    assertEquals(
+      harness.admin.exportAll().routes.map(_.slug.value),
+      List(Fixtures.MainCameraSlug, Fixtures.SecondCameraSlug)
+    )
   }
 
   test("replace empties both collections first and reports what it removed") {
@@ -238,12 +244,12 @@ class AdminServiceSuite extends FunSuite {
 
     assertEquals(
       harness.admin.importAll(
-        Fixtures.importFile(mode = "replace", routes = List(Fixtures.importRoute(slug = "second-camera")))
+        Fixtures.importFile(mode = "replace", routes = List(Fixtures.importRoute(slug = Fixtures.SecondCameraSlug)))
       ),
       Right(obseffects.domain.ImportResult(1, 0, 1, 0, 0, 1))
     )
 
-    assertEquals(harness.admin.exportAll().routes.map(_.slug.value), List("second-camera"))
+    assertEquals(harness.admin.exportAll().routes.map(_.slug.value), List(Fixtures.SecondCameraSlug))
     assertEquals(harness.admin.exportAll().presets, Nil)
   }
 
@@ -261,7 +267,7 @@ class AdminServiceSuite extends FunSuite {
     val harness = populated()
 
     val _ = harness.admin.importAll(
-      Fixtures.importFile(mode = "replace", routes = List(Fixtures.importRoute(slug = "second-camera")))
+      Fixtures.importFile(mode = "replace", routes = List(Fixtures.importRoute(slug = Fixtures.SecondCameraSlug)))
     )
 
     assertEquals(
@@ -297,7 +303,7 @@ class AdminServiceSuite extends FunSuite {
     val result = harness.admin.importAll(
       Fixtures.importFile(
         mode = "replace",
-        routes = List(Fixtures.importRoute(slug = "fine-camera"), Fixtures.importRoute(slug = "Not A Slug"))
+        routes = List(Fixtures.importRoute(slug = "fine-camera"), Fixtures.importRoute(slug = InvalidSlug))
       )
     )
 
@@ -308,7 +314,7 @@ class AdminServiceSuite extends FunSuite {
 
   test("a refused import announces nothing, so a live browser source is not told about a restore that did not happen") {
     val harness = harnessAt(importedAt)
-    val _ = harness.admin.importAll(Fixtures.importFile(routes = List(Fixtures.importRoute(slug = "Not A Slug"))))
+    val _ = harness.admin.importAll(Fixtures.importFile(routes = List(Fixtures.importRoute(slug = InvalidSlug))))
     assertEquals(harness.events.summary, Nil)
   }
 
@@ -319,7 +325,7 @@ class AdminServiceSuite extends FunSuite {
       Fixtures.importFile(
         routes = List(
           Fixtures.importRoute(slug = "fine-camera"),
-          Fixtures.importRoute(slug = "Not A Slug"),
+          Fixtures.importRoute(slug = InvalidSlug),
           Fixtures.importRoute(slug = "third-camera", params = Map("speed" -> JsonString("fast")))
         ),
         presets = List(Fixtures.importPreset(name = "  "))
@@ -335,7 +341,7 @@ class AdminServiceSuite extends FunSuite {
     val harness = harnessAt(importedAt)
 
     harness.admin.importAll(
-      Fixtures.importFile(routes = List(Fixtures.importRoute(effectId = "ghost-effect")))
+      Fixtures.importFile(routes = List(Fixtures.importRoute(effectId = Fixtures.GhostEffectId)))
     ) match {
       case Left(AppError.ValidationFailed(issues)) => assertEquals(issues.map(_.field), List("routes[0].effectId"))
       case other                                   => fail(s"expected a validation failure, got $other")
@@ -372,7 +378,7 @@ class AdminServiceSuite extends FunSuite {
         .importAll(
           Fixtures.importFile(presets =
             List(
-              Fixtures.importPreset(name = "Default", effectId = "plasma-field"),
+              Fixtures.importPreset(name = "Default", effectId = Fixtures.PlasmaFieldId),
               Fixtures.importPreset(name = "Default", effectId = "starfield")
             )
           )

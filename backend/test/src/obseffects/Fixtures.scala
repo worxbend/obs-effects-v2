@@ -7,6 +7,18 @@ import obseffects.domain.JsonValue.*
   */
 object Fixtures {
 
+  /** The route slug most tests use for "a route that exists". */
+  val MainCameraSlug = "main-camera"
+
+  /** A second slug, for tests that need two distinct routes. */
+  val SecondCameraSlug = "second-camera"
+
+  /** The id of [[plasmaField]], the one effect every test catalogue contains. */
+  val PlasmaFieldId = "plasma-field"
+
+  /** An effect id that no test catalogue contains. */
+  val GhostEffectId = "ghost-effect"
+
   val speed: ParamSpec = ParamSpec(
     key = ParamKey.unsafe("speed"),
     label = "Speed",
@@ -44,7 +56,7 @@ object Fixtures {
   )
 
   val plasmaField: EffectDescriptor = EffectDescriptor(
-    id = EffectId.unsafe("plasma-field"),
+    id = EffectId.unsafe(PlasmaFieldId),
     name = "Plasma Field",
     description = "Animated plasma background",
     engine = Engine.Pixi,
@@ -69,7 +81,7 @@ object Fixtures {
 
   /** A valid raw descriptor, ready to be `copy`-ed into an invalid one. */
   val rawPlasmaField: RawEffectDescriptor = RawEffectDescriptor(
-    id = "plasma-field",
+    id = PlasmaFieldId,
     name = "Plasma Field",
     description = "Animated plasma background",
     engine = "pixi",
@@ -86,8 +98,8 @@ object Fixtures {
     * defaults.
     */
   def rawRoute(
-      slug: String = "main-camera",
-      effectId: String = "plasma-field",
+      slug: String = MainCameraSlug,
+      effectId: String = PlasmaFieldId,
       enabled: Boolean = true,
       params: Map[String, JsonValue] = Map("speed" -> JsonNumber(2.0)),
       canvas: Option[RawCanvasSettings] = None
@@ -96,7 +108,7 @@ object Fixtures {
   /** A valid raw preset body, ready to be `copy`-ed or overridden field by field. */
   def rawPreset(
       name: String = "Neon night",
-      effectId: String = "plasma-field",
+      effectId: String = PlasmaFieldId,
       params: Map[String, JsonValue] = Map("speed" -> JsonNumber(3.0))
   ): RawPresetInput = RawPresetInput(name, effectId, params)
 
@@ -104,8 +116,8 @@ object Fixtures {
     * looks like; an exported file carries the timestamp the route was created at.
     */
   def importRoute(
-      slug: String = "main-camera",
-      effectId: String = "plasma-field",
+      slug: String = MainCameraSlug,
+      effectId: String = PlasmaFieldId,
       enabled: Boolean = true,
       params: Map[String, JsonValue] = Map("speed" -> JsonNumber(2.0)),
       canvas: Option[RawCanvasSettings] = None,
@@ -115,7 +127,7 @@ object Fixtures {
   /** One preset as it appears inside an import file. */
   def importPreset(
       name: String = "Neon night",
-      effectId: String = "plasma-field",
+      effectId: String = PlasmaFieldId,
       params: Map[String, JsonValue] = Map("speed" -> JsonNumber(3.0)),
       createdAt: Option[String] = None
   ): RawImportPreset = RawImportPreset(RawPresetInput(name, effectId, params), createdAt)

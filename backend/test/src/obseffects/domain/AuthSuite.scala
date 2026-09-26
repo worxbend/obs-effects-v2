@@ -13,6 +13,12 @@ import java.security.SecureRandom
   */
 class AuthSuite extends FunSuite {
 
+  /** A password hashed and checked in the overlay tests. */
+  private val OverlayPassword = "s3cret-overlay"
+
+  /** A password hashed twice to compare the results. */
+  private val SamePassword = "same-password"
+
   private val TestCost = 4
 
   private val random = new SecureRandom()
@@ -58,12 +64,12 @@ class AuthSuite extends FunSuite {
   // -------------------------------------------------------------------------------------------
 
   test("the right password verifies") {
-    val hash = Passwords.hash("s3cret-overlay", TestCost)
-    assert(Passwords.verify("s3cret-overlay", hash))
+    val hash = Passwords.hash(OverlayPassword, TestCost)
+    assert(Passwords.verify(OverlayPassword, hash))
   }
 
   test("the wrong password does not verify") {
-    val hash = Passwords.hash("s3cret-overlay", TestCost)
+    val hash = Passwords.hash(OverlayPassword, TestCost)
     assert(!Passwords.verify("s3cret-overlays", hash))
     assert(!Passwords.verify("S3CRET-OVERLAY", hash))
     assert(!Passwords.verify("", hash))
@@ -112,11 +118,11 @@ class AuthSuite extends FunSuite {
   test("hashing the same password twice produces two different hashes, both of which verify") {
     // Each hash embeds its own random salt. That is why a stolen hash file cannot be attacked by
     // looking values up in a precomputed table.
-    val first = Passwords.hash("same-password", TestCost)
-    val second = Passwords.hash("same-password", TestCost)
+    val first = Passwords.hash(SamePassword, TestCost)
+    val second = Passwords.hash(SamePassword, TestCost)
     assertNotEquals(first.value, second.value)
-    assert(Passwords.verify("same-password", first))
-    assert(Passwords.verify("same-password", second))
+    assert(Passwords.verify(SamePassword, first))
+    assert(Passwords.verify(SamePassword, second))
   }
 
   // -------------------------------------------------------------------------------------------

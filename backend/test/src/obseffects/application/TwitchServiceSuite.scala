@@ -12,10 +12,16 @@ import obseffects.domain.TwitchSettings
   */
 class TwitchServiceSuite extends FunSuite {
 
+  /** The Twitch application client id the tests configure. */
+  private val ClientId = "client-1"
+
+  /** The OAuth redirect URI the tests send. */
+  private val CallbackUrl = "https://admin.example/callback"
+
   private val configured = TwitchSettings(
     enabled = true,
     channel = "worxbend",
-    clientId = "client-1",
+    clientId = ClientId,
     clientSecret = Some("shhh"),
     accessToken = Some("access-1"),
     refreshToken = Some("refresh-1"),
@@ -40,7 +46,7 @@ class TwitchServiceSuite extends FunSuite {
     val (twitch, repository, _, _, _) = service(configured)
 
     val result = twitch.saveTwitch(
-      TwitchSettingsUpdate(enabled = true, channel = "elsewhere", clientId = "client-1", clientSecret = None)
+      TwitchSettingsUpdate(enabled = true, channel = "elsewhere", clientId = ClientId, clientSecret = None)
     )
 
     assert(result.isRight, s"expected the save to succeed, got $result")
@@ -54,7 +60,7 @@ class TwitchServiceSuite extends FunSuite {
     val (twitch, repository, _, _, _) = service(configured)
 
     val _ = twitch.saveTwitch(
-      TwitchSettingsUpdate(enabled = true, channel = "worxbend", clientId = "client-1", clientSecret = Some(None))
+      TwitchSettingsUpdate(enabled = true, channel = "worxbend", clientId = ClientId, clientSecret = Some(None))
     )
 
     assertEquals(repository.loadTwitch().clientSecret, None)
@@ -74,7 +80,7 @@ class TwitchServiceSuite extends FunSuite {
     val (twitch, repository, connection, _, _) = service(configured)
 
     val result = twitch.saveTwitch(
-      TwitchSettingsUpdate(enabled = true, channel = "not a channel!", clientId = "client-1", clientSecret = None)
+      TwitchSettingsUpdate(enabled = true, channel = "not a channel!", clientId = ClientId, clientSecret = None)
     )
 
     result match {
@@ -88,7 +94,7 @@ class TwitchServiceSuite extends FunSuite {
   test("every successful save reconnects, because Save is the operator's 'try again now' button") {
     val (twitch, _, connection, _, _) = service(configured)
     val unchanged =
-      TwitchSettingsUpdate(enabled = true, channel = "worxbend", clientId = "client-1", clientSecret = None)
+      TwitchSettingsUpdate(enabled = true, channel = "worxbend", clientId = ClientId, clientSecret = None)
 
     val _ = twitch.saveTwitch(unchanged)
     val _ = twitch.saveTwitch(unchanged)
@@ -100,7 +106,7 @@ class TwitchServiceSuite extends FunSuite {
     val (twitch, repository, _, _, _) = service(configured)
 
     val _ = twitch.saveTwitch(
-      TwitchSettingsUpdate(enabled = true, channel = "elsewhere", clientId = "client-1", clientSecret = None)
+      TwitchSettingsUpdate(enabled = true, channel = "elsewhere", clientId = ClientId, clientSecret = None)
     )
 
     assertEquals(repository.loadTwitch().broadcasterId, None)
@@ -110,7 +116,7 @@ class TwitchServiceSuite extends FunSuite {
     val (twitch, repository, _, _, _) = service(configured)
 
     val _ = twitch.saveTwitch(
-      TwitchSettingsUpdate(enabled = false, channel = "worxbend", clientId = "client-1", clientSecret = None)
+      TwitchSettingsUpdate(enabled = false, channel = "worxbend", clientId = ClientId, clientSecret = None)
     )
 
     assertEquals(repository.loadTwitch().broadcasterId, Some("777"))
@@ -154,7 +160,7 @@ class TwitchServiceSuite extends FunSuite {
     val exchanger = new StubTwitchTokenExchanger(exchange = Right(TwitchTokenPair("granted", Some("rotating"))))
     val (twitch, repository, connection, _, _) = service(configured, exchanger)
 
-    val result = twitch.completeOAuth("the-code", "https://admin.example/callback")
+    val result = twitch.completeOAuth("the-code", CallbackUrl)
 
     assert(result.isRight, s"expected the exchange to succeed, got $result")
     assertEquals(repository.loadTwitch().accessToken, Some("granted"))
@@ -167,7 +173,7 @@ class TwitchServiceSuite extends FunSuite {
     val exchanger = new StubTwitchTokenExchanger()
     val (twitch, _, _, _, _) = service(configured.copy(clientSecret = None), exchanger)
 
-    val result = twitch.completeOAuth("the-code", "https://admin.example/callback")
+    val result = twitch.completeOAuth("the-code", CallbackUrl)
 
     assert(result.left.exists(_.isInstanceOf[AppError.BadRequest]), s"expected a BadRequest, got $result")
     assertEquals(exchanger.calls, Nil)
@@ -177,7 +183,7 @@ class TwitchServiceSuite extends FunSuite {
     val exchanger = new StubTwitchTokenExchanger(exchange = Left("Invalid authorization code"))
     val (twitch, _, _, _, _) = service(configured, exchanger)
 
-    val result = twitch.completeOAuth("stale-code", "https://admin.example/callback")
+    val result = twitch.completeOAuth("stale-code", CallbackUrl)
 
     result match {
       case Left(AppError.BadRequest(message)) => assert(message.contains("Invalid authorization code"), message)

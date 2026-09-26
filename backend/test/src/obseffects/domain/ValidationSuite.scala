@@ -9,6 +9,21 @@ import obseffects.domain.JsonValue.*
   */
 class ValidationSuite extends FunSuite {
 
+  /** The issue path of the speed parameter. */
+  private val SpeedPath = "params.speed"
+
+  /** An effect id missing from the catalogue. */
+  private val UnknownEffectId = "no-such-effect"
+
+  /** The issue path of the canvas width. */
+  private val CanvasWidthPath = "canvas.width"
+
+  /** The issue path of the canvas height. */
+  private val CanvasHeightPath = "canvas.height"
+
+  /** The issue path of the canvas frame-rate cap. */
+  private val CanvasFpsCapPath = "canvas.fpsCap"
+
   // ---------------------------------------------------------------------------------------------
   // Slug format
   // ---------------------------------------------------------------------------------------------
@@ -48,19 +63,19 @@ class ValidationSuite extends FunSuite {
   // ---------------------------------------------------------------------------------------------
 
   test("a number parameter rejects a string value") {
-    val issues = Validation.validateParamValue("params.speed", Fixtures.speed, JsonString("fast"))
-    assertEquals(issues.map(_.field), List("params.speed"))
+    val issues = Validation.validateParamValue(SpeedPath, Fixtures.speed, JsonString("fast"))
+    assertEquals(issues.map(_.field), List(SpeedPath))
     assertEquals(issues.head.message, "expected number, got string")
   }
 
   test("a number parameter rejects a value above its maximum") {
-    val issues = Validation.validateParamValue("params.speed", Fixtures.speed, JsonNumber(11.0))
+    val issues = Validation.validateParamValue(SpeedPath, Fixtures.speed, JsonNumber(11.0))
     assertEquals(issues.size, 1)
     assert(issues.head.message.contains("must be <= 10.0"))
   }
 
   test("a number parameter accepts a value on the boundary of its range") {
-    assertEquals(Validation.validateParamValue("params.speed", Fixtures.speed, JsonNumber(10.0)), Nil)
+    assertEquals(Validation.validateParamValue(SpeedPath, Fixtures.speed, JsonNumber(10.0)), Nil)
   }
 
   test("a colour parameter rejects a value that is not six hex digits") {
@@ -88,7 +103,7 @@ class ValidationSuite extends FunSuite {
   test("a well-formed descriptor is accepted") {
     assertEquals(
       Validation.validateManifest(List(Fixtures.rawPlasmaField)).map(_.map(_.id.value)),
-      Right(List("plasma-field"))
+      Right(List(Fixtures.PlasmaFieldId))
     )
   }
 
@@ -116,7 +131,7 @@ class ValidationSuite extends FunSuite {
     val manifest = List(Fixtures.rawPlasmaField, Fixtures.rawPlasmaField)
     val issues = Validation.validateManifest(manifest).left.getOrElse(Nil)
     assertEquals(issues.map(_.field), List("effects"))
-    assert(issues.head.message.contains("plasma-field"))
+    assert(issues.head.message.contains(Fixtures.PlasmaFieldId))
   }
 
   // ---------------------------------------------------------------------------------------------
@@ -124,11 +139,11 @@ class ValidationSuite extends FunSuite {
   // ---------------------------------------------------------------------------------------------
 
   private def findEffect(id: String): Option[EffectDescriptor] =
-    Option.when(id == "plasma-field")(Fixtures.plasmaField)
+    Option.when(id == Fixtures.PlasmaFieldId)(Fixtures.plasmaField)
 
   test("a route with a valid slug and known parameters is accepted") {
     val result = Validation.validateRouteInput(Fixtures.rawRoute(), findEffect)
-    assertEquals(result.map(_.slug.value), Right("main-camera"))
+    assertEquals(result.map(_.slug.value), Right(Fixtures.MainCameraSlug))
   }
 
   test("a route with an unknown parameter key is rejected rather than having the key dropped") {
@@ -142,17 +157,17 @@ class ValidationSuite extends FunSuite {
   }
 
   test("a route whose effect does not exist is reported as an unknown effect") {
-    val raw = Fixtures.rawRoute(effectId = "no-such-effect")
+    val raw = Fixtures.rawRoute(effectId = UnknownEffectId)
     assertEquals(
       Validation.validateRouteInput(raw, findEffect),
-      Left(InputError.UnknownEffect("no-such-effect"))
+      Left(InputError.UnknownEffect(UnknownEffectId))
     )
   }
 
   test("a route reports a bad slug and a bad parameter value together") {
     val raw = Fixtures.rawRoute(slug = "Main Camera", params = Map("speed" -> JsonString("fast")))
     Validation.validateRouteInput(raw, findEffect) match {
-      case Left(InputError.Invalid(issues)) => assertEquals(issues.map(_.field), List("slug", "params.speed"))
+      case Left(InputError.Invalid(issues)) => assertEquals(issues.map(_.field), List("slug", SpeedPath))
       case other                            => fail(s"expected an Invalid result, got $other")
     }
   }
@@ -197,15 +212,15 @@ class ValidationSuite extends FunSuite {
   test("width accepts 16 and 7680 and rejects 15 and 7681") {
     assertEquals(Validation.validateCanvas(Some(Fixtures.rawCanvas(width = Some(16.0)))).map(_.width), Right(16))
     assertEquals(Validation.validateCanvas(Some(Fixtures.rawCanvas(width = Some(7680.0)))).map(_.width), Right(7680))
-    assertEquals(canvasIssues(Fixtures.rawCanvas(width = Some(15.0))).map(_.field), List("canvas.width"))
-    assertEquals(canvasIssues(Fixtures.rawCanvas(width = Some(7681.0))).map(_.field), List("canvas.width"))
+    assertEquals(canvasIssues(Fixtures.rawCanvas(width = Some(15.0))).map(_.field), List(CanvasWidthPath))
+    assertEquals(canvasIssues(Fixtures.rawCanvas(width = Some(7681.0))).map(_.field), List(CanvasWidthPath))
   }
 
   test("height accepts 16 and 4320 and rejects 15 and 4321") {
     assertEquals(Validation.validateCanvas(Some(Fixtures.rawCanvas(height = Some(16.0)))).map(_.height), Right(16))
     assertEquals(Validation.validateCanvas(Some(Fixtures.rawCanvas(height = Some(4320.0)))).map(_.height), Right(4320))
-    assertEquals(canvasIssues(Fixtures.rawCanvas(height = Some(15.0))).map(_.field), List("canvas.height"))
-    assertEquals(canvasIssues(Fixtures.rawCanvas(height = Some(4321.0))).map(_.field), List("canvas.height"))
+    assertEquals(canvasIssues(Fixtures.rawCanvas(height = Some(15.0))).map(_.field), List(CanvasHeightPath))
+    assertEquals(canvasIssues(Fixtures.rawCanvas(height = Some(4321.0))).map(_.field), List(CanvasHeightPath))
   }
 
   test("fpsCap accepts 1 and 240 and rejects 0 and 241") {
@@ -214,27 +229,27 @@ class ValidationSuite extends FunSuite {
       Validation.validateCanvas(Some(Fixtures.rawCanvas(fpsCap = Some(240.0)))).map(_.fpsCap),
       Right(Some(240))
     )
-    assertEquals(canvasIssues(Fixtures.rawCanvas(fpsCap = Some(0.0))).map(_.field), List("canvas.fpsCap"))
-    assertEquals(canvasIssues(Fixtures.rawCanvas(fpsCap = Some(241.0))).map(_.field), List("canvas.fpsCap"))
+    assertEquals(canvasIssues(Fixtures.rawCanvas(fpsCap = Some(0.0))).map(_.field), List(CanvasFpsCapPath))
+    assertEquals(canvasIssues(Fixtures.rawCanvas(fpsCap = Some(241.0))).map(_.field), List(CanvasFpsCapPath))
   }
 
   test("a canvas number that is not whole is a validation issue, not a rounding") {
     // 1920.5 is well-formed JSON, so it is not a 400; it breaks a rule about the value, which is a
     // 422. Truncating it to 1920 would obey an admin approximately, which is worse than refusing.
     val issues = canvasIssues(Fixtures.rawCanvas(width = Some(1920.5)))
-    assertEquals(issues.map(_.field), List("canvas.width"))
+    assertEquals(issues.map(_.field), List(CanvasWidthPath))
     assert(issues.head.message.contains("whole number"), issues.head.message)
   }
 
   test("every bad canvas value is reported at once rather than one per attempt") {
     val issues = canvasIssues(RawCanvasSettings(width = Some(0.0), height = Some(99999.0), fpsCap = Some(1000.0)))
-    assertEquals(issues.map(_.field), List("canvas.width", "canvas.height", "canvas.fpsCap"))
+    assertEquals(issues.map(_.field), List(CanvasWidthPath, CanvasHeightPath, CanvasFpsCapPath))
   }
 
   test("a bad canvas value is reported alongside a bad slug, not instead of it") {
     val raw = Fixtures.rawRoute(slug = "Main Camera", canvas = Some(Fixtures.rawCanvas(width = Some(4.0))))
     Validation.validateRouteInput(raw, findEffect) match {
-      case Left(InputError.Invalid(issues)) => assertEquals(issues.map(_.field), List("slug", "canvas.width"))
+      case Left(InputError.Invalid(issues)) => assertEquals(issues.map(_.field), List("slug", CanvasWidthPath))
       case other                            => fail(s"expected an Invalid result, got $other")
     }
   }
@@ -279,8 +294,8 @@ class ValidationSuite extends FunSuite {
 
   test("a preset for an effect nobody has heard of reports the unknown effect and nothing else") {
     assertEquals(
-      Validation.validatePresetInput(Fixtures.rawPreset(effectId = "no-such-effect"), findEffect),
-      Left(InputError.UnknownEffect("no-such-effect"))
+      Validation.validatePresetInput(Fixtures.rawPreset(effectId = UnknownEffectId), findEffect),
+      Left(InputError.UnknownEffect(UnknownEffectId))
     )
   }
 
@@ -292,7 +307,7 @@ class ValidationSuite extends FunSuite {
     val file = Fixtures.importFile(routes = List(Fixtures.importRoute()), presets = List(Fixtures.importPreset()))
     Validation.validateImport(file, findEffect) match {
       case Right(contents) =>
-        assertEquals(contents.routes.map(_.input.slug.value), List("main-camera"))
+        assertEquals(contents.routes.map(_.input.slug.value), List(Fixtures.MainCameraSlug))
         assertEquals(contents.presets.map(_.input.name), List("Neon night"))
       case other => fail(s"expected the file to validate, got $other")
     }

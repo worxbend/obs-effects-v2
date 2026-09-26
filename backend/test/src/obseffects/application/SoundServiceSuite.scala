@@ -13,6 +13,9 @@ import java.time.{Clock, Instant, ZoneOffset}
   */
 class SoundServiceSuite extends FunSuite {
 
+  /** The content type of every uploaded test sound. */
+  private val Mp3 = "audio/mpeg"
+
   private val uploadedAt = Instant.parse("2026-08-27T10:00:00.000Z")
 
   private val mp3Bytes: Array[Byte] = Array[Byte](1, 2, 3, 4)
@@ -24,7 +27,7 @@ class SoundServiceSuite extends FunSuite {
 
   private def uploaded() = {
     val (sut, sounds) = service()
-    val sound = sut.upload("ding", Some("audio/mpeg"), mp3Bytes).getOrElse(fail("the upload should be accepted"))
+    val sound = sut.upload("ding", Some(Mp3), mp3Bytes).getOrElse(fail("the upload should be accepted"))
     (sut, sounds, sound)
   }
 
@@ -32,7 +35,7 @@ class SoundServiceSuite extends FunSuite {
     val (_, _, sound) = uploaded()
     assertEquals(sound.name, "ding")
     assertEquals(sound.builtin, false)
-    assertEquals(sound.contentType, "audio/mpeg")
+    assertEquals(sound.contentType, Mp3)
     assertEquals(sound.sizeBytes, mp3Bytes.length.toLong)
     assertEquals(sound.uploadedAt, uploadedAt)
     assertEquals(sound.id.value.length, 24)
@@ -40,13 +43,13 @@ class SoundServiceSuite extends FunSuite {
 
   test("a sound name is stored trimmed") {
     val (sut, _) = service()
-    val sound = sut.upload("  ding  ", Some("audio/mpeg"), mp3Bytes).getOrElse(fail("should be accepted"))
+    val sound = sut.upload("  ding  ", Some(Mp3), mp3Bytes).getOrElse(fail("should be accepted"))
     assertEquals(sound.name, "ding")
   }
 
   test("a name of nothing but whitespace fails validation") {
     val (sut, _) = service()
-    sut.upload("   ", Some("audio/mpeg"), mp3Bytes) match {
+    sut.upload("   ", Some(Mp3), mp3Bytes) match {
       case Left(AppError.ValidationFailed(issues)) =>
         assertEquals(issues, List(ValidationIssue("name", "must contain at least one non-space character")))
       case other => fail(s"expected a validation failure, got $other")
@@ -55,16 +58,16 @@ class SoundServiceSuite extends FunSuite {
 
   test("a name longer than 64 characters fails validation, and one of exactly 64 is accepted") {
     val (sut, _) = service()
-    assert(sut.upload("n" * 65, Some("audio/mpeg"), mp3Bytes).swap.exists {
+    assert(sut.upload("n" * 65, Some(Mp3), mp3Bytes).swap.exists {
       case AppError.ValidationFailed(_) => true
       case _                            => false
     })
-    assert(sut.upload("n" * 64, Some("audio/mpeg"), mp3Bytes).isRight)
+    assert(sut.upload("n" * 64, Some(Mp3), mp3Bytes).isRight)
   }
 
   test("uploading a second sound with a taken name is a sound name conflict") {
     val (sut, _, _) = uploaded()
-    assertEquals(sut.upload("ding", Some("audio/mpeg"), mp3Bytes), Left(AppError.SoundNameConflict("ding")))
+    assertEquals(sut.upload("ding", Some(Mp3), mp3Bytes), Left(AppError.SoundNameConflict("ding")))
   }
 
   test("a content type outside the four audio formats fails validation") {
@@ -90,7 +93,7 @@ class SoundServiceSuite extends FunSuite {
 
   test("an empty body fails validation") {
     val (sut, _) = service()
-    assert(sut.upload("ding", Some("audio/mpeg"), Array.emptyByteArray).swap.exists {
+    assert(sut.upload("ding", Some(Mp3), Array.emptyByteArray).swap.exists {
       case AppError.ValidationFailed(issues) => issues.map(_.field) == List("body")
       case _                                 => false
     })
@@ -99,7 +102,7 @@ class SoundServiceSuite extends FunSuite {
   test("a body over 5 MB fails validation") {
     val (sut, _) = service()
     val oversized = new Array[Byte](5 * 1024 * 1024 + 1)
-    assert(sut.upload("ding", Some("audio/mpeg"), oversized).swap.exists {
+    assert(sut.upload("ding", Some(Mp3), oversized).swap.exists {
       case AppError.ValidationFailed(issues) => issues.map(_.field) == List("body")
       case _                                 => false
     })
@@ -107,8 +110,8 @@ class SoundServiceSuite extends FunSuite {
 
   test("sounds are listed sorted by name, ignoring case") {
     val (sut, _) = service()
-    val _ = sut.upload("Zelda", Some("audio/mpeg"), mp3Bytes)
-    val _ = sut.upload("apple", Some("audio/mpeg"), mp3Bytes)
+    val _ = sut.upload("Zelda", Some(Mp3), mp3Bytes)
+    val _ = sut.upload("apple", Some(Mp3), mp3Bytes)
     assertEquals(sut.list().map(_.name), List("apple", "Zelda"))
   }
 
@@ -154,7 +157,7 @@ class SoundServiceSuite extends FunSuite {
     val (sut, sounds) = service()
     sut.seedBuiltins()
     assertEquals(sut.list().map(_.name), List("discord", "slack-message"))
-    assert(sut.list().forall(sound => sound.builtin && sound.contentType == "audio/mpeg"))
+    assert(sut.list().forall(sound => sound.builtin && sound.contentType == Mp3))
     assert(sounds.findByName("discord").flatMap(s => sounds.download(s.id)).exists(_.nonEmpty))
   }
 

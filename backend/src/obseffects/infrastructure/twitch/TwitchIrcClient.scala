@@ -463,10 +463,12 @@ object TwitchIrcClient {
         at = at,
         fallbackId = fallbackId,
         username = username,
-        event = if (bits.isDefined) ChatEventKind.Cheer else ChatEventKind.Chat,
-        text = text,
-        parts = messageParts(text, spans),
-        data = bits.fold(Map.empty[String, JsonValue])(value => Map("bits" -> JsonNumber(value.toDouble)))
+        content = EventContent(
+          event = if (bits.isDefined) ChatEventKind.Cheer else ChatEventKind.Chat,
+          text = text,
+          parts = messageParts(text, spans),
+          data = bits.fold(Map.empty[String, JsonValue])(value => Map("bits" -> JsonNumber(value.toDouble)))
+        )
       )
     }
 
@@ -501,10 +503,12 @@ object TwitchIrcClient {
         at = at,
         fallbackId = fallbackId,
         username = username,
-        event = event,
-        text = text,
-        parts = if (text.isEmpty) Nil else List(ChatPart.Text(text)),
-        data = data
+        content = EventContent(
+          event = event,
+          text = text,
+          parts = if (text.isEmpty) Nil else List(ChatPart.Text(text)),
+          data = data
+        )
       )
     }
 
@@ -530,16 +534,23 @@ object TwitchIrcClient {
     Map("viewers" -> JsonNumber(viewers.toDouble))
   }
 
+  /** What a chat event carries regardless of who sent it or when: the fields [[build]] copies into the [[ChatMessage]]
+    * verbatim, rather than deriving them from the IRC line.
+    */
+  private final case class EventContent(
+      event: ChatEventKind,
+      text: String,
+      parts: List[ChatPart],
+      data: Map[String, JsonValue]
+  )
+
   /** The shared tail of both message builders: identity fields that work the same for every event kind. */
   private def build(
       message: IrcMessage,
       at: Long,
       fallbackId: String,
       username: String,
-      event: ChatEventKind,
-      text: String,
-      parts: List[ChatPart],
-      data: Map[String, JsonValue]
+      content: EventContent
   ): ChatMessage =
     ChatMessage(
       id = message.tags.get("id").filter(_.nonEmpty).getOrElse(fallbackId),
@@ -549,10 +560,10 @@ object TwitchIrcClient {
       displayName = message.tags.get("display-name").filter(_.nonEmpty).getOrElse(username),
       color = message.tags.get("color").filter(_.nonEmpty).getOrElse(ChatMessage.colorFor(username)),
       seed = ChatMessage.seedFor(username),
-      event = event,
-      text = text,
-      parts = parts,
-      data = data
+      event = content.event,
+      text = content.text,
+      parts = content.parts,
+      data = content.data
     )
 
   /** Who sent this line: the `login` tag when Twitch supplies one (`USERNOTICE` does), otherwise the nick half of the

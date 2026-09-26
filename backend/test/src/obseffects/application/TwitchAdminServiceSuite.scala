@@ -16,6 +16,18 @@ import obseffects.domain.TwitchSettings
   */
 class TwitchAdminServiceSuite extends FunSuite {
 
+  /** The access token a refresh hands back. */
+  private val RotatedAccess = "access-2"
+
+  /** The refresh token a refresh hands back. */
+  private val RotatedRefresh = "refresh-2"
+
+  /** What the fake Twitch says about a rejected token. */
+  private val InvalidAccessToken = "invalid access token"
+
+  /** The cursor of the second page of a listing. */
+  private val SecondPageCursor = "page-2"
+
   /** A fully configured installation: enabled, a channel, an application, a token, both required scopes, and both ids
     * already known — so nothing has to be looked up before the operation under test runs.
     */
@@ -142,10 +154,10 @@ class TwitchAdminServiceSuite extends FunSuite {
     // completed, and the four-hour access token expired. A usable refresh token is stored the whole time, so telling
     // the operator to reconnect their account would be wrong — nothing is wrong with it.
     val exchanger = new StubTwitchTokenExchanger(
-      refresh = Right(TwitchTokenPair("access-2", Some("refresh-2"))),
-      validate = Left("invalid access token"),
+      refresh = Right(TwitchTokenPair(RotatedAccess, Some(RotatedRefresh))),
+      validate = Left(InvalidAccessToken),
       validatePerToken = Map(
-        "access-2" -> Right(
+        RotatedAccess -> Right(
           TwitchTokenInfo("botty", "42", List(TwitchAdminService.ScopeReadBans, TwitchAdminService.ScopeManageBans))
         )
       )
@@ -156,22 +168,22 @@ class TwitchAdminServiceSuite extends FunSuite {
 
     assert(status.available, s"expected the refresh to recover it, got $status")
     assertEquals(status.reason, None)
-    assertEquals(repository.loadTwitch().accessToken, Some("access-2"))
+    assertEquals(repository.loadTwitch().accessToken, Some(RotatedAccess))
     assertEquals(repository.loadTwitch().botUserId, Some("42"))
     assertEquals(exchanger.calls, List("validate access-1", "refresh refresh-1", "validate access-2"))
   }
 
   test("a refreshed token Twitch still refuses gives up rather than refreshing again") {
     val exchanger = new StubTwitchTokenExchanger(
-      refresh = Right(TwitchTokenPair("access-2", Some("refresh-2"))),
-      validate = Left("invalid access token")
+      refresh = Right(TwitchTokenPair(RotatedAccess, Some(RotatedRefresh))),
+      validate = Left(InvalidAccessToken)
     )
     val (admin, _, _) = service(configured.copy(botUserId = None, scopes = Nil), exchanger = exchanger)
 
     val status = admin.status()
 
     assert(!status.available, s"got $status")
-    assert(status.reason.exists(_.contains("invalid access token")), s"got ${status.reason}")
+    assert(status.reason.exists(_.contains(InvalidAccessToken)), s"got ${status.reason}")
     assertEquals(exchanger.calls.count(_.startsWith("refresh")), 1)
   }
 
@@ -190,13 +202,13 @@ class TwitchAdminServiceSuite extends FunSuite {
   }
 
   test("a token Twitch will not validate is an explained unavailability, not a failure") {
-    val exchanger = new StubTwitchTokenExchanger(validate = Left("invalid access token"))
+    val exchanger = new StubTwitchTokenExchanger(validate = Left(InvalidAccessToken))
     val (admin, _, _) = service(configured.copy(botUserId = None, scopes = Nil), exchanger = exchanger)
 
     val status = admin.status()
 
     assert(!status.available, s"got $status")
-    assert(status.reason.exists(_.contains("invalid access token")), s"got ${status.reason}")
+    assert(status.reason.exists(_.contains(InvalidAccessToken)), s"got ${status.reason}")
   }
 
   test("the channel's numeric id is looked up once and cached in the settings") {
@@ -454,8 +466,8 @@ class TwitchAdminServiceSuite extends FunSuite {
 
   test("a 401 refreshes the token once, stores the new pair, and retries that call exactly once") {
     // The fake accepts only the refreshed token, so every call made with the stored one answers 401.
-    val helix = new FakeTwitchHelix(users = known, acceptedToken = Some("access-2"))
-    val exchanger = new StubTwitchTokenExchanger(refresh = Right(TwitchTokenPair("access-2", Some("refresh-2"))))
+    val helix = new FakeTwitchHelix(users = known, acceptedToken = Some(RotatedAccess))
+    val exchanger = new StubTwitchTokenExchanger(refresh = Right(TwitchTokenPair(RotatedAccess, Some(RotatedRefresh))))
     val (admin, repository, _) = service(helix = helix, exchanger = exchanger)
 
     val result = admin.bans(cursor = None, limit = Some(10))
@@ -463,14 +475,14 @@ class TwitchAdminServiceSuite extends FunSuite {
     assert(result.isRight, s"expected the retry to succeed, got $result")
     assertEquals(helix.calls, List("bans[access-1] cursor=- limit=10", "bans[access-2] cursor=- limit=10"))
     // The rotated pair is stored immediately: Twitch rotates the refresh token too, so the old one may already be dead.
-    assertEquals(repository.loadTwitch().accessToken, Some("access-2"))
-    assertEquals(repository.loadTwitch().refreshToken, Some("refresh-2"))
+    assertEquals(repository.loadTwitch().accessToken, Some(RotatedAccess))
+    assertEquals(repository.loadTwitch().refreshToken, Some(RotatedRefresh))
   }
 
   test("a second 401 gives up instead of refreshing again") {
     // Nothing the fake is ever given will be accepted, so the retry meets a 401 too.
     val helix = new FakeTwitchHelix(users = known, acceptedToken = Some("never-issued"))
-    val exchanger = new StubTwitchTokenExchanger(refresh = Right(TwitchTokenPair("access-2", Some("refresh-2"))))
+    val exchanger = new StubTwitchTokenExchanger(refresh = Right(TwitchTokenPair(RotatedAccess, Some(RotatedRefresh))))
     val (admin, _, _) = service(helix = helix, exchanger = exchanger)
 
     val result = admin.bans(cursor = None, limit = None)
@@ -481,8 +493,8 @@ class TwitchAdminServiceSuite extends FunSuite {
   }
 
   test("one refresh serves the rest of a batch: the remaining users go out with the new token") {
-    val helix = new FakeTwitchHelix(users = known, acceptedToken = Some("access-2"))
-    val exchanger = new StubTwitchTokenExchanger(refresh = Right(TwitchTokenPair("access-2", None)))
+    val helix = new FakeTwitchHelix(users = known, acceptedToken = Some(RotatedAccess))
+    val exchanger = new StubTwitchTokenExchanger(refresh = Right(TwitchTokenPair(RotatedAccess, None)))
     val (admin, _, _) = service(helix = helix, exchanger = exchanger)
 
     val result = admin.unbanMany(List("alice", "bob", "carol"), Nil)
@@ -491,11 +503,11 @@ class TwitchAdminServiceSuite extends FunSuite {
     // The resolution meets the 401, refreshes, and every unban afterwards presents the fresh token — one refresh in
     // total, not one per user.
     assertEquals(exchanger.calls.count(_.startsWith("refresh")), 1)
-    assertEquals(helix.calls.filter(_.startsWith("unban")).forall(_.contains("access-2")), true)
+    assertEquals(helix.calls.filter(_.startsWith("unban")).forall(_.contains(RotatedAccess)), true)
   }
 
   test("a refresh that Twitch refuses is reported as unavailability rather than crashing the request") {
-    val helix = new FakeTwitchHelix(users = known, acceptedToken = Some("access-2"))
+    val helix = new FakeTwitchHelix(users = known, acceptedToken = Some(RotatedAccess))
     val exchanger = new StubTwitchTokenExchanger(refresh = Left("Invalid refresh token"))
     val (admin, _, _) = service(helix = helix, exchanger = exchanger)
 
@@ -509,17 +521,17 @@ class TwitchAdminServiceSuite extends FunSuite {
   // -------------------------------------------------------------------------------------------
 
   test("the ban list pages by cursor, and the last page reports no cursor") {
-    val first = TwitchBanPage(List(TwitchBan("1", "alice", "Alice", None, None, None, None)), Some("page-2"))
+    val first = TwitchBanPage(List(TwitchBan("1", "alice", "Alice", None, None, None, None)), Some(SecondPageCursor))
     val second = TwitchBanPage(List(TwitchBan("2", "bob", "Bob", None, None, None, None)), None)
     val helix = new FakeTwitchHelix(
       users = known,
-      banPages = Map(None -> Right(first), Some("page-2") -> Right(second))
+      banPages = Map(None -> Right(first), Some(SecondPageCursor) -> Right(second))
     )
     val (admin, _, _) = service(helix = helix)
 
-    assertEquals(admin.bans(None, None).map(_.cursor), Right(Some("page-2")))
-    assertEquals(admin.bans(Some("page-2"), None).map(_.bans.map(_.login)), Right(List("bob")))
-    assertEquals(admin.bans(Some("page-2"), None).map(_.cursor), Right(None))
+    assertEquals(admin.bans(None, None).map(_.cursor), Right(Some(SecondPageCursor)))
+    assertEquals(admin.bans(Some(SecondPageCursor), None).map(_.bans.map(_.login)), Right(List("bob")))
+    assertEquals(admin.bans(Some(SecondPageCursor), None).map(_.cursor), Right(None))
   }
 
   test("a Twitch refusal on a whole-page read is reported as unavailability carrying Twitch's words") {

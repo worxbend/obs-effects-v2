@@ -119,7 +119,8 @@ final class TwitchService(
     */
   def storeTokens(accessToken: String, refreshToken: Option[String]): Either[AppError, TwitchSettings] = {
     val access = accessToken.trim.stripPrefix("oauth:")
-    if (access.isEmpty) Left(AppError.ValidationFailed(List(ValidationIssue("accessToken", "must not be empty"))))
+    if (access.isEmpty)
+      Left(AppError.ValidationFailed(List(ValidationIssue("accessToken", TwitchService.MustNotBeEmpty))))
     else {
       val settings = repository
         .loadTwitch()
@@ -154,9 +155,9 @@ final class TwitchService(
         )
       case (clientId, Some(secret)) =>
         if (code.trim.isEmpty)
-          Left(AppError.ValidationFailed(List(ValidationIssue("code", "must not be empty"))))
+          Left(AppError.ValidationFailed(List(ValidationIssue("code", TwitchService.MustNotBeEmpty))))
         else if (redirectUri.trim.isEmpty)
-          Left(AppError.ValidationFailed(List(ValidationIssue("redirectUri", "must not be empty"))))
+          Left(AppError.ValidationFailed(List(ValidationIssue("redirectUri", TwitchService.MustNotBeEmpty))))
         else
           exchanger.exchangeCode(clientId, secret, code.trim, redirectUri.trim) match {
             case Left(reason) => Left(AppError.BadRequest(s"Twitch rejected the code exchange: $reason"))
@@ -212,6 +213,9 @@ final class TwitchService(
 }
 
 object TwitchService {
+
+  /** The validation message for a required field left blank. */
+  private val MustNotBeEmpty = "must not be empty"
 
   /** How many history entries a request gets when it does not say. Matches the snapshot ring, so "the default page" and
     * "what a fresh overlay shows" are the same thing.

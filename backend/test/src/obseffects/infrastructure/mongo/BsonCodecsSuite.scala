@@ -24,7 +24,7 @@ class BsonCodecsSuite extends FunSuite {
 
   private def routeInput(canvas: CanvasSettings): RouteInput =
     RouteInput(
-      slug = Slug.unsafe("main-camera"),
+      slug = Slug.unsafe(Fixtures.MainCameraSlug),
       effectId = Fixtures.plasmaField.id,
       enabled = true,
       params = Map(ParamKey.unsafe("speed") -> JsonNumber(2.0)),
@@ -35,8 +35,8 @@ class BsonCodecsSuite extends FunSuite {
   private def legacyDocument(): Document =
     new Document()
       .append("_id", new ObjectId())
-      .append("slug", "main-camera")
-      .append("effectId", "plasma-field")
+      .append("slug", Fixtures.MainCameraSlug)
+      .append("effectId", Fixtures.PlasmaFieldId)
       .append("enabled", java.lang.Boolean.TRUE)
       .append("params", new Document("speed", java.lang.Double.valueOf(2.0)))
       .append("createdAt", Date.from(createdAt))
@@ -78,8 +78,8 @@ class BsonCodecsSuite extends FunSuite {
     val route = BsonCodecs.routeFromDocument(legacyDocument())
 
     assertEquals(route.canvas, CanvasSettings(1920, 1080, None))
-    assertEquals(route.slug.value, "main-camera")
-    assertEquals(route.effectId, EffectId.unsafe("plasma-field"))
+    assertEquals(route.slug.value, Fixtures.MainCameraSlug)
+    assertEquals(route.effectId, EffectId.unsafe(Fixtures.PlasmaFieldId))
   }
 
   test("a canvas sub-document missing individual keys defaults them one by one") {
@@ -121,7 +121,7 @@ class BsonCodecsSuite extends FunSuite {
 
     val route = BsonCodecs.routeFromDocument(document)
 
-    assertEquals(route.slug.value, "main-camera")
+    assertEquals(route.slug.value, Fixtures.MainCameraSlug)
     assertEquals(route.enabled, true)
     assertEquals(route.params, Map(ParamKey.unsafe("speed") -> JsonNumber(2.0)))
     assertEquals(route.createdAt, createdAt)

@@ -175,24 +175,36 @@ final class TwitchChatSupervisor(
     else
       settings.accessToken match {
         case None        => None
-        case Some(token) =>
-          oauth.validateToken(token) match {
-            case Right(info) =>
-              rememberIdentity(settings, info)
-              Some(Credentials(info.login, token))
-            case Left(reason) =>
-              refreshOnce(settings) match {
-                case Some(rotated) =>
-                  oauth.validateToken(rotated) match {
-                    case Right(info) =>
-                      rememberIdentity(settings, info)
-                      Some(Credentials(info.login, rotated))
-                    case Left(again) => fallBackToAnonymous(s"the refreshed token was rejected too ($again)")
-                  }
-                case None => fallBackToAnonymous(reason)
-              }
-          }
+        case Some(token) => authenticatedCredentials(settings, token)
       }
+
+  /** Credentials from the stored token, spending the refresh and dropping to anonymous as it fails each rung. */
+  private def authenticatedCredentials(settings: TwitchSettings, token: String): Option[Credentials] =
+    oauth.validateToken(token) match {
+      case Right(info)  => identityCredentials(settings, info, token)
+      case Left(reason) =>
+        refreshOnce(settings) match {
+          case Some(rotated) => refreshedCredentials(settings, rotated)
+          case None          => fallBackToAnonymous(reason)
+        }
+    }
+
+  /** Credentials from the just-refreshed token; a second rejection means the refresh bought nothing. */
+  private def refreshedCredentials(settings: TwitchSettings, rotated: String): Option[Credentials] =
+    oauth.validateToken(rotated) match {
+      case Right(info) => identityCredentials(settings, info, rotated)
+      case Left(again) => fallBackToAnonymous(s"the refreshed token was rejected too ($again)")
+    }
+
+  /** The rung every successful validation lands on: remember who the token belongs to, then use it. */
+  private def identityCredentials(
+      settings: TwitchSettings,
+      info: TwitchTokenInfo,
+      token: String
+  ): Option[Credentials] = {
+    rememberIdentity(settings, info)
+    Some(Credentials(info.login, token))
+  }
 
   /** Spends this generation's one token refresh, storing the rotated pair. `None` when it was already spent, when the
     * settings lack what a refresh needs, or when Twitch refused.

@@ -21,6 +21,9 @@ import scala.concurrent.duration.DurationInt
   */
 class RouteEventsSuite extends FunSuite {
 
+  /** The timestamp of the edit the listeners are told about. */
+  private val UpdatedAt = "2026-08-24T10:01:00.000Z"
+
   private val now = Instant.parse("2026-08-24T10:00:00.000Z")
 
   /** Waiting time for an event that is expected to be there already. Long enough that a loaded machine does not fail
@@ -44,7 +47,7 @@ class RouteEventsSuite extends FunSuite {
     val bus = new RouteEventBus()
     assertEquals(bus.subscriberCount, 0)
 
-    val subscription = bus.subscribe(Slug.unsafe("main-camera"))
+    val subscription = bus.subscribe(Slug.unsafe(Fixtures.MainCameraSlug))
     assertEquals(bus.subscriberCount, 1)
 
     subscription.close()
@@ -53,7 +56,7 @@ class RouteEventsSuite extends FunSuite {
 
   test("closing a subscription twice removes it once and does not fail") {
     val bus = new RouteEventBus()
-    val subscription = bus.subscribe(Slug.unsafe("main-camera"))
+    val subscription = bus.subscribe(Slug.unsafe(Fixtures.MainCameraSlug))
 
     subscription.close()
     subscription.close()
@@ -64,27 +67,27 @@ class RouteEventsSuite extends FunSuite {
 
   test("a published change reaches a subscriber of that slug") {
     val bus = new RouteEventBus()
-    val subscription = bus.subscribe(Slug.unsafe("main-camera"))
+    val subscription = bus.subscribe(Slug.unsafe(Fixtures.MainCameraSlug))
 
-    bus.routeChanged(route("main-camera", "2026-08-24T10:01:00.000Z"))
+    bus.routeChanged(route(Fixtures.MainCameraSlug, UpdatedAt))
 
-    assertEquals(subscription.next(Soon), Some(RouteEvent.Configured(route("main-camera", "2026-08-24T10:01:00.000Z"))))
+    assertEquals(subscription.next(Soon), Some(RouteEvent.Configured(route(Fixtures.MainCameraSlug, UpdatedAt))))
   }
 
   test("a deletion reaches a subscriber as an absent event") {
     val bus = new RouteEventBus()
-    val subscription = bus.subscribe(Slug.unsafe("main-camera"))
+    val subscription = bus.subscribe(Slug.unsafe(Fixtures.MainCameraSlug))
 
-    bus.routeRemoved(Slug.unsafe("main-camera"))
+    bus.routeRemoved(Slug.unsafe(Fixtures.MainCameraSlug))
 
-    assertEquals(subscription.next(Soon), Some(RouteEvent.Absent(Slug.unsafe("main-camera"))))
+    assertEquals(subscription.next(Soon), Some(RouteEvent.Absent(Slug.unsafe(Fixtures.MainCameraSlug))))
   }
 
   test("a subscriber hears nothing about another slug") {
     val bus = new RouteEventBus()
-    val subscription = bus.subscribe(Slug.unsafe("main-camera"))
+    val subscription = bus.subscribe(Slug.unsafe(Fixtures.MainCameraSlug))
 
-    bus.routeChanged(route("second-camera", "2026-08-24T10:01:00.000Z"))
+    bus.routeChanged(route(Fixtures.SecondCameraSlug, UpdatedAt))
 
     assertEquals(subscription.queued, 0)
     assertEquals(subscription.next(50.millis), None)
@@ -92,10 +95,10 @@ class RouteEventsSuite extends FunSuite {
 
   test("two subscribers of the same slug each get their own copy") {
     val bus = new RouteEventBus()
-    val first = bus.subscribe(Slug.unsafe("main-camera"))
-    val second = bus.subscribe(Slug.unsafe("main-camera"))
+    val first = bus.subscribe(Slug.unsafe(Fixtures.MainCameraSlug))
+    val second = bus.subscribe(Slug.unsafe(Fixtures.MainCameraSlug))
 
-    bus.routeChanged(route("main-camera", "2026-08-24T10:01:00.000Z"))
+    bus.routeChanged(route(Fixtures.MainCameraSlug, UpdatedAt))
 
     assert(first.next(Soon).isDefined)
     assert(second.next(Soon).isDefined)
@@ -103,10 +106,10 @@ class RouteEventsSuite extends FunSuite {
 
   test("a closed subscriber receives nothing further") {
     val bus = new RouteEventBus()
-    val subscription = bus.subscribe(Slug.unsafe("main-camera"))
+    val subscription = bus.subscribe(Slug.unsafe(Fixtures.MainCameraSlug))
     subscription.close()
 
-    bus.routeChanged(route("main-camera", "2026-08-24T10:01:00.000Z"))
+    bus.routeChanged(route(Fixtures.MainCameraSlug, UpdatedAt))
 
     assertEquals(subscription.queued, 0)
   }
@@ -114,11 +117,11 @@ class RouteEventsSuite extends FunSuite {
   test("a full queue drops its oldest event and keeps the newest") {
     val capacity = 4
     val bus = new RouteEventBus(queueCapacity = capacity)
-    val subscription = bus.subscribe(Slug.unsafe("main-camera"))
+    val subscription = bus.subscribe(Slug.unsafe(Fixtures.MainCameraSlug))
 
     // Six updates into a queue of four: the first two are gone and the last four remain, newest last.
     val stamps = (1 to 6).map(minute => f"2026-08-24T10:0$minute:00.000Z").toList
-    stamps.foreach(stamp => bus.routeChanged(route("main-camera", stamp)))
+    stamps.foreach(stamp => bus.routeChanged(route(Fixtures.MainCameraSlug, stamp)))
 
     assertEquals(subscription.queued, capacity)
     assertEquals(subscription.dropped, 2L)
@@ -131,13 +134,13 @@ class RouteEventsSuite extends FunSuite {
 
   test("publishing into a full queue never blocks the publisher") {
     val bus = new RouteEventBus(queueCapacity = 2)
-    val _ = bus.subscribe(Slug.unsafe("main-camera"))
+    val _ = bus.subscribe(Slug.unsafe(Fixtures.MainCameraSlug))
 
     // Nothing is reading this subscriber's queue, so every publish after the second one has to
     // make room for itself. If `offer` ever waited for space this loop would never finish, and the
     // admin's Save would hang behind an OBS source somebody left paused.
     val startedAt = System.nanoTime()
-    (1 to 500).foreach(_ => bus.routeChanged(route("main-camera", "2026-08-24T10:01:00.000Z")))
+    (1 to 500).foreach(_ => bus.routeChanged(route(Fixtures.MainCameraSlug, UpdatedAt)))
     val elapsedMillis = (System.nanoTime() - startedAt) / 1000000
 
     assert(elapsedMillis < 1000, s"500 publishes into a full queue took ${elapsedMillis}ms")
@@ -145,13 +148,13 @@ class RouteEventsSuite extends FunSuite {
 
   test("waiting on a quiet subscription gives up after the timeout, which is what produces a heartbeat") {
     val bus = new RouteEventBus()
-    val subscription = bus.subscribe(Slug.unsafe("main-camera"))
+    val subscription = bus.subscribe(Slug.unsafe(Fixtures.MainCameraSlug))
 
     assertEquals(subscription.next(100.millis), None)
   }
 
   test("the do-nothing publisher accepts both kinds of event") {
-    NoRouteEvents.routeChanged(route("main-camera", "2026-08-24T10:01:00.000Z"))
-    NoRouteEvents.routeRemoved(Slug.unsafe("main-camera"))
+    NoRouteEvents.routeChanged(route(Fixtures.MainCameraSlug, UpdatedAt))
+    NoRouteEvents.routeRemoved(Slug.unsafe(Fixtures.MainCameraSlug))
   }
 }

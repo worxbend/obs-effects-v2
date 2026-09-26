@@ -54,6 +54,12 @@ final class FakeSettingsRepository(
   */
 class SettingsServiceSuite extends FunSuite {
 
+  /** The OBS WebSocket address the settings under test point at. */
+  private val ObsUrl = "ws://obs:4455"
+
+  /** The OBS audio input the settings under test meter. */
+  private val MicInput = "Mic/Aux"
+
   private def service(
       initial: ObsAudioSettings = ObsAudioSettings.Default
   ): (SettingsService, FakeSettingsRepository, RecordingObsConnection, AudioLevelBus) = {
@@ -64,13 +70,13 @@ class SettingsServiceSuite extends FunSuite {
   }
 
   private val configured =
-    ObsAudioSettings(enabled = true, url = "ws://obs:4455", password = Some("hunter2"), inputName = Some("Mic/Aux"))
+    ObsAudioSettings(enabled = true, url = ObsUrl, password = Some("hunter2"), inputName = Some(MicInput))
 
   test("a save that does not mention the password keeps the stored one") {
     val (settings, repository, _, _) = service(configured)
 
     val result = settings.saveObsAudio(
-      ObsAudioUpdate(enabled = true, url = "ws://elsewhere:4455", password = None, inputName = Some("Mic/Aux"))
+      ObsAudioUpdate(enabled = true, url = "ws://elsewhere:4455", password = None, inputName = Some(MicInput))
     )
 
     assert(result.isRight, s"expected the save to succeed, got $result")
@@ -82,7 +88,7 @@ class SettingsServiceSuite extends FunSuite {
     val (settings, repository, _, _) = service(configured)
 
     val _ = settings.saveObsAudio(
-      ObsAudioUpdate(enabled = true, url = "ws://obs:4455", password = Some(None), inputName = None)
+      ObsAudioUpdate(enabled = true, url = ObsUrl, password = Some(None), inputName = None)
     )
 
     assertEquals(repository.loadObsAudio().password, None)
@@ -92,7 +98,7 @@ class SettingsServiceSuite extends FunSuite {
     val (settings, repository, _, _) = service(configured)
 
     val _ = settings.saveObsAudio(
-      ObsAudioUpdate(enabled = true, url = "ws://obs:4455", password = Some(Some("  swordfish  ")), inputName = None)
+      ObsAudioUpdate(enabled = true, url = ObsUrl, password = Some(Some("  swordfish  ")), inputName = None)
     )
 
     assertEquals(repository.loadObsAudio().password, Some("swordfish"))
@@ -104,7 +110,7 @@ class SettingsServiceSuite extends FunSuite {
     val (settings, repository, _, _) = service(configured)
 
     val _ = settings.saveObsAudio(
-      ObsAudioUpdate(enabled = true, url = "ws://obs:4455", password = Some(Some("   ")), inputName = None)
+      ObsAudioUpdate(enabled = true, url = ObsUrl, password = Some(Some("   ")), inputName = None)
     )
 
     assertEquals(repository.loadObsAudio().password, None)
@@ -114,13 +120,13 @@ class SettingsServiceSuite extends FunSuite {
     // Pressing Save is the operator's only "try again now" button, so it has to mean that.
     val (settings, _, connection, _) = service(configured)
     val unchanged =
-      ObsAudioUpdate(enabled = true, url = "ws://obs:4455", password = None, inputName = Some("Mic/Aux"))
+      ObsAudioUpdate(enabled = true, url = ObsUrl, password = None, inputName = Some(MicInput))
 
     val _ = settings.saveObsAudio(unchanged)
     val _ = settings.saveObsAudio(unchanged)
 
     assertEquals(connection.applied.size, 2)
-    assertEquals(connection.applied.last.url, "ws://obs:4455")
+    assertEquals(connection.applied.last.url, ObsUrl)
   }
 
   test("a bad URL is rejected, nothing is stored, and no reconnect is attempted") {
@@ -145,7 +151,7 @@ class SettingsServiceSuite extends FunSuite {
     val result = settings.saveObsAudio(
       ObsAudioUpdate(
         enabled = true,
-        url = "ws://obs:4455",
+        url = ObsUrl,
         password = None,
         inputName = Some("x" * (ObsAudioSettings.MaxInputNameLength + 1))
       )
@@ -161,7 +167,7 @@ class SettingsServiceSuite extends FunSuite {
     val (settings, repository, _, _) = service(configured)
 
     val _ = settings.saveObsAudio(
-      ObsAudioUpdate(enabled = true, url = "ws://obs:4455", password = None, inputName = Some("   "))
+      ObsAudioUpdate(enabled = true, url = ObsUrl, password = None, inputName = Some("   "))
     )
 
     assertEquals(repository.loadObsAudio().inputName, None)

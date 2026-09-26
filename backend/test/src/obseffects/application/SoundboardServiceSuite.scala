@@ -22,6 +22,12 @@ import java.security.SecureRandom
   */
 class SoundboardServiceSuite extends FunSuite {
 
+  /** Clue for a request the service must accept. */
+  private val ShouldBeAccepted = "should be accepted"
+
+  /** The issue path of the first rule's condition value. */
+  private val FirstConditionValue = "rules[0].condition.value"
+
   private def service(): (SoundboardService, FakeSettingsRepository) = {
     val repository = new FakeSettingsRepository()
     (new SoundboardService(repository, new SecureRandom()), repository)
@@ -73,19 +79,19 @@ class SoundboardServiceSuite extends FunSuite {
 
   test("a rule without an id is assigned a fresh 8-hex one") {
     val (sut, _) = service()
-    val saved = sut.save(RawSoundboard(List(rule()))).getOrElse(fail("should be accepted"))
+    val saved = sut.save(RawSoundboard(List(rule()))).getOrElse(fail(ShouldBeAccepted))
     assert(SoundboardService.IdPattern.matches(saved.rules.head.id), s"got id '${saved.rules.head.id}'")
   }
 
   test("a valid client-sent id is kept, so it stays stable across edits") {
     val (sut, _) = service()
-    val saved = sut.save(RawSoundboard(List(rule(id = Some("0badcafe"))))).getOrElse(fail("should be accepted"))
+    val saved = sut.save(RawSoundboard(List(rule(id = Some("0badcafe"))))).getOrElse(fail(ShouldBeAccepted))
     assertEquals(saved.rules.head.id, "0badcafe")
   }
 
   test("an id that is not 8 lowercase hex characters is replaced with a fresh one, not rejected") {
     val (sut, _) = service()
-    val saved = sut.save(RawSoundboard(List(rule(id = Some("BANANAS!"))))).getOrElse(fail("should be accepted"))
+    val saved = sut.save(RawSoundboard(List(rule(id = Some("BANANAS!"))))).getOrElse(fail(ShouldBeAccepted))
     assertNotEquals(saved.rules.head.id, "BANANAS!")
     assert(SoundboardService.IdPattern.matches(saved.rules.head.id))
   }
@@ -146,11 +152,11 @@ class SoundboardServiceSuite extends FunSuite {
     val (sut, _) = service()
     assertEquals(
       issuesOf(sut.save(RawSoundboard(List(rule(condition = leaf("contains", "")))))).map(_._1),
-      List("rules[0].condition.value")
+      List(FirstConditionValue)
     )
     assertEquals(
       issuesOf(sut.save(RawSoundboard(List(rule(condition = leaf("contains", "p" * 201)))))).map(_._1),
-      List("rules[0].condition.value")
+      List(FirstConditionValue)
     )
     assert(sut.save(RawSoundboard(List(rule(condition = leaf("contains", "p" * 200))))).isRight)
   }
@@ -161,7 +167,7 @@ class SoundboardServiceSuite extends FunSuite {
     assert(sut.save(RawSoundboard(List(rule(condition = leaf("emoji", ""))))).isRight)
     assertEquals(
       issuesOf(sut.save(RawSoundboard(List(rule(condition = leaf("emote", "e" * 201)))))).map(_._1),
-      List("rules[0].condition.value")
+      List(FirstConditionValue)
     )
   }
 
@@ -169,7 +175,7 @@ class SoundboardServiceSuite extends FunSuite {
     val (sut, _) = service()
     assertEquals(
       issuesOf(sut.save(RawSoundboard(List(rule(condition = leaf("command", "!drum roll")))))).map(_._1),
-      List("rules[0].condition.value")
+      List(FirstConditionValue)
     )
   }
 
@@ -178,7 +184,7 @@ class SoundboardServiceSuite extends FunSuite {
     val result = sut.save(RawSoundboard(List(rule(condition = leaf("regex", "[unclosed")))))
     issuesOf(result) match {
       case List((field, message)) =>
-        assertEquals(field, "rules[0].condition.value")
+        assertEquals(field, FirstConditionValue)
         assert(message.startsWith("is not a valid regular expression:"), message)
       case other => fail(s"expected one issue, got $other")
     }
@@ -195,7 +201,7 @@ class SoundboardServiceSuite extends FunSuite {
     val (sut, _) = service()
     issuesOf(sut.save(RawSoundboard(List(rule(condition = leaf("event", "follow")))))) match {
       case List((field, message)) =>
-        assertEquals(field, "rules[0].condition.value")
+        assertEquals(field, FirstConditionValue)
         assert(message.contains("chat, sub, gift_sub, cheer, raid"), message)
       case other => fail(s"expected one issue, got $other")
     }

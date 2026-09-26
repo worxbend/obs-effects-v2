@@ -53,6 +53,12 @@ object EffectId {
   given Ordering[EffectId] = Ordering.String
 }
 
+/** The shape every ObjectId-backed id shares; one definition so the route, preset and sound ids cannot drift apart. */
+private val ObjectIdPattern: Regex = "^[0-9a-fA-F]{24}$".r
+
+/** The complaint every ObjectId-backed id gives for a malformed value. */
+private val ObjectIdProblem: String = "must be a 24-character hexadecimal ObjectId"
+
 /** The database id of a stored route: the 24-character hexadecimal string form of a MongoDB ObjectId (MongoDB's
   * automatically generated primary key).
   */
@@ -60,11 +66,11 @@ opaque type RouteId = String
 
 object RouteId {
 
-  val Pattern: Regex = "^[0-9a-fA-F]{24}$".r
+  val Pattern: Regex = ObjectIdPattern
 
   def parse(raw: String): Either[String, RouteId] =
     if (Pattern.matches(raw)) Right(raw.toLowerCase)
-    else Left("must be a 24-character hexadecimal ObjectId")
+    else Left(ObjectIdProblem)
 
   def unsafe(raw: String): RouteId = raw
 
@@ -101,11 +107,11 @@ opaque type PresetId = String
 
 object PresetId {
 
-  val Pattern: Regex = "^[0-9a-fA-F]{24}$".r
+  val Pattern: Regex = ObjectIdPattern
 
   def parse(raw: String): Either[String, PresetId] =
     if (Pattern.matches(raw)) Right(raw.toLowerCase)
-    else Left("must be a 24-character hexadecimal ObjectId")
+    else Left(ObjectIdProblem)
 
   def unsafe(raw: String): PresetId = raw
 
@@ -120,11 +126,11 @@ opaque type SoundId = String
 
 object SoundId {
 
-  val Pattern: Regex = "^[0-9a-fA-F]{24}$".r
+  val Pattern: Regex = ObjectIdPattern
 
   def parse(raw: String): Either[String, SoundId] =
     if (Pattern.matches(raw)) Right(raw.toLowerCase)
-    else Left("must be a 24-character hexadecimal ObjectId")
+    else Left(ObjectIdProblem)
 
   def unsafe(raw: String): SoundId = raw
 

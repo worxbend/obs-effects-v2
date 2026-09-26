@@ -304,7 +304,7 @@ final class TwitchAdminService(
     case Right(_)                         => BulkOutcome(login, ok = true, None)
     case Left(HelixFailure.Message(text)) => BulkOutcome(login, ok = false, Some(text))
     case Left(HelixFailure.Unauthorized)  =>
-      BulkOutcome(login, ok = false, Some("Twitch rejected the stored token — reconnect the account in Settings."))
+      BulkOutcome(login, ok = false, Some(TwitchAdminService.TokenRejected))
   }
 
   private def pause(): Unit =
@@ -477,7 +477,7 @@ final class TwitchAdminService(
           case Right(Nil) =>
             Left((settings, s"Twitch does not know a channel called '${settings.channel}' — check it in Settings."))
           case Left(HelixFailure.Unauthorized) =>
-            Left((settings, "Twitch rejected the stored token — reconnect the account in Settings."))
+            Left((settings, TwitchAdminService.TokenRejected))
           case Left(HelixFailure.Message(text)) =>
             Left((settings, s"Twitch could not be asked about the channel: $text"))
         }
@@ -510,12 +510,15 @@ final class TwitchAdminService(
   /** A Helix failure that ends the whole request, as opposed to one user's outcome inside a batch. */
   private def requestFailure(failure: HelixFailure): AppError = failure match {
     case HelixFailure.Unauthorized =>
-      AppError.TwitchUnavailable("Twitch rejected the stored token — reconnect the account in Settings.")
+      AppError.TwitchUnavailable(TwitchAdminService.TokenRejected)
     case HelixFailure.Message(text) => AppError.TwitchUnavailable(s"Twitch could not answer: $text")
   }
 }
 
 object TwitchAdminService {
+
+  /** What the operator is told whenever Twitch refuses the stored token even after a refresh. */
+  private val TokenRejected = "Twitch rejected the stored token — reconnect the account in Settings."
 
   /** Reading the ban list. */
   val ScopeReadBans = "moderator:read:banned_users"

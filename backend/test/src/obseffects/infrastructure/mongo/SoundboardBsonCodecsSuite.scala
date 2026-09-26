@@ -9,6 +9,9 @@ import org.bson.Document
   */
 class SoundboardBsonCodecsSuite extends FunSuite {
 
+  /** A regex condition matching the word "hype". */
+  private val HypePattern = "\\bhype\\b"
+
   private val board = Soundboard(
     List(
       SoundboardRule(
@@ -25,7 +28,7 @@ class SoundboardBsonCodecsSuite extends FunSuite {
           op = GroupOp.Or,
           negate = true,
           children = List(
-            SoundboardCondition.Regex("\\bhype\\b"),
+            SoundboardCondition.Regex(HypePattern),
             SoundboardCondition.Group(
               op = GroupOp.And,
               negate = false,
@@ -55,7 +58,7 @@ class SoundboardBsonCodecsSuite extends FunSuite {
     assertEquals(condition.getBoolean("negate"), java.lang.Boolean.TRUE)
     val firstChild = condition.getList("children", classOf[Document]).get(0)
     assertEquals(firstChild.getString("type"), "regex")
-    assertEquals(firstChild.getString("value"), "\\bhype\\b")
+    assertEquals(firstChild.getString("value"), HypePattern)
   }
 
   test("a stored rule with an unrecognised condition type is dropped rather than guessed at") {
@@ -80,7 +83,7 @@ class SoundboardBsonCodecsSuite extends FunSuite {
           .append("id", "12345678")
           .append("label", "Hype")
           .append("trigger", "regex")
-          .append("pattern", "\\bhype\\b")
+          .append("pattern", HypePattern)
           .append("sound", "airhorn")
           .append("enabled", java.lang.Boolean.FALSE)
       )
@@ -90,7 +93,7 @@ class SoundboardBsonCodecsSuite extends FunSuite {
       Soundboard(
         List(
           SoundboardRule("0badcafe", "Drum", SoundboardCondition.Command("!drum"), "drum", enabled = true),
-          SoundboardRule("12345678", "Hype", SoundboardCondition.Regex("\\bhype\\b"), "airhorn", enabled = false)
+          SoundboardRule("12345678", "Hype", SoundboardCondition.Regex(HypePattern), "airhorn", enabled = false)
         )
       )
     )

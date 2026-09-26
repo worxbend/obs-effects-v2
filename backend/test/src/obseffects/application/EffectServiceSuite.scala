@@ -18,7 +18,7 @@ class EffectServiceSuite extends FunSuite {
       effects.sync(List(Fixtures.rawPlasmaField)),
       Right(EffectSyncOutcome(upserted = 1, removed = 0, total = 1))
     )
-    assertEquals(effects.list().map(_.id.value), List("plasma-field"))
+    assertEquals(effects.list().map(_.id.value), List(Fixtures.PlasmaFieldId))
   }
 
   test("syncing the same manifest twice changes nothing the second time") {
@@ -43,7 +43,7 @@ class EffectServiceSuite extends FunSuite {
     val broken = Fixtures.rawPlasmaField.copy(params = List(Fixtures.rawSpeed.copy(default = JsonString("fast"))))
 
     assert(effects.sync(List(broken)).swap.exists(_.isInstanceOf[AppError.ValidationFailed]))
-    assertEquals(effects.list().map(_.id.value), List("plasma-field"))
+    assertEquals(effects.list().map(_.id.value), List(Fixtures.PlasmaFieldId))
   }
 
   test("effects are listed by name, ignoring case") {

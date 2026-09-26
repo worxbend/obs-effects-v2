@@ -15,6 +15,15 @@ import obseffects.infrastructure.twitch.TwitchIrcClient.EmoteSpan
   */
 class TwitchIrcClientSuite extends FunSuite {
 
+  /** The keep-alive line Twitch sends. */
+  private val PingLine = "PING :tmi.twitch.tv"
+
+  /** The static image of emote 25 (Kappa). */
+  private val KappaStaticUrl = "https://static-cdn.jtvnw.net/emoticons/v2/25/static/dark/3.0"
+
+  /** The animated image of emote 25 (Kappa). */
+  private val KappaAnimatedUrl = "https://static-cdn.jtvnw.net/emoticons/v2/25/animated/dark/3.0"
+
   private val at = 1724800000000L
 
   private def parsed(line: String): TwitchIrcClient.IrcMessage =
@@ -39,7 +48,7 @@ class TwitchIrcClientSuite extends FunSuite {
   }
 
   test("a line with no tags and no prefix still parses") {
-    val message = parsed("PING :tmi.twitch.tv")
+    val message = parsed(PingLine)
     assertEquals(message.command, "PING")
     assertEquals(message.params, List("tmi.twitch.tv"))
   }
@@ -90,14 +99,14 @@ class TwitchIrcClientSuite extends FunSuite {
       List(
         ChatPart.Image(
           "Kappa",
-          "https://static-cdn.jtvnw.net/emoticons/v2/25/static/dark/3.0",
-          Some("https://static-cdn.jtvnw.net/emoticons/v2/25/animated/dark/3.0")
+          KappaStaticUrl,
+          Some(KappaAnimatedUrl)
         ),
         ChatPart.Text(" hello "),
         ChatPart.Image(
           "Kappa",
-          "https://static-cdn.jtvnw.net/emoticons/v2/25/static/dark/3.0",
-          Some("https://static-cdn.jtvnw.net/emoticons/v2/25/animated/dark/3.0")
+          KappaStaticUrl,
+          Some(KappaAnimatedUrl)
         )
       )
     )
@@ -114,8 +123,8 @@ class TwitchIrcClientSuite extends FunSuite {
         ChatPart.Text("😂 "),
         ChatPart.Image(
           "Kappa",
-          "https://static-cdn.jtvnw.net/emoticons/v2/25/static/dark/3.0",
-          Some("https://static-cdn.jtvnw.net/emoticons/v2/25/animated/dark/3.0")
+          KappaStaticUrl,
+          Some(KappaAnimatedUrl)
         )
       )
     )
@@ -179,8 +188,8 @@ class TwitchIrcClientSuite extends FunSuite {
       List(
         ChatPart.Image(
           "Kappa",
-          "https://static-cdn.jtvnw.net/emoticons/v2/25/static/dark/3.0",
-          Some("https://static-cdn.jtvnw.net/emoticons/v2/25/animated/dark/3.0")
+          KappaStaticUrl,
+          Some(KappaAnimatedUrl)
         )
       )
     )
@@ -239,7 +248,7 @@ class TwitchIrcClientSuite extends FunSuite {
   }
 
   test("commands that are not chat produce no message") {
-    assertEquals(TwitchIrcClient.chatMessage(parsed("PING :tmi.twitch.tv"), at, "x"), None)
+    assertEquals(TwitchIrcClient.chatMessage(parsed(PingLine), at, "x"), None)
   }
 
   // -------------------------------------------------------------------------------------------
@@ -247,7 +256,7 @@ class TwitchIrcClientSuite extends FunSuite {
   // -------------------------------------------------------------------------------------------
 
   test("a PING is answered with a PONG echoing the server's token") {
-    assertEquals(TwitchIrcClient.pongFor(parsed("PING :tmi.twitch.tv")), "PONG :tmi.twitch.tv")
+    assertEquals(TwitchIrcClient.pongFor(parsed(PingLine)), "PONG :tmi.twitch.tv")
   }
 
   test("a login-failure NOTICE is recognised and an informational NOTICE is not") {

@@ -10,6 +10,9 @@ import java.time.{Clock, Instant, ZoneOffset}
 /** Tests for the route use cases, run against the in-memory repositories. */
 class RouteServiceSuite extends FunSuite {
 
+  /** Clue for fetching the main camera's config. */
+  private val MainCameraConfigClue = "config main-camera"
+
   private val createdAt = Instant.parse("2026-08-23T14:05:09.123Z")
   private val laterOn = Instant.parse("2026-08-23T14:07:41.004Z")
 
@@ -31,7 +34,7 @@ class RouteServiceSuite extends FunSuite {
 
   test("creating a route stores it with server-assigned id and timestamps") {
     val (_, _, _, route) = createdRoute()
-    assertEquals(route.slug.value, "main-camera")
+    assertEquals(route.slug.value, Fixtures.MainCameraSlug)
     assertEquals(route.createdAt, createdAt)
     assertEquals(route.updatedAt, createdAt)
     assertEquals(route.id.value.length, 24)
@@ -44,14 +47,14 @@ class RouteServiceSuite extends FunSuite {
 
   test("creating a second route with the same slug is a conflict") {
     val (service, _, _, _) = createdRoute()
-    assertEquals(service.create(Fixtures.rawRoute()), Left(AppError.SlugConflict("main-camera")))
+    assertEquals(service.create(Fixtures.rawRoute()), Left(AppError.SlugConflict(Fixtures.MainCameraSlug)))
   }
 
   test("creating a route for an effect that is not in the inventory is an unknown-effect error") {
     val (service, _, _) = serviceAt(createdAt)
     assertEquals(
-      service.create(Fixtures.rawRoute(effectId = "ghost-effect")),
-      Left(AppError.UnknownEffect("ghost-effect"))
+      service.create(Fixtures.rawRoute(effectId = Fixtures.GhostEffectId)),
+      Left(AppError.UnknownEffect(Fixtures.GhostEffectId))
     )
   }
 
@@ -82,7 +85,7 @@ class RouteServiceSuite extends FunSuite {
   test("a disabled route is still returned by slug, so the OBS source does not show an error") {
     val (service, _, _) = serviceAt(createdAt)
     val _ = service.create(Fixtures.rawRoute(enabled = false))
-    assertEquals(service.getBySlug("main-camera").map(_.enabled), Right(false))
+    assertEquals(service.getBySlug(Fixtures.MainCameraSlug).map(_.enabled), Right(false))
   }
 
   test("updating a route replaces its parameters completely and refreshes updatedAt") {
@@ -106,10 +109,10 @@ class RouteServiceSuite extends FunSuite {
 
   test("updating a route to a slug another route owns is a conflict") {
     val (service, _, _, route) = createdRoute()
-    val _ = service.create(Fixtures.rawRoute(slug = "second-camera"))
+    val _ = service.create(Fixtures.rawRoute(slug = Fixtures.SecondCameraSlug))
     assertEquals(
-      service.update(route.id.value, Fixtures.rawRoute(slug = "second-camera")),
-      Left(AppError.SlugConflict("second-camera"))
+      service.update(route.id.value, Fixtures.rawRoute(slug = Fixtures.SecondCameraSlug)),
+      Left(AppError.SlugConflict(Fixtures.SecondCameraSlug))
     )
   }
 
@@ -143,38 +146,38 @@ class RouteServiceSuite extends FunSuite {
 
   test("creating a route announces its configuration") {
     val (_, _, events, route) = createdRoute()
-    assertEquals(events.summary, List("config main-camera"))
+    assertEquals(events.summary, List(MainCameraConfigClue))
     assertEquals(events.published, List(RouteEvent.Configured(route)))
   }
 
   test("a rejected create announces nothing") {
     val (service, _, events) = serviceAt(createdAt)
-    val _ = service.create(Fixtures.rawRoute(effectId = "ghost-effect"))
+    val _ = service.create(Fixtures.rawRoute(effectId = Fixtures.GhostEffectId))
     assertEquals(events.summary, Nil)
   }
 
   test("a create rejected for a taken slug announces nothing beyond the first one") {
     val (service, _, events, _) = createdRoute()
     val _ = service.create(Fixtures.rawRoute())
-    assertEquals(events.summary, List("config main-camera"))
+    assertEquals(events.summary, List(MainCameraConfigClue))
   }
 
   test("updating a route announces the new configuration") {
     val (service, _, events, route) = createdRoute()
     val _ = service.update(route.id.value, Fixtures.rawRoute(enabled = false))
-    assertEquals(events.summary, List("config main-camera", "config main-camera"))
+    assertEquals(events.summary, List(MainCameraConfigClue, MainCameraConfigClue))
   }
 
   test("renaming a route announces the old slug as absent before the new one as configured") {
     val (service, _, events, route) = createdRoute()
-    val _ = service.update(route.id.value, Fixtures.rawRoute(slug = "second-camera"))
-    assertEquals(events.summary, List("config main-camera", "absent main-camera", "config second-camera"))
+    val _ = service.update(route.id.value, Fixtures.rawRoute(slug = Fixtures.SecondCameraSlug))
+    assertEquals(events.summary, List(MainCameraConfigClue, "absent main-camera", "config second-camera"))
   }
 
   test("deleting a route announces that its slug is absent") {
     val (service, _, events, route) = createdRoute()
     val _ = service.delete(route.id.value)
-    assertEquals(events.summary, List("config main-camera", "absent main-camera"))
+    assertEquals(events.summary, List(MainCameraConfigClue, "absent main-camera"))
   }
 
   test("deleting a route that does not exist announces nothing") {

@@ -44,6 +44,12 @@ import sttp.tapir.server.netty.sync.*
   */
 object Endpoints {
 
+  /** The response header that tells browsers and proxies how long they may reuse a body. */
+  private val CacheControl = "Cache-Control"
+
+  /** How every ObjectId path parameter is documented. */
+  private val ObjectIdDescription = "24-character hexadecimal ObjectId"
+
   /** Errors are described once, here, and shared by every endpoint: a status code, the standard `{"error": {...}}`
     * envelope, and the `Retry-After` header that only the `429` response carries. All three are mapped to and from the
     * `AppError` type the services speak.
@@ -165,7 +171,7 @@ object Endpoints {
     base.get
       .in("routes" / "by-slug" / path[String]("slug") / "events")
       .out(serverSentEventsBody)
-      .out(header("Cache-Control", "no-cache"))
+      .out(header(CacheControl, "no-cache"))
       .out(header("X-Accel-Buffering", "no"))
       .summary("Live updates for one route, as a Server-Sent Events stream")
       .description(
@@ -189,7 +195,7 @@ object Endpoints {
     base.get
       .in("audio" / "levels" / "events")
       .out(serverSentEventsBody)
-      .out(header("Cache-Control", "no-cache"))
+      .out(header(CacheControl, "no-cache"))
       .out(header("X-Accel-Buffering", "no"))
       .summary("Live OBS audio levels, as a Server-Sent Events stream")
       .description(
@@ -242,7 +248,7 @@ object Endpoints {
       .in("sounds" / path[String]("id").description("The sound's database id, or its name") / "audio")
       .out(byteArrayBody)
       .out(header[String]("Content-Type"))
-      .out(header("Cache-Control", "public, max-age=31536000, immutable"))
+      .out(header(CacheControl, "public, max-age=31536000, immutable"))
       .summary("Download one sound's audio — the call the chat overlay effect makes")
       .description(
         "Public: an OBS browser source cannot sign in. The `{id}` slot accepts the database id or the sound's name; " +
@@ -310,7 +316,7 @@ object Endpoints {
 
   val deleteSound: Endpoint[Option[String], String, AppError, Unit, Any] =
     secureBase.delete
-      .in("sounds" / path[String]("id").description("24-character hexadecimal ObjectId"))
+      .in("sounds" / path[String]("id").description(ObjectIdDescription))
       .out(statusCode(StatusCode.NoContent))
       .summary("Delete an uploaded sound")
       .description("A builtin sound cannot be deleted: start-up seeding would recreate it on the next restart anyway.")
@@ -501,7 +507,7 @@ object Endpoints {
 
   val getRoute: Endpoint[Option[String], String, AppError, RouteConfigDto, Any] =
     secureBase.get
-      .in("routes" / path[String]("id").description("24-character hexadecimal ObjectId"))
+      .in("routes" / path[String]("id").description(ObjectIdDescription))
       .out(jsonBody[RouteConfigDto])
       .summary("Fetch one route by its database id")
 
@@ -540,7 +546,7 @@ object Endpoints {
 
   val getPreset: Endpoint[Option[String], String, AppError, PresetDto, Any] =
     secureBase.get
-      .in("presets" / path[String]("id").description("24-character hexadecimal ObjectId"))
+      .in("presets" / path[String]("id").description(ObjectIdDescription))
       .out(jsonBody[PresetDto])
       .summary("Fetch one preset by its database id")
 

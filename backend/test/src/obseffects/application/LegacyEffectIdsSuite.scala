@@ -1,6 +1,7 @@
 package obseffects.application
 
 import munit.FunSuite
+import obseffects.Fixtures
 import obseffects.domain.*
 import obseffects.domain.JsonValue.*
 
@@ -8,6 +9,12 @@ import java.time.{Clock, Instant, ZoneOffset}
 
 /** The start-up migration that follows an effect rename, run against the in-memory repositories. */
 class LegacyEffectIdsSuite extends FunSuite {
+
+  /** Clue for a seed insert that must not fail. */
+  private val InsertShouldSucceed = "insert should succeed"
+
+  /** Clue for a lookup of a route the migration must keep. */
+  private val RouteShouldStillExist = "the route should still exist"
 
   private val storedAt = Instant.parse("2026-08-23T14:05:09.123Z")
   private val startedAt = Instant.parse("2026-09-02T09:00:00.000Z")
@@ -29,11 +36,11 @@ class LegacyEffectIdsSuite extends FunSuite {
     val (migration, routes, _) = fixture()
     val stored = routes
       .insert(routeInput("intro", "worxbend-text", Map(density -> JsonNumber(6))), storedAt, storedAt)
-      .getOrElse(fail("insert should succeed"))
+      .getOrElse(fail(InsertShouldSucceed))
 
     assertEquals(migration.migrate(), 1)
 
-    val migrated = routes.findById(stored.id).getOrElse(fail("the route should still exist"))
+    val migrated = routes.findById(stored.id).getOrElse(fail(RouteShouldStillExist))
     assertEquals(migrated.effectId.value, "particle-text")
     assertEquals(migrated.params, Map(density -> JsonNumber(6), text -> JsonString("WORXBEND")))
     assertEquals(migrated.createdAt, storedAt)
@@ -44,11 +51,11 @@ class LegacyEffectIdsSuite extends FunSuite {
     val (migration, routes, _) = fixture()
     val stored = routes
       .insert(routeInput("intro", "worxbend-fluid", Map(text -> JsonString("BE RIGHT BACK"))), storedAt, storedAt)
-      .getOrElse(fail("insert should succeed"))
+      .getOrElse(fail(InsertShouldSucceed))
 
     migration.migrate()
 
-    val migrated = routes.findById(stored.id).getOrElse(fail("the route should still exist"))
+    val migrated = routes.findById(stored.id).getOrElse(fail(RouteShouldStillExist))
     assertEquals(migrated.effectId.value, "fluid-text")
     assertEquals(migrated.params, Map(text -> JsonString("BE RIGHT BACK")))
   }
@@ -57,7 +64,7 @@ class LegacyEffectIdsSuite extends FunSuite {
     val (migration, _, presets) = fixture()
     val stored = presets
       .insert(PresetInput("Big red", EffectId.unsafe("worxbend-3d-text"), Map.empty), storedAt, storedAt)
-      .getOrElse(fail("insert should succeed"))
+      .getOrElse(fail(InsertShouldSucceed))
 
     assertEquals(migration.migrate(), 1)
 
@@ -69,15 +76,15 @@ class LegacyEffectIdsSuite extends FunSuite {
   test("routes on effects that were never renamed are left untouched, and a second run changes nothing") {
     val (migration, routes, _) = fixture()
     val stored = routes
-      .insert(routeInput("cam", "plasma-field", Map.empty), storedAt, storedAt)
-      .getOrElse(fail("insert should succeed"))
+      .insert(routeInput("cam", Fixtures.PlasmaFieldId, Map.empty), storedAt, storedAt)
+      .getOrElse(fail(InsertShouldSucceed))
     val _ = routes.insert(routeInput("intro", "worxbend-molecular", Map.empty), storedAt, storedAt)
 
     assertEquals(migration.migrate(), 1)
     assertEquals(migration.migrate(), 0)
 
-    val untouched = routes.findById(stored.id).getOrElse(fail("the route should still exist"))
-    assertEquals(untouched.effectId.value, "plasma-field")
+    val untouched = routes.findById(stored.id).getOrElse(fail(RouteShouldStillExist))
+    assertEquals(untouched.effectId.value, Fixtures.PlasmaFieldId)
     assertEquals(untouched.updatedAt, storedAt)
   }
 }

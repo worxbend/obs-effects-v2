@@ -2,6 +2,7 @@ package obseffects.infrastructure.http
 
 import io.circe.syntax.*
 import munit.FunSuite
+import obseffects.Fixtures
 import obseffects.application.AppError
 import obseffects.domain.{Sound, SoundId}
 import obseffects.infrastructure.http.Wire.given
@@ -49,7 +50,7 @@ class SoundWireSuite extends FunSuite {
   test("a NAME_CONFLICT without an effectId reads back as a sound conflict, one with it as a preset conflict") {
     val soundConflict = ErrorMapping.toWire(AppError.SoundNameConflict("ding"))
     assertEquals(ErrorMapping.fromWire(soundConflict), AppError.SoundNameConflict("ding"))
-    val presetConflict = ErrorMapping.toWire(AppError.NameConflict("plasma-field", "Neon"))
-    assertEquals(ErrorMapping.fromWire(presetConflict), AppError.NameConflict("plasma-field", "Neon"))
+    val presetConflict = ErrorMapping.toWire(AppError.NameConflict(Fixtures.PlasmaFieldId, "Neon"))
+    assertEquals(ErrorMapping.fromWire(presetConflict), AppError.NameConflict(Fixtures.PlasmaFieldId, "Neon"))
   }
 }
